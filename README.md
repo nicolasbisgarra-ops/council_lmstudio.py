@@ -1,0 +1,52 @@
+# Trazo — cuaderno matemático manuscrito (Android nativo)
+
+App **nativa de Android** (Kotlin, Jetpack Compose + una `View` de tinta propia que procesa `MotionEvent` del S Pen). Es un cuaderno de notas libre, al estilo Samsung Notes, con **patrones enseñables**: dibujás un gesto (integral, raíz, fracción…), **mantenés la punta apoyada y quieta ~1 s** y el gesto se reemplaza por **la tinta manuscrita que vos definiste**. Todo lo que queda en la hoja son trazos vectoriales editables: sin LaTeX, sin fuentes matemáticas, sin imágenes, sin WebView.
+
+> Especificación de origen: [`docs/handoff/`](docs/handoff/README_PRIMERO.md). Los pedidos literales están en [`docs/handoff/00_PEDIDOS_ORIGINALES_LITERAL.md`](docs/handoff/00_PEDIDOS_ORIGINALES_LITERAL.md).
+
+## Qué hace
+
+- **Cuadernos** con páginas (rayado, cuadriculado, punteado, liso), zoom y desplazamiento con dos dedos, modo oscuro.
+- **Lápiz** con presión y muestras históricas; **goma parcial** (recorta tramos), **goma de trazo**, extremo goma del S Pen y botón lateral como goma; **lazo** para mover, escalar (tirador), girar o borrar.
+- **Gesto + pausa de 1 s con contacto**: reconoce el gesto (uno o varios trazos recientes y cercanos) y lo reemplaza en **un solo paso deshacible** por la tinta de salida. Si se levanta antes, no convierte. Si no hay coincidencia clara, conserva la escritura. Si dos patrones se parecen, no convierte y ofrece elegir (con vistas previas en tinta).
+- **Editor de patrones**: a la izquierda el *gesto a reconocer* (uno o más ejemplos), a la derecha *cómo quiero que quede*; tamaño de salida, escala, confianza mínima, pausa propia, y una zona de **prueba**. Incluye 3 patrones de ejemplo construidos con vectores (integral, raíz, fracción).
+- **Persistencia local offline** (JSON versionado, escritura atómica), autoguardado, **exportar/importar** `.trazo` (ZIP editable con cuaderno + patrones usados). Sin permisos de red.
+
+## Estructura
+
+```
+core/   Motor en Kotlin puro (sin Android): modelo de tinta, pausa, reconocimiento,
+        historial, goma, lazo, persistencia. Probado en JVM.
+app/    App Android: InkCanvasView (MotionEvent/S Pen), Compose UI, almacenamiento.
+        src/test       → pruebas JVM de política de fuentes (sin WebView/LaTeX/texto en la hoja)
+        src/androidTest→ pruebas instrumentadas + demo automatizada del ejercicio completo
+docs/   ARCHITECTURE.md · DECISIONES.md · test-results.md · handoff/ (especificación original)
+scripts/ci-emulator.sh  pruebas y grabación en emulador (CI)
+.github/workflows/android.yml  compila APK, corre pruebas y graba la demo
+```
+
+## Compilar e instalar
+
+Requisitos: JDK 17, Android SDK (API 35). Desde Android Studio o línea de comandos:
+
+```bash
+./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Pruebas instrumentadas (emulador o dispositivo): `./gradlew :app:connectedDebugAndroidTest`.
+
+Solo el motor, sin Android SDK: `./gradlew -Ptrazo.coreOnly=true :core:test`.
+
+La APK también la genera GitHub Actions (artefacto `trazo-build`); el job `emulator` corre las pruebas instrumentadas y graba la demo (artefacto `trazo-emulator`).
+
+## Uso rápido
+
+1. **Nuevo cuaderno** → escribí con el S Pen. El dedo desplaza / hace zoom (se puede habilitar escribir con el dedo en Ajustes).
+2. Dibujá una **integral** sin levantar el lápiz y quedate quieto: aparece un anillo; al completarse (1 s) el gesto se reemplaza por la integral manuscrita. *Deshacer* lo revierte de una vez.
+3. Escribí límites e integrando alrededor: es tinta normal, se borra y edita.
+4. **Patrones → Enseñar patrón**: dibujá el gesto y, aparte, la salida. Probalo abajo y guardá.
+
+## Estado y evidencias
+
+Ver [`docs/test-results.md`](docs/test-results.md): separa pruebas JVM, instrumentadas en emulador y la validación física con S Pen (pendiente: no hubo hardware disponible).

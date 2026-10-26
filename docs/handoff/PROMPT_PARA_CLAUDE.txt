@@ -1,0 +1,9 @@
+CLAUDE — IMPLEMENTACIÓN TRAZO ANDROID NATIVO
+
+Te adjunto este ZIP. Empezá por README_PRIMERO.md y CLAUDE.md, después leé 00_PEDIDOS_ORIGINALES_LITERAL.md. Esos mensajes son la fuente de verdad y están separados de la interpretación técnica. NO reescribas ni ignores la corrección sobre manuscrito ni la exigencia de Android nativo.
+
+Tu tarea es IMPLEMENTAR una app NATIVA de Android en Kotlin, con S Pen y canvas de tinta vectorial. Similar a Samsung Notes, pero con gestos enseñables: dibujo una integral/raíz/fracción, mantengo el lápiz apoyado y quieto ~1 segundo y el gesto se reemplaza por el dibujo manuscrito que yo configuré. No puede aparecer LaTeX ni texto/fuentes matemáticas en la hoja: TODO se dibuja como tinta manuscrita editable. El editor de patrones debe permitir que dibuje por separado el gesto de activación y la tinta de salida.
+
+No entregues HTML empaquetado, una WebView, Flutter, o un mockup. Usá los prototipos web del ZIP solo como referencias. Entregá proyecto Android Studio compilable, APK instalable, tests, evidencias y una demo grabada usando la app Android para escribir y resolver una integral completa a mano. Separá pruebas automatizadas de emulador vs S Pen físico. Si el hardware no está disponible, dejalo explícito.
+
+Ejecutá las fases priorizadas en 06_PLAN_DE_ENTREGA.md y verificá los criterios de 05_PRUEBAS_ACEPTACION.md. El core Kotlin que acompaña el ZIP es una referencia, no una app completa.

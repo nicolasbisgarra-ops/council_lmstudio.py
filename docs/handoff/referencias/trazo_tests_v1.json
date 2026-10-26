@@ -1,0 +1,62 @@
+[
+  {
+    "prueba": "Carga de seis patrones",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Integral reconocida tras mantener 1 segundo",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Edición abre ventana de fórmula",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Resultado matemático personalizable",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Raíz reconocida",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Fracción reconocida",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Sin pausa conserva escritura",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Deshacer elimina el trazo y conserva fórmulas",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Rehacer restaura realmente el trazo",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Enseñar gesto propio",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Reconocer patrón entrenado",
+    "estado": "OK",
+    "detalle": ""
+  },
+  {
+    "prueba": "Exportar archivo JSON",
+    "estado": "OK",
+    "detalle": ""
+  }
+]

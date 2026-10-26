@@ -1,0 +1,5 @@
+{"id": "P01", "titulo": "Solicitud inicial de aplicación", "texto_literal": "Quiero desarrollar una app como Samsung notes , pero que me permita mas fácilmente escribir matemática,  que yo pueda setear patrones , y cuando escribo y dibujo una figura , como una integral , raíz etc y mantengo quieto el lápiz por un segundo se remplazo por la función,  que me deje personalizarla o el output "}
+{"id": "P02", "titulo": "Demostración y pruebas", "texto_literal": "Crea un video de como funciona y como pasan los test , con vos dibujando y escribiendo,  resuelve todo un ejercicio dibujando y usando la herramienta  "}
+{"id": "P03", "titulo": "Corrección decisiva: solo manuscrito", "texto_literal": "No quiero que sea latex ni texto de computadora, todo escrito  "}
+{"id": "P04", "titulo": "Pedido de handoff a Claude", "texto_literal": "Crea un zip had off para que claude entienda y implemente lo que quiero , paralelo mis promprs y requests textualmente  "}
+{"id": "P05", "titulo": "Requisito explícito de Android nativo", "texto_literal": "Tiene que ser una app nativa de Android,  agrega eso "}

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#eae9e3" />
+<title>Trazo · Cuaderno matemático</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#232520;background:#eeefec;--ink:#2f3132;--olive:#526d55;--line:#e3e5df;--mute:#747b72;--paper:#fffefa;--accent:#3f6550}*{box-sizing:border-box}button,input,textarea,select{font:inherit}button{cursor:pointer}body{margin:0;height:100dvh;overflow:hidden}.app{height:100dvh;display:flex;flex-direction:column}.top{height:68px;flex:none;background:#fafaf7;border-bottom:1px solid #e1e4de;display:flex;align-items:center;justify-content:space-between;padding:0 22px;gap:18px;z-index:3}.brand{display:flex;align-items:center;gap:12px;min-width:155px}.logo{height:38px;width:38px;background:#3f6550;color:#fff;border-radius:12px;display:grid;place-items:center;font-family:Georgia;font-style:italic;font-size:26px}.brand strong{font-size:20px;font-family:Georgia,serif;letter-spacing:-.8px}.brand small{font-size:11px;color:#8a9188;display:block;margin-top:2px}.file-name{display:flex;align-items:center;gap:8px}.file-name input{border:0;background:transparent;font-weight:650;font-size:15px;width:220px;outline:0;color:#333}.saved{color:#6f9376;font-size:12px;white-space:nowrap}.head-actions{display:flex;align-items:center;gap:9px}.icon-button,.tool{border:1px solid transparent;background:transparent;color:#566058;display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:12px;min-width:38px;height:39px;font-size:19px}.icon-button:hover,.tool:hover{background:#f1f3ef}.primary{background:var(--accent);border:0;color:white;font-size:13px;font-weight:650;padding:11px 16px;border-radius:11px}.primary:hover{background:#31533e}.secondary{border:1px solid #dce0d9;background:#fff;color:#334035;padding:10px 14px;border-radius:10px;font-weight:600;font-size:13px}.body{display:flex;min-height:0;flex:1}.left{flex:none;width:63px;background:#fafaf7;border-right:1px solid #e0e3dc;display:flex;flex-direction:column;align-items:center;padding:15px 8px;gap:9px}.tool{width:46px;height:46px;font-size:22px}.tool.active{background:#dfece2;color:#2c5c3e;border-color:#d2e2d5}.tool small{font-size:10px}.sep{height:1px;width:33px;background:#e1e4df;margin:5px}.work{flex:1;min-width:0;display:flex;flex-direction:column}.workbar{display:flex;align-items:center;justify-content:space-between;padding:12px 19px 11px;gap:10px;flex:none}.workbar .hint{display:flex;gap:9px;align-items:center;color:#6a756d;font-size:12px}.pulse{width:8px;height:8px;background:#6c9b78;border-radius:100%}.chip{border:1px solid #dce2da;color:#5b6b60;background:#f7faf7;padding:7px 12px;border-radius:30px;font-size:12px;white-space:nowrap}.viewport{overflow:auto;flex:1;background:#e8eae6;padding:16px 22px 50px;display:flex;justify-content:flex-start;align-items:flex-start}.paper{position:relative;flex:none;width:1060px;height:1498px;background:var(--paper);box-shadow:0 5px 32px #26302514,0 1px 3px #2222;border-radius:2px;background-image:radial-gradient(#dce3dc 0.8px,transparent 1px);background-size:24px 24px;background-position:23px 29px}.paper>.margin{position:absolute;top:0;bottom:0;left:76px;border-left:1px solid #f3dcd9;pointer-events:none}.papertitle{position:absolute;top:45px;left:100px;color:#c3cbc4;font-family:Georgia;font-size:19px;pointer-events:none;user-select:none}.ink-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;z-index:1}.objects{position:absolute;inset:0;pointer-events:none;z-index:2}.mathobj{position:absolute;display:inline-flex;align-items:center;justify-content:center;min-width:64px;min-height:46px;padding:9px 14px;background:#fffffff5;border:1px solid #e1eadf;border-radius:10px;box-shadow:0 3px 10px #1a3f2420;white-space:nowrap;pointer-events:auto;user-select:none;touch-action:none;cursor:move}.mathobj.selected{border:2px solid #5f8e6f;box-shadow:0 0 0 3px #79af8a29}.mathobj .formula{font-family:Cambria,"Cambria Math","STIX Two Math",Georgia,serif;font-size:29px;color:#283229;pointer-events:none;line-height:1.2}.mathobj.textmode .formula{font-family:system-ui;font-size:21px}.formula .frac{display:inline-flex;flex-direction:column;text-align:center;vertical-align:middle;min-width:1.7em;line-height:1.05;font-size:.8em}.frac .den{border-top:1.6px solid currentColor;padding-top:3px}.frac .num{padding-bottom:3px}.sqrt{display:inline-flex;align-items:stretch}.sqrt .radical{font-size:1.48em;line-height:.8}.sqrt .radicand{border-top:1.5px solid;padding:2px 4px 0 1px}.formula sup,.formula sub{font-size:.58em;position:relative}.formula sup{top:-.35em}.formula sub{bottom:-.13em}.hold-ring{position:absolute;border-radius:50%;height:39px;width:39px;border:3px solid transparent;pointer-events:none;z-index:3;display:none;transform:translate(-50%,-50%)}.hold-ring.active{display:block;animation:holdring 1s linear forwards}@keyframes holdring{0%{border-color:#7bb88a33;box-shadow:inset 0 0 0 0 #7bb88a22}60%{border-color:#80bc91;box-shadow:inset 0 0 0 7px #7bb88a22}100%{border-color:#326d46;box-shadow:inset 0 0 0 10px #7bb88a36}}.right{flex:none;width:314px;background:#fbfcfa;border-left:1px solid #e0e3dc;display:flex;flex-direction:column;min-height:0}.r-header{padding:25px 22px 14px}.eyebrow{font-size:11px;letter-spacing:2px;color:#789181;font-weight:760;text-transform:uppercase}.r-header h2{font-size:22px;letter-spacing:-.7px;font-family:Georgia,serif;font-weight:500;margin:9px 0 9px}.r-header p{margin:0;font-size:12px;line-height:1.65;color:#899188}.r-content{overflow-y:auto;flex:1;padding:0 13px 18px}.pattern{display:flex;align-items:center;gap:13px;padding:12px;border:1px solid #e7ebe4;border-radius:12px;background:#fff;margin-bottom:8px;cursor:pointer;text-align:left;width:100%;color:inherit;transition:.15s}.pattern:hover{background:#f5faf5;border-color:#ccdccc}.pattern-glyph{height:48px;width:52px;background:#f3f7f2;color:#426349;border-radius:10px;display:grid;place-items:center;font-family:Cambria,Georgia,serif;font-size:33px}.pattern-info{flex:1;min-width:0}.pattern-info strong{font-size:13px;display:block;margin-bottom:4px}.pattern-info small{font-size:11px;color:#8b938b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}.pattern .edit{font-size:17px;color:#899b8b}.right-bottom{padding:14px;border-top:1px solid #e8eae6}.train{border:1px dashed #a8bdac;border-radius:12px;padding:13px;width:100%;background:#f5faf5;color:#477253;font-weight:650;font-size:13px}.settings{margin-top:15px;font-size:12px;color:#59625a}.settingrow{display:flex;align-items:center;justify-content:space-between;margin:12px 0}.settingrow input[type=range]{width:95px;accent-color:#436f50}.settingrow input[type=checkbox]{accent-color:#3b6c4b;width:18px;height:18px}.toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,25px);opacity:0;pointer-events:none;z-index:20;color:#fff;background:#26382b;padding:12px 18px;border-radius:11px;font-size:13px;transition:.2s;box-shadow:0 10px 25px #0002}.toast.show{opacity:1;transform:translate(-50%,0)}.overlay{position:fixed;inset:0;background:#111a1577;display:none;align-items:center;justify-content:center;z-index:12;padding:20px}.overlay.open{display:flex}.modal{background:#fff;width:100%;max-width:465px;border-radius:18px;padding:25px;box-shadow:0 25px 70px #0004;max-height:90dvh;overflow:auto}.modal h3{font-family:Georgia,serif;font-size:25px;font-weight:500;margin:0 0 7px}.modal p{font-size:13px;color:#7d857e;line-height:1.6;margin:0 0 20px}.field{display:block;margin:14px 0}.field>span{display:block;font-size:12px;font-weight:650;color:#546059;margin-bottom:7px}.field input,.field select,.field textarea{width:100%;border:1px solid #dce4db;border-radius:10px;background:#fbfcfb;color:#233028;padding:12px;outline-color:#90bd98}.field textarea{resize:vertical;min-height:70px}.modal-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:22px}.preview{background:#f6f8f5;border-radius:11px;border:1px solid #e0e8df;padding:19px;display:flex;align-items:center;justify-content:center;min-height:76px;font-family:Cambria,Georgia,serif;font-size:29px}.kbd{font-size:11px;color:#8c938c;margin-top:13px}.mobile-patterns{display:none}.train-banner{display:none;background:#e4f1e8;color:#326544;padding:9px 20px;text-align:center;font-size:13px;font-weight:600}.train-banner.show{display:block}.warn{font-size:11px;color:#88928a}.download{font-size:16px}
+@media(max-width:900px){.right{position:fixed;right:0;top:68px;bottom:0;z-index:5;box-shadow:-15px 0 35px #0001;transform:translateX(103%);transition:transform .22s}.right.open{transform:none}.mobile-patterns{display:inline-flex}.top{padding:0 12px}.brand{min-width:auto}.brand strong{font-size:18px}.brand small{display:none}.file-name input{width:125px;font-size:13px}.saved{display:none}.viewport{padding:10px}.workbar{padding:10px}.workbar .hint{font-size:11px}.paper{width:900px;height:1272px}.paper>.margin{left:60px}.papertitle{left:80px}.left{width:53px;padding:9px 4px}.tool{width:42px;height:44px}.head-actions .icon-button:nth-child(2){display:none}}
+@media(max-width:520px){.brand strong{display:none}.brand{min-width:38px}.file-name input{width:130px}.top{gap:5px}.head-actions{gap:1px}.head-actions .primary{padding:9px 10px}.workbar .hint span:nth-child(2){display:none}.paper{width:760px;height:1074px}.papertitle{font-size:15px}.right{width:min(320px,90vw)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><div class="logo">∫</div><div><strong>Trazo</strong><small>CUADERNO MATEMÁTICO</small></div></div>
+    <div class="file-name"><input id="docName" value="Apuntes de Cálculo I" aria-label="Nombre del apunte" /><span class="saved" id="saved">● Guardado</span></div>
+    <div class="head-actions">
+      <button class="icon-button" title="Deshacer" id="undo">↶</button><button class="icon-button" title="Rehacer" id="redo">↷</button>
+      <button class="icon-button" title="Exportar archivo JSON" id="export" aria-label="Exportar">⇩</button>
+      <button class="icon-button mobile-patterns" title="Patrones" id="togglePatterns">☷</button>
+      <button class="primary" id="newPatternTop">+ Patrón</button>
+    </div>
+  </header>
+  <div id="trainBanner" class="train-banner">Modo entrenamiento: dibujá el patrón (podés usar varios trazos) y mantené la punta quieta 1 segundo al terminar.</div>
+  <div class="body">
+    <nav class="left" aria-label="Herramientas">
+      <button data-tool="pen" class="tool active" title="Lápiz">✎</button>
+      <button data-tool="eraser" class="tool" title="Borrador">⌫</button>
+      <button data-tool="hand" class="tool" title="Mover hoja">✋</button>
+      <div class="sep"></div>
+      <button class="tool" id="clear" title="Vaciar esta página">▤</button>
+    </nav>
+    <main class="work">
+      <div class="workbar"><div class="hint"><i class="pulse"></i><span id="status">Dibujá y mantené el lápiz quieto 1 segundo</span></div><button class="chip" id="timingChip">Espera: <b id="delayText">1,0 s</b> ⚙</button></div>
+      <div class="viewport" id="viewport">
+        <div class="paper" id="paper"><div class="margin"></div><div class="papertitle" id="pageWatermark">01 / Cálculo</div><canvas class="ink-canvas" id="canvas"></canvas><div class="objects" id="objects"></div><div class="hold-ring" id="holdRing"></div></div>
+      </div>
+    </main>
+    <aside class="right" id="right">
+      <div class="r-header"><div class="eyebrow">TU BIBLIOTECA</div><h2>Patrones matemáticos</h2><p>Convertí un dibujo en una estructura editable. Tocá cualquier patrón para cambiar su resultado.</p></div>
+      <div id="patternList" class="r-content"></div>
+      <div class="right-bottom">
+        <button class="train" id="newPattern">✦ Enseñar un patrón nuevo</button>
+        <div class="settings"><div class="settingrow"><label for="delay">Tiempo de espera</label><span id="delaySetting">1,0 s</span></div><input style="width:100%;accent-color:#497b57" type="range" min="500" max="2000" step="100" id="delay" value="1000" />
+        <div class="settingrow"><label for="penOnly">Ignorar dedos (S Pen)</label><input type="checkbox" id="penOnly" checked /></div>
+        <span class="warn">El prototipo guarda las notas en este navegador. No se sincroniza ni es una APK.</span></div>
+      </div>
+    </aside>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="overlay" id="overlay"><div class="modal">
+  <h3 id="modalTitle">Nuevo patrón</h3><p id="modalDesc">Definí lo que dibujarás y el resultado que debería generar.</p>
+  <label class="field"><span>Nombre</span><input id="pName" placeholder="Por ejemplo: Integral doble" /></label>
+  <label class="field"><span>Resultado · LaTeX o texto</span><textarea id="pLatex" spellcheck="false" placeholder="\\int_{a}^{b} f(x)\\,dx"></textarea></label>
+  <label class="field"><span>Tipo de resultado</span><select id="pMode"><option value="math">Fórmula matemática editable</option><option value="text">Texto literal</option></select></label>
+  <div class="field"><span>Vista previa</span><div class="preview" id="pPreview"></div></div>
+  <div class="modal-actions"><button id="deletePattern" class="secondary" style="margin-right:auto;display:none">Eliminar</button><button id="cancelModal" class="secondary">Cancelar</button><button id="confirmModal" class="primary">Continuar</button></div>
+  <div class="kbd">Podés editar el contenido luego tocando la fórmula insertada en la hoja.</div>
+</div></div>
+<script>
+(()=>{'use strict';
+const $=s=>document.querySelector(s);const el=(tag,cls)=>{let n=document.createElement(tag);if(cls)n.className=cls;return n;};
+const KEY='trazo-math-prototype-v1';const defaultPatterns=[
+  {id:'integral',name:'Integral',latex:'\\int_{a}^{b} f(x)\\,dx',mode:'math',icon:'∫',strokes:[[ [80,2],[64,2],[50,11],[45,24],[48,40],[46,56],[34,77],[23,94],[9,96] ]]},
+  {id:'raiz',name:'Raíz cuadrada',latex:'\\sqrt{x}',mode:'math',icon:'√',strokes:[[ [4,56],[27,80],[47,9],[97,9] ]]},
+  {id:'fraccion',name:'Fracción',latex:'\\frac{a}{b}',mode:'math',icon:'—',strokes:[[ [3,50],[97,50] ]]},
+  {id:'sumatoria',name:'Sumatoria',latex:'\\sum_{i=1}^{n} a_i',mode:'math',icon:'Σ',strokes:[[ [89,5],[9,5],[64,50],[9,94],[91,94] ]]},
+  {id:'pi',name:'Número pi',latex:'\\pi',mode:'math',icon:'π',strokes:[[ [5,16],[95,16] ],[ [35,16],[29,92] ],[ [76,16],[72,92] ]]},
+  {id:'infinito',name:'Infinito',latex:'\\infty',mode:'math',icon:'∞',strokes:[Array.from({length:45},(_,i)=>{let t=i/44*Math.PI*2;return [50+44*Math.sin(t),50+27*Math.sin(2*t)];})]}
+];
+const initial=()=>({name:'Apuntes de Cálculo I',strokes:[],items:[],patterns:structuredClone(defaultPatterns),delay:1000,penOnly:true});
+let data;try{data={...initial(),...JSON.parse(localStorage.getItem(KEY)||'{}')};}catch{data=initial();}
+if(!Array.isArray(data.patterns)||!data.patterns.length)data.patterns=structuredClone(defaultPatterns);
+let current=null,tool='pen',timer=null,ring=null,activePointer=null,lastPenAt=0;let undoStack=[],redoStack=[],lastCompleted=0,training=null,modalState=null;let canvas=$('#canvas'),ctx=canvas.getContext('2d'),paper=$('#paper'),status=$('#status');
+function save(){try{localStorage.setItem(KEY,JSON.stringify(data));$('#saved').textContent='● Guardado';}catch{$('#saved').textContent='● Sin espacio';}}
+function toast(s){const n=$('#toast');n.textContent=s;n.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>n.classList.remove('show'),2200);}
+function formatTime(ms){return (ms/1000).toFixed(1).replace('.',',')+' s';}
+function historyPush(){undoStack.push(JSON.stringify({strokes:data.strokes,items:data.items,patterns:data.patterns}));if(undoStack.length>70)undoStack.shift();redoStack=[];}
+function restore(snapshot){let x=JSON.parse(snapshot);data.strokes=x.strokes;data.items=x.items;data.patterns=x.patterns;renderAll();save();}
+function undo(){if(!undoStack.length)return toast('No hay más acciones para deshacer');redoStack.push(JSON.stringify({strokes:data.strokes,items:data.items,patterns:data.patterns}));restore(undoStack.pop());}
+function redo(){if(!redoStack.length)return toast('No hay acciones para rehacer');undoStack.push(JSON.stringify({strokes:data.strokes,items:data.items,patterns:data.patterns}));restore(redoStack.pop());}
+function resize(){let w=paper.clientWidth,h=paper.clientHeight,dpr=window.devicePixelRatio||1;canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);redraw();}
+function strokeDraw(s){if(!s||!s.points.length)return;ctx.save();ctx.lineWidth=s.width||2.7;ctx.strokeStyle=s.color||'#263a31';ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();s.points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));if(s.points.length===1)ctx.lineTo(s.points[0].x+.1,s.points[0].y+.1);ctx.stroke();ctx.restore();}
+function redraw(){ctx.clearRect(0,0,paper.clientWidth,paper.clientHeight);data.strokes.forEach(strokeDraw);if(current)strokeDraw(current);}
+function escapeHtml(x){return String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+const names={int:'∫',iint:'∬',oint:'∮',sum:'∑',prod:'∏',pi:'π',theta:'θ',alpha:'α',beta:'β',gamma:'γ',delta:'δ',infty:'∞',partial:'∂',cdot:'·',times:'×',pm:'±',leq:'≤',geq:'≥',neq:'≠',rightarrow:'→',lim:'lim',sin:'sin',cos:'cos',tan:'tan',ln:'ln',log:'log',mathbb:'ℝ'};
+function mathHtml(src){ // A compact offline subset of LaTeX; the native build will use a complete math layout engine.
+  let i=0,s=String(src||''),max=0;
+  function group(){while(s[i]===' ')i++;if(s[i]==='{'){i++;let v=parse('}');if(s[i]==='}')i++;return v;}return atom();}
+  function atom(){if(i>=s.length)return '';let c=s[i++];if(c==='\\'){
+    if(s[i]===','||s[i]===';'||s[i]==='!'){let n=s[i++];return n==='!'?'':'&thinsp;';}
+    let m=/^[a-zA-Z]+/.exec(s.slice(i));if(!m){let t=s[i++]||'';return escapeHtml(t);}
+    let cmd=m[0];i+=cmd.length;
+    if(cmd==='frac'){let a=group(),b=group();return '<span class="frac"><span class="num">'+a+'</span><span class="den">'+b+'</span></span>';}
+    if(cmd==='sqrt'){let x=group();return '<span class="sqrt"><span class="radical">√</span><span class="radicand">'+x+'</span></span>';}
+    if(cmd==='left'||cmd==='right')return '';
+    if(cmd==='text'||cmd==='mathrm')return group();
+    return escapeHtml(names[cmd]||'\\'+cmd);
+  }
+  if(c==='{'){let x=parse('}');if(s[i]==='}')i++;return x;}
+  return escapeHtml(c===' ' ? ' ':c);
+  }
+  function parse(end){let out='';while(i<s.length && s[i]!==end && max++<2000){if(s[i]==='^'||s[i]==='_'){let ch=s[i++],inner=group();out+='<'+(ch==='^'?'sup':'sub')+'>'+inner+'</'+(ch==='^'?'sup':'sub')+'>';continue;}out+=atom();}return out;}
+  return parse('\0');
+}
+function showPreview(){let v=$('#pLatex').value;$('#pPreview').innerHTML=$('#pMode').value==='math'?mathHtml(v):escapeHtml(v);}
+function renderItems(){let layer=$('#objects');layer.replaceChildren();for(let item of data.items){let n=el('div','mathobj'+(item.mode==='text'?' textmode':''));n.style.left=item.x+'px';n.style.top=item.y+'px';n.title='Tocá para editar · arrastrá para mover';n.dataset.id=item.id;
+  let f=el('div','formula');if(item.mode==='math')f.innerHTML=mathHtml(item.latex);else f.textContent=item.latex;n.appendChild(f);layer.appendChild(n);
+  let dragStart=null,moved=false,downAt=0;
+  n.addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();n.setPointerCapture(e.pointerId);downAt=Date.now();dragStart={mx:e.clientX,my:e.clientY,x:item.x,y:item.y};moved=false;n.classList.add('selected');});
+  n.addEventListener('pointermove',e=>{if(!dragStart)return;let dx=e.clientX-dragStart.mx,dy=e.clientY-dragStart.my;if(Math.hypot(dx,dy)>6){if(!moved){historyPush();moved=true;}item.x=Math.max(0,Math.min(paper.clientWidth-30,dragStart.x+dx));item.y=Math.max(0,Math.min(paper.clientHeight-20,dragStart.y+dy));n.style.left=item.x+'px';n.style.top=item.y+'px';}});
+  n.addEventListener('pointerup',e=>{e.stopPropagation();if(!moved&&Date.now()-downAt<1200)openItem(item.id);if(moved)save();n.classList.remove('selected');dragStart=null;});
+ }}
+function renderPatterns(){let list=$('#patternList');list.replaceChildren();for(let p of data.patterns){let btn=el('button','pattern');btn.innerHTML='<div class="pattern-glyph">'+escapeHtml(p.icon||'✦')+'</div><div class="pattern-info"><strong>'+escapeHtml(p.name)+'</strong><small>'+escapeHtml(p.latex)+'</small></div><span class="edit">✎</span>';btn.onclick=()=>openPattern(p.id);list.append(btn);}}
+function renderAll(){redraw();renderItems();renderPatterns();$('#docName').value=data.name;$('#delay').value=data.delay;$('#penOnly').checked=data.penOnly;$('#delayText').textContent=formatTime(data.delay);$('#delaySetting').textContent=formatTime(data.delay);}
+function pickPoint(e){let r=canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top,t:Date.now(),pressure:e.pressure||0.5};}
+function resetHold(){clearTimeout(timer);timer=null;$('#holdRing').classList.remove('active');}
+function queueHold(p){resetHold();if(!current||current.points.length<3)return;let r=$('#holdRing');r.style.left=p.x+'px';r.style.top=p.y+'px';r.style.animationDuration=(data.delay/1000)+'s';void r.offsetWidth;r.classList.add('active');timer=setTimeout(()=>completeHold(),data.delay);}
+function lengthOf(stroke){let len=0;stroke.points.forEach((p,i)=>{if(i)len+=Math.hypot(p.x-stroke.points[i-1].x,p.y-stroke.points[i-1].y);});return len;}
+function eventDown(e){if(tool==='hand')return;if(data.penOnly&&e.pointerType==='touch')return;if(e.pointerType==='touch'&&Date.now()-lastPenAt<1600)return;if(e.pointerType==='pen')lastPenAt=Date.now();if(activePointer!==null)return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);let p=pickPoint(e);if(tool==='eraser'){eraseNear(p);return;}
+  current={points:[p],width:2.6,color:'#26372f',createdAt:Date.now()};queueHold(p);redraw();}
+function eventMove(e){if(e.pointerId!==activePointer)return;if(e.pointerType==='pen')lastPenAt=Date.now();let p=pickPoint(e);if(tool==='eraser'){eraseNear(p);return;}if(!current)return;let last=current.points.at(-1);let delta=Math.hypot(p.x-last.x,p.y-last.y);if(delta>=1.7){current.points.push(p);redraw();}if(!ring||Math.hypot(p.x-ring.x,p.y-ring.y)>7){ring=p;queueHold(p);}}
+function eventUp(e){if(e.pointerId!==activePointer)return;resetHold();ring=null;activePointer=null;if(current){if(lengthOf(current)>3){historyPush();data.strokes.push(current);lastCompleted=Date.now();save();}current=null;redraw();}}
+function bounds(strokes){let all=strokes.flatMap(s=>s.points||s);let xx=all.map(p=>Array.isArray(p)?p[0]:p.x),yy=all.map(p=>Array.isArray(p)?p[1]:p.y);return{x:Math.min(...xx),y:Math.min(...yy),w:Math.max(...xx)-Math.min(...xx),h:Math.max(...yy)-Math.min(...yy)};}
+function resample(points,n=32){let d=[0];for(let j=1;j<points.length;j++)d.push(d[j-1]+Math.hypot(points[j][0]-points[j-1][0],points[j][1]-points[j-1][1]));let total=d.at(-1);if(total<.001)return Array.from({length:n},()=>points[0]);let result=[];let k=1;for(let j=0;j<n;j++){let target=total*j/(n-1);while(k<d.length-1&&d[k]<target)k++;let t=(target-d[k-1])/Math.max(.00001,d[k]-d[k-1]);let a=points[k-1],b=points[k];result.push([a[0]+t*(b[0]-a[0]),a[1]+t*(b[1]-a[1])]);}return result;}
+function normalize(strokes){let b=bounds(strokes),scale=1/Math.max(1,b.w,b.h);return strokes.map(s=>{let arr=(s.points||s).map(p=>Array.isArray(p)?p:[p.x,p.y]);let q=arr.map(([x,y])=>[(x-b.x)*scale+(1-b.w*scale)/2,(y-b.y)*scale+(1-b.h*scale)/2]);return resample(q);});}
+function patternMatch(strokes){let n=normalize(strokes),best=null;for(let p of data.patterns){if(p.strokes.length!==strokes.length)continue;let ref=normalize(p.strokes),distance=0,count=0;for(let i=0;i<n.length;i++){let forward=0,reverse=0;for(let j=0;j<32;j++){forward+=Math.hypot(n[i][j][0]-ref[i][j][0],n[i][j][1]-ref[i][j][1]);let r=ref[i][31-j];reverse+=Math.hypot(n[i][j][0]-r[0],n[i][j][1]-r[1]);}distance+=Math.min(forward,reverse);count+=32;}let score=Math.max(0,1-distance/count/.55);if(!best||score>best.score)best={p,score};}return best;}
+function completeHold(){if(!current||activePointer===null||lengthOf(current)<22){resetHold();return;}resetHold();let involved=[];if(training){involved=[...data.strokes.filter(s=>s.createdAt>=training.start),current];let prepared=involved.map(s=>s.points.map(p=>[p.x,p.y]));historyPush();data.strokes=data.strokes.filter(s=>s.createdAt<training.start);let p={id:'custom-'+Date.now(),name:training.name,latex:training.latex,mode:training.mode,icon:'✦',strokes:prepared};data.patterns.push(p);data.strokes=data.strokes.filter(s=>s.createdAt<training.start);training=null;$('#trainBanner').classList.remove('show');status.textContent='Patrón aprendido · dibujá para probarlo';toast('¡Patrón guardado! Ya podés usarlo.');}
+else{
+  let groups=[[current]];let previous=data.strokes.slice(-4).filter(s=>Date.now()-s.createdAt<15000);for(let count=1;count<=Math.min(3,previous.length);count++){let ss=previous.slice(-count);let b=bounds([...ss,current]);if(b.w<420&&b.h<340)groups.push([...ss,current]);}
+  let matches=groups.map(g=>({m:patternMatch(g),g})).filter(x=>x.m).sort((a,b)=>b.m.score-a.m.score);let matched=matches[0];
+  if(matched&&matched.m.score>=.77){historyPush();let previousCount=matched.g.length-1;let b=bounds(matched.g);if(previousCount)data.strokes.splice(data.strokes.length-previousCount,previousCount);
+    let p=matched.m.p;data.items.push({id:'obj-'+Date.now(),x:Math.max(5,b.x-8),y:Math.max(7,b.y),latex:p.latex,mode:p.mode,from:p.id});toast('Convertido: '+p.name+' · Tocá para editar');status.textContent='Patrón reconocido: '+p.name;}
+  else{historyPush();data.strokes.push(current);let s=matched?.m.score;toast('Sin coincidencia'+(s?' ('+Math.round(s*100)+'%)':'')+' · Se conservó el dibujo');status.textContent='Podés enseñar este gesto desde «+ Patrón»';}
+}
+  current=null;activePointer=null;ring=null;redraw();renderItems();renderPatterns();save();}
+function pointSegDist(p,a,b){let dx=b.x-a.x,dy=b.y-a.y,den=dx*dx+dy*dy,t=den?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/den)):0;return Math.hypot(p.x-(a.x+t*dx),p.y-(a.y+t*dy));}
+function eraseNear(p){let idx=data.strokes.findIndex(s=>s.points.some((v,i)=>i>0&&pointSegDist(p,s.points[i-1],v)<14));if(idx>=0){historyPush();data.strokes.splice(idx,1);redraw();save();return;}let it=data.items.findIndex(i=>Math.abs(i.x-p.x)<90&&Math.abs(i.y-p.y)<35);if(it>=0){historyPush();data.items.splice(it,1);renderItems();save();}}
+function chooseTool(t){tool=t;document.querySelectorAll('.tool[data-tool]').forEach(n=>n.classList.toggle('active',n.dataset.tool===t));status.textContent=t==='hand'?'Deslizá la hoja con el dedo o mouse':t==='eraser'?'Tocá un trazo o fórmula para borrar':'Dibujá y mantené el lápiz quieto 1 segundo';canvas.style.pointerEvents=t==='hand'?'none':'auto';}
+function openModal(title,desc,name,latex,mode,onSubmit,onDelete){modalState={onSubmit,onDelete};$('#modalTitle').textContent=title;$('#modalDesc').textContent=desc;$('#pName').value=name||'';$('#pLatex').value=latex||'';$('#pMode').value=mode||'math';$('#deletePattern').style.display=onDelete?'inline-flex':'none';$('#pName').closest('.field').style.display=title.startsWith('Editar fórmula')?'none':'block';$('#overlay').classList.add('open');showPreview();}
+function closeModal(){$('#overlay').classList.remove('open');modalState=null;}
+function openPattern(id){let p=data.patterns.find(x=>x.id===id);if(!p)return;openModal('Editar patrón','Este gesto conservará sus trazos, pero producirá el resultado que definas.',p.name,p.latex,p.mode,v=>{historyPush();Object.assign(p,v);save();renderPatterns();toast('Resultado actualizado');},id.startsWith('custom-')?()=>{historyPush();data.patterns=data.patterns.filter(x=>x.id!==id);save();renderPatterns();toast('Patrón eliminado');}:null);}
+function openItem(id){let it=data.items.find(x=>x.id===id);if(!it)return;openModal('Editar fórmula','Modificá la salida del símbolo reconocido sin volver a dibujarlo.','',it.latex,it.mode,v=>{historyPush();it.latex=v.latex;it.mode=v.mode;renderItems();save();toast('Fórmula actualizada');},()=>{historyPush();data.items=data.items.filter(x=>x.id!==id);renderItems();save();});}
+function newPattern(){openModal('Nuevo patrón','Primero escribí el resultado; después dibujá el gesto que lo activará. Podés usar varios trazos.','Mi patrón','\\int_{a}^{b} f(x)\\,dx','math',v=>{training={...v,start:Date.now()};chooseTool('pen');$('#trainBanner').classList.add('show');$('#right').classList.remove('open');status.textContent='Modo entrenamiento activo · sostené el lápiz para terminar';toast('Dibujá el gesto en la hoja y sostené 1 segundo');});}
+canvas.addEventListener('pointerdown',eventDown);canvas.addEventListener('pointermove',eventMove);canvas.addEventListener('pointerup',eventUp);canvas.addEventListener('pointercancel',eventUp);canvas.addEventListener('lostpointercapture',e=>{if(activePointer===e.pointerId)eventUp(e);});
+// Hovering is deliberately not considered a hold: the tip must remain in contact with the screen.
+document.querySelectorAll('.tool[data-tool]').forEach(n=>n.onclick=()=>chooseTool(n.dataset.tool));
+$('#undo').onclick=undo;$('#redo').onclick=redo;$('#newPattern').onclick=newPattern;$('#newPatternTop').onclick=newPattern;$('#togglePatterns').onclick=()=>$('#right').classList.toggle('open');$('#timingChip').onclick=()=>$('#right').classList.toggle('open');
+$('#clear').onclick=()=>{if(!confirm('¿Vaciar todos los trazos y las fórmulas de esta página?'))return;historyPush();data.items=[];data.strokes=[];redraw();renderItems();save();toast('Página vacía');};
+$('#delay').oninput=e=>{data.delay=+e.target.value;$('#delayText').textContent=formatTime(data.delay);$('#delaySetting').textContent=formatTime(data.delay);save();};$('#penOnly').onchange=e=>{data.penOnly=e.target.checked;save();};$('#docName').oninput=e=>{data.name=e.target.value;save();};
+$('#pLatex').addEventListener('input',showPreview);$('#pMode').addEventListener('change',showPreview);
+$('#cancelModal').onclick=closeModal;$('#overlay').addEventListener('click',e=>{if(e.target.id==='overlay')closeModal();});
+$('#confirmModal').onclick=()=>{let name=$('#pName').value.trim(),latex=$('#pLatex').value.trim(),mode=$('#pMode').value;if(!latex)return toast('Escribí el resultado');if($('#modalTitle').textContent==='Nuevo patrón'&&!name)return toast('Escribí el nombre del patrón');let v={name,latex,mode};let fn=modalState?.onSubmit;closeModal();fn?.(v);};
+$('#deletePattern').onclick=()=>{if(!modalState?.onDelete)return;let fn=modalState.onDelete;closeModal();fn();};
+$('#export').onclick=()=>{const a=document.createElement('a'),blob=new Blob([JSON.stringify({format:'trazo-note-v1',exportedAt:new Date().toISOString(),...data},null,2)],{type:'application/json'});let url=URL.createObjectURL(blob);a.href=url;a.download=(data.name||'cuaderno').replace(/[^\w\- ]/g,'').replace(/ /g,'_')+'.trazo.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('Cuaderno exportado como JSON');};
+window.addEventListener('resize',resize);renderAll();resize();
+// Make the sheet feel natural for mouse scroll and touchscreen zoom/pan in Hand mode.
+let pan=null;$('#viewport').addEventListener('pointerdown',e=>{if(tool!=='hand')return;pan={x:e.clientX,y:e.clientY,left:$('#viewport').scrollLeft,top:$('#viewport').scrollTop};$('#viewport').setPointerCapture(e.pointerId);});$('#viewport').addEventListener('pointermove',e=>{if(!pan||tool!=='hand')return;$('#viewport').scrollLeft=pan.left-(e.clientX-pan.x);$('#viewport').scrollTop=pan.top-(e.clientY-pan.y);});$('#viewport').addEventListener('pointerup',()=>pan=null);
+})();
+</script>
+</body>
+</html>

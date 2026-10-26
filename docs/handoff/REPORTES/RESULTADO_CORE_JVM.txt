@@ -1,0 +1,17 @@
+PASS [1] exact shape recognized
+PASS [2] translation and scale invariant
+PASS [3] stroke reversal allowed
+PASS [4] different gesture not matched with high threshold
+PASS [5] stroke count respected
+PASS [6] ambiguous templates are not auto-converted
+PASS [7] good best score picks corresponding template
+PASS [8] dwell triggers after 1000ms while down
+PASS [9] up at 900ms prevents conversion
+PASS [10] zero-length ink never converts
+PASS [11] small pen jitter tolerated
+PASS [12] significant motion resets hold
+PASS [13] canceled contact never converts
+PASS [14] only one conversion per contact
+PASS [15] output retains native vector points and pressure
+PASS [16] output is deep-copied, source geometry never changed
+RESULT: 16/16 portable Kotlin core tests passed
