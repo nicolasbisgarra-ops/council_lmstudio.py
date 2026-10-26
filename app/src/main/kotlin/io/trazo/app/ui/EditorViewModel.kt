@@ -1,6 +1,8 @@
 package io.trazo.app.ui
 
 import android.app.Application
+import android.content.ContentResolver
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -30,7 +32,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.OutputStream
 
 /**
  * Estado de un cuaderno abierto. El [controller] sobrevive a rotaciones; cada página tiene su
@@ -40,7 +41,10 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private val repo = app.trazo.repository
     private val settings = app.trazo.settings
 
-    var notebook by mutableStateOf(repo.loadNotebook(notebookId))
+    var notebook by mutableStateOf<Notebook?>(null)
+        private set
+    /** El cuaderno se lee fuera del hilo principal; mientras tanto la pantalla muestra un indicador. */
+    var loading by mutableStateOf(true)
         private set
     var pageIndex by mutableIntStateOf(0)
         private set
@@ -64,13 +68,17 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     val viewport = Viewport()
     private val pages = HashMap<String, Pair<PageState, History>>()
     private var saveJob: Job? = null
+    /** Versión de los cambios y última versión confirmada en disco (abrir o mirar no modifica). */
+    private var editVersion = 0L
+    private var savedVersion = 0L
+    private var attaching = false
 
     val controller = InkController(patterns = { repo.patterns.value }, ids = IdGenerator.RANDOM).apply {
         val offset = System.currentTimeMillis() - android.os.SystemClock.uptimeMillis()
         strokeClock = { it + offset }
         addListener { e ->
             when (e) {
-                InkEvent.PageChanged -> { revision++; scheduleSave() }
+                InkEvent.PageChanged -> { revision++; if (!attaching) markDirty() }
                 InkEvent.SelectionChanged -> hasSelection = selection.isNotEmpty()
                 is InkEvent.Converted -> lastConversion = e
                 is InkEvent.Ambiguous -> ambiguous = e
@@ -80,7 +88,12 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     }
 
     init {
-        notebook?.let { attachPage(0) }
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) { repo.loadNotebook(notebookId) }
+            notebook = n
+            if (n != null) attachPage(0)
+            loading = false
+        }
     }
 
     val pageCount: Int get() = notebook?.pages?.size ?: 0
@@ -111,7 +124,12 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         val page = n.pages[index]
         val (state, history) = pages.getOrPut(page.id) { PageState(page.strokes) to History() }
         pageIndex = index
-        controller.attach(state, history)
+        attaching = true
+        try {
+            controller.attach(state, history)
+        } finally {
+            attaching = false
+        }
     }
 
     fun goToPage(index: Int) {
@@ -128,18 +146,18 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         notebook = n.copy(pages = n.pages + Page(IdGenerator.RANDOM.next()))
         attachPage(n.pages.size)
         viewport.scale = 0f
-        scheduleSave()
+        markDirty()
     }
 
     fun setPaper(p: Paper) {
         notebook = notebook?.copy(paper = p)
         revision++
-        scheduleSave()
+        markDirty()
     }
 
     fun rename(name: String) {
         notebook = notebook?.copy(name = name)
-        scheduleSave()
+        markDirty()
     }
 
     /** Elección tras una ambigüedad; con "aprender" activo, el gesto queda como ejemplo del patrón elegido. */
@@ -175,7 +193,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         notebook = n.withPageDuplicated(pageIndex)
         attachPage(pageIndex + 1)
         viewport.scale = 0f
-        scheduleSave()
+        markDirty()
     }
 
     /** Elimina la página actual (no se puede deshacer; la UI pide confirmación). */
@@ -187,7 +205,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         pages.remove(removed)
         attachPage(pageIndex.coerceAtMost(n.pages.size - 2))
         viewport.scale = 0f
-        scheduleSave()
+        markDirty()
     }
 
     fun movePage(delta: Int) {
@@ -196,7 +214,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         if (to !in n.pages.indices) return
         notebook = n.withPageMoved(pageIndex, to)
         attachPage(to)
-        scheduleSave()
+        markDirty()
     }
 
     /** Inserta la tinta de salida de un patrón en el centro de la zona visible. */
@@ -212,15 +230,22 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         fitRequest++
     }
 
-    /** PDF vectorial de todo el cuaderno (para compartir; el formato editable es `.trazo`). */
-    fun exportPdf(out: OutputStream) {
+    /**
+     * Exporta fuera del hilo principal: PDF vectorial de todo el cuaderno o PNG de la página actual
+     * (para compartir; el formato editable es `.trazo`). [onDone] recibe el error, o null si salió bien.
+     */
+    fun exportTo(resolver: ContentResolver, uri: Uri, pdf: Boolean, onDone: (Throwable?) -> Unit) {
         val n = syncNotebook() ?: return
-        PageExporter.writePdf(n, out)
-    }
-
-    fun exportPagePng(out: OutputStream) {
-        val n = syncNotebook() ?: return
-        PageExporter.writePng(n.pages[pageIndex], n.paper, out)
+        val page = n.pages[pageIndex]
+        viewModelScope.launch {
+            val error = withContext(Dispatchers.IO) {
+                runCatching {
+                    val out = resolver.openOutputStream(uri) ?: error("No se pudo abrir el archivo")
+                    out.use { if (pdf) PageExporter.writePdf(n, it) else PageExporter.writePng(page, n.paper, it) }
+                }.exceptionOrNull()
+            }
+            onDone(error)
+        }
     }
 
     /** Vuelca las páginas en edición al modelo inmutable. */
@@ -234,19 +259,30 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         return updated
     }
 
+    private fun markDirty() {
+        editVersion++
+        scheduleSave()
+    }
+
     private fun scheduleSave() {
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
             delay(700)
+            if (savedVersion == editVersion) return@launch
+            val version = editVersion
             val snapshot = syncNotebook() ?: return@launch
-            withContext(Dispatchers.IO) { repo.saveNotebook(snapshot) }
+            val saved = withContext(Dispatchers.IO) { runCatching { repo.saveNotebook(snapshot) }.isSuccess }
+            if (saved) savedVersion = maxOf(savedVersion, version)
         }
     }
 
-    /** Guardado inmediato (al pasar a segundo plano o salir). */
+    /** Guardado inmediato si hay cambios aún no confirmados en disco (al pasar a segundo plano o salir). */
     fun saveNow() {
         saveJob?.cancel()
+        if (savedVersion == editVersion) return
+        val version = editVersion
         syncNotebook()?.let { repo.saveNotebook(it) }
+        savedVersion = version
     }
 
     override fun onCleared() {

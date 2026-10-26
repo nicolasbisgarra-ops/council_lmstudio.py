@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -111,18 +112,20 @@ fun EditorScreen(
 
     LaunchedEffect(settings, density) { vm.applySettings(settings, density) }
 
-    fun saveTo(uri: android.net.Uri?, done: String, write: (java.io.OutputStream) -> Unit) {
+    fun export(uri: android.net.Uri?, pdf: Boolean) {
         if (uri == null) return
-        runCatching { context.contentResolver.openOutputStream(uri)?.use(write) }
-            .onSuccess { Toast.makeText(context, done, Toast.LENGTH_SHORT).show() }
-            .onFailure { Toast.makeText(context, "No se pudo exportar: ${it.message}", Toast.LENGTH_LONG).show() }
+        val appContext = context.applicationContext
+        vm.exportTo(appContext.contentResolver, uri, pdf) { error ->
+            val message = when {
+                error != null -> "No se pudo exportar: ${error.message}"
+                pdf -> "PDF exportado"
+                else -> "Página exportada"
+            }
+            Toast.makeText(appContext, message, if (error == null) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+        }
     }
-    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        saveTo(uri, "PDF exportado", vm::exportPdf)
-    }
-    val pngLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
-        saveTo(uri, "Página exportada", vm::exportPagePng)
-    }
+    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri -> export(uri, pdf = true) }
+    val pngLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri -> export(uri, pdf = false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -161,9 +164,13 @@ fun EditorScreen(
     val notebook = vm.notebook
     if (notebook == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("No se encontró el cuaderno.")
-                TextButton(onClick = onBack) { Text("Volver") }
+            if (vm.loading) {
+                CircularProgressIndicator()
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("No se encontró el cuaderno.")
+                    TextButton(onClick = onBack) { Text("Volver") }
+                }
             }
         }
         return

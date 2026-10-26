@@ -39,6 +39,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +52,9 @@ import io.trazo.app.data.NotebookSummary
 import io.trazo.app.trazo
 import io.trazo.core.Bounds
 import io.trazo.core.Notebook
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -61,23 +66,40 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
     var creating by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<NotebookSummary?>(null) }
     var deleting by remember { mutableStateOf<NotebookSummary?>(null) }
-    var exportId by remember { mutableStateOf<String?>(null) }
-    fun refresh() { items = repo.listNotebooks() }
+    // Sobrevive a una recreación mientras el selector de archivos está abierto.
+    var exportId by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    fun refresh() {
+        scope.launch { items = withContext(Dispatchers.IO) { repo.listNotebooks() } }
+    }
     LaunchedEffect(Unit) { refresh() }
+
+    /** Lectura/escritura de archivos fuera del hilo principal, con aviso del resultado. */
+    fun io(done: String, failed: String, block: () -> Unit) {
+        scope.launch {
+            val error = withContext(Dispatchers.IO) { runCatching(block).exceptionOrNull() }
+            if (error == null) {
+                refresh()
+                Toast.makeText(context, done, Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "$failed: ${error.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         val id = exportId ?: return@rememberLauncherForActivityResult
-        if (uri != null) runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { repo.exportNotebook(id, it) }
-        }.onSuccess { Toast.makeText(context, "Cuaderno exportado", Toast.LENGTH_SHORT).show() }
-            .onFailure { Toast.makeText(context, "No se pudo exportar: ${it.message}", Toast.LENGTH_LONG).show() }
         exportId = null
+        if (uri != null) io("Cuaderno exportado", "No se pudo exportar") {
+            val out = context.contentResolver.openOutputStream(uri) ?: error("No se pudo abrir el archivo")
+            out.use { repo.exportNotebook(id, it) }
+        }
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) runCatching {
-            context.contentResolver.openInputStream(uri)?.use { repo.importNotebook(it) }
-        }.onSuccess { refresh(); Toast.makeText(context, "Cuaderno importado", Toast.LENGTH_SHORT).show() }
-            .onFailure { Toast.makeText(context, "Archivo no válido: ${it.message}", Toast.LENGTH_LONG).show() }
+        if (uri != null) io("Cuaderno importado", "Archivo no válido") {
+            val input = context.contentResolver.openInputStream(uri) ?: error("No se pudo abrir el archivo")
+            input.use { repo.importNotebook(it) }
+        }
     }
 
     Scaffold(
