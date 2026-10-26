@@ -41,6 +41,44 @@ data class Notebook(
     }
 }
 
+fun Notebook.withPageRemoved(index: Int): Notebook {
+    require(pages.size > 1 && index in pages.indices) { "Cannot remove page $index" }
+    return copy(pages = pages.filterIndexed { i, _ -> i != index })
+}
+
+/** Inserta una copia profunda de la página justo después: id de página y de trazos nuevos, grupos reasignados. */
+fun Notebook.withPageDuplicated(index: Int, ids: IdGenerator = IdGenerator.RANDOM): Notebook {
+    require(index in pages.indices) { "No page $index" }
+    val src = pages[index]
+    val copy = Page(ids.next(), src.strokes.copiedWithNewIds(ids))
+    return copy(pages = pages.toMutableList().apply { add(index + 1, copy) })
+}
+
+fun Notebook.withPageMoved(from: Int, to: Int): Notebook {
+    require(from in pages.indices && to in pages.indices) { "Cannot move page $from to $to" }
+    if (from == to) return this
+    return copy(pages = pages.toMutableList().apply { add(to, removeAt(from)) })
+}
+
+object PatternLibrary {
+    /** Fusiona patrones importados con la biblioteca: los idénticos (ignorando updatedAt y enabled) se omiten; mismo id con contenido distinto → id nuevo y nombre "<nombre> (importado)"; el resto se agrega. Conserva el orden: existentes y luego nuevos. */
+    fun merge(existing: List<InkPattern>, incoming: List<InkPattern>, ids: IdGenerator = IdGenerator.RANDOM): List<InkPattern> {
+        val out = existing.toMutableList()
+        for (p in incoming) {
+            val key = p.contentKey()
+            if (out.any { it.contentKey() == key }) continue
+            if (out.none { it.id == p.id }) { out += p; continue }
+            val renamed = p.copy(name = "${p.name} (importado)", builtIn = false)
+            // Reimportar el mismo archivo no debe duplicar la copia renombrada.
+            if (out.any { it.contentKey().copy(id = p.id) == renamed.contentKey() }) continue
+            out += renamed.copy(id = ids.next())
+        }
+        return out
+    }
+
+    private fun InkPattern.contentKey() = copy(updatedAt = 0L, enabled = true)
+}
+
 @Serializable
 private data class NotebookFile(val format: String = FORMAT, val schemaVersion: Int, val notebook: Notebook)
 

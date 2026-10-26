@@ -15,8 +15,8 @@ sealed interface InkEvent {
     data class Converted(val pattern: InkPattern, val score: Float, val removed: List<InkStroke>, val added: List<InkStroke>) : InkEvent
     /** Dos patrones parecidos: no se convierte; la UI puede ofrecer elegir (con vistas previas en tinta). */
     data class Ambiguous(val options: List<Match>, val gestureIds: List<String>, val anchor: Bounds) : InkEvent
-    /** Pausa cumplida pero sin coincidencia clara: se conserva la escritura. */
-    data object NotRecognized : InkEvent
+    /** Pausa cumplida sin coincidencia clara: se conserva la escritura. [candidates] son los grupos de ids (del más chico al más grande, el primero es solo el trazo actual) que la UI puede ofrecer para enseñar como gesto. */
+    data class NotRecognized(val candidates: List<List<String>>, val anchor: Bounds) : InkEvent
 }
 
 /**
@@ -269,7 +269,9 @@ class InkController(
                     return true
                 }
                 Recognition.None -> {
-                    emit(InkEvent.NotRecognized)
+                    val gesture = trimHold(currentStroke())
+                    val groups = recognizer.candidateGroups(gesture, page.strokes)
+                    emit(InkEvent.NotRecognized(groups.map { g -> g.map { it.id } }, gesture.bounds))
                     return true
                 }
             }
@@ -305,13 +307,25 @@ class InkController(
     }
 
     /** El usuario eligió un patrón tras una ambigüedad. */
-    fun chooseAmbiguous(pattern: InkPattern, gestureIds: List<String>): Boolean {
-        val gesture = gestureIds.map { page.find(it) ?: return false }
-        val output = InkReplacement.place(pattern, gesture.bounds(), ids, strokeClock(gesture.last().endTime))
+    fun chooseAmbiguous(pattern: InkPattern, gestureIds: List<String>): Boolean = convertWith(pattern, gestureIds) != null
+
+    /** Todos los trazos con esos ids, en ese orden, o null si falta alguno. */
+    fun strokesById(ids: List<String>): List<InkStroke>? = ids.map { page.find(it) ?: return null }
+
+    /**
+     * Reemplaza esos trazos (que deben estar en la página) por la salida de [pattern] en un solo paso deshacible (StrokeEdit.Kind.CONVERT); emite Converted(score = 1f) y PageChanged. Devuelve la tinta insertada o null si falta algún trazo.
+     * @param nowMs reloj de eventos para el startTime de la salida; 0 = el final del gesto.
+     */
+    fun convertWith(pattern: InkPattern, gestureIds: List<String>, nowMs: Long = 0L): List<InkStroke>? {
+        if (mode != Mode.NONE || gestureIds.isEmpty()) return null
+        val gesture = strokesById(gestureIds.distinct()) ?: return null
+        val start = strokeClock(if (nowMs != 0L) nowMs else gesture.last().endTime)
+        val output = InkReplacement.place(pattern, gesture.bounds(), ids, start)
         history.perform(page, StrokeEdit(gesture, output, StrokeEdit.Kind.CONVERT))
+        if (selection.any { it in gestureIds }) clearSelection()
         emit(InkEvent.Converted(pattern, 1f, gesture, output))
         emit(InkEvent.PageChanged)
-        return true
+        return output
     }
 
     /** Inserta la tinta de un patrón centrada en (cx, cy) con altura [height] (desde la biblioteca). */
@@ -334,6 +348,32 @@ class InkController(
     fun select(ids: List<String>) {
         selection = ids.filter { page.contains(it) }
         emit(InkEvent.SelectionChanged)
+    }
+
+    fun selectAll() {
+        if (mode != Mode.NONE) return
+        select(page.strokes.map { it.id })
+    }
+
+    /** Duplica la selección desplazada (dx, dy): ids nuevos; los groupId se reasignan de forma consistente (los que compartían grupo comparten el nuevo); la selección pasa a ser la copia. Un solo StrokeEdit.Kind.INSERT. Devuelve los ids nuevos. */
+    fun duplicateSelection(dx: Float = 24f, dy: Float = 24f): List<String> {
+        if (mode != Mode.NONE) return emptyList()
+        val strokes = selection.mapNotNull { page.find(it) }
+        if (strokes.isEmpty()) return emptyList()
+        val copies = strokes.copiedWithNewIds(ids, Affine.translate(dx, dy))
+        history.perform(page, StrokeEdit(emptyList(), copies, StrokeEdit.Kind.INSERT))
+        selection = copies.map { it.id }
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+        return selection
+    }
+
+    /** Cambia el color de la selección en un solo paso deshacible (mismos ids, Kind.TRANSFORM). */
+    fun recolorSelection(color: Int) {
+        if (mode != Mode.NONE) return
+        val strokes = selection.mapNotNull { page.find(it) }.filter { it.color != color }
+        if (strokes.isEmpty()) return
+        history.perform(page, StrokeEdit(strokes, strokes.map { it.copy(color = color) }, StrokeEdit.Kind.TRANSFORM))
+        emit(InkEvent.PageChanged)
     }
 
     fun deleteSelection() {

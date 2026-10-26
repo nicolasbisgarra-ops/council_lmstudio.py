@@ -45,6 +45,37 @@ data class InkPattern(
 
     companion object {
         const val DEFAULT_MIN_SCORE = 0.80f
+        const val MAX_EXAMPLES = 8
+    }
+}
+
+/** Agrega el gesto (normalizado) como ejemplo. Si se supera [maxExamples], conserva siempre el primero (el enseñado originalmente) y los más recientes. */
+fun InkPattern.withGestureExample(gesture: List<InkStroke>, maxExamples: Int = InkPattern.MAX_EXAMPLES, now: Long = 0L): InkPattern {
+    require(maxExamples >= 1)
+    val all = gestureExamples + listOf(GestureExamples.normalize(gesture))
+    val kept = if (all.size <= maxExamples) all else listOf(all.first()) + all.takeLast(maxExamples - 1)
+    return copy(gestureExamples = kept, updatedAt = now)
+}
+
+object GestureExamples {
+    /** Copia normalizada de un gesto para guardarlo como ejemplo: ids "ex-1", "ex-2"…, startTime relativo al primer trazo (el primero = 0), groupId = null, patternId = null, color/width/presión/tiempos de puntos conservados. Se traslada para que el borde superior izquierdo quede en (margin, margin); si el lado mayor supera box - 2*margin se escala uniformemente para caber (sin cambiar width). */
+    fun normalize(gesture: List<InkStroke>, box: Float = 400f, margin: Float = 20f): List<InkStroke> {
+        require(gesture.isNotEmpty()) { "Empty gesture" }
+        val b = gesture.bounds()
+        val room = box - 2 * margin
+        val s = if (b.maxSide > room && room > 0f) room / b.maxSide else 1f
+        val t = Affine.translate(-b.left, -b.top)
+            .then(Affine(a = s, d = s))
+            .then(Affine.translate(margin, margin))
+        val t0 = gesture.first().startTime
+        return gesture.mapIndexed { i, stroke ->
+            stroke.transformed(t, scaleWidth = false).copy(
+                id = "ex-${i + 1}",
+                startTime = stroke.startTime - t0,
+                groupId = null,
+                patternId = null,
+            )
+        }
     }
 }
 
