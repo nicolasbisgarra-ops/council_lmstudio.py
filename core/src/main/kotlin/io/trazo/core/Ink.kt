@@ -136,6 +136,15 @@ fun InkStroke.transformed(t: Affine, scaleWidth: Boolean = true): InkStroke = co
     width = if (scaleWidth) (width * t.scale).coerceIn(0.5f, 60f) else width,
 )
 
+/** Copia con ids nuevos; los [InkStroke.groupId] se reasignan de forma consistente (mismo grupo → mismo grupo nuevo). */
+internal fun List<InkStroke>.copiedWithNewIds(ids: IdGenerator, t: Affine = Affine.IDENTITY): List<InkStroke> {
+    val groups = HashMap<String, String>()
+    return map { s ->
+        val moved = if (t == Affine.IDENTITY) s else s.transformed(t, scaleWidth = false)
+        moved.copy(id = ids.next(), groupId = s.groupId?.let { groups.getOrPut(it) { ids.next() } })
+    }
+}
+
 /** Generador de identificadores; inyectable para pruebas deterministas. */
 fun interface IdGenerator {
     fun next(): String
