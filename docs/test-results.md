@@ -9,8 +9,8 @@ Separados por **nivel de evidencia**, como pide `05_PRUEBAS_ACEPTACION.md`. Una 
 | 1. JVM — motor `:core` | ✅ **81/81** | local (OpenJDK 21) y GitHub Actions (JDK 17) |
 | 2. JVM — app (`SourcePolicyTest`: sin WebView/LaTeX/texto en la hoja) | ✅ 5/5 | GitHub Actions |
 | 3. Compilación `assembleDebug` + `assembleDebugAndroidTest` | ✅ | GitHub Actions, AGP 8.7.3, compileSdk 35 |
-| 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ⏳ en curso (última corrida completa: 11/13; las 2 fallas ya corregidas) | GitHub Actions, emulador API 34 Pixel 6, sin red |
-| 5. Demo grabada en la app nativa (emulador, automatizada) | ✅ ejercicio grabado (corrida #2); la versión con "enseñar" está en curso | `output/demo-real-android.mp4` |
+| 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ✅ **16/16** (corrida #6, commit `c4491c7`) | GitHub Actions, emulador API 34 Pixel 6, sin red |
+| 5. Demo grabada en la app nativa (emulador, automatizada) | ✅ **2/2** (ejercicio completo + enseñar un gesto), video de 10 MB | `output/demo-real-android.mp4` |
 | 6. Físicas con S Pen (S24 Ultra / Tab S11) | ❌ **no realizadas** | no hubo hardware disponible |
 
 Los niveles 4 y 5 usan eventos `TOOL_TYPE_STYLUS` / `SOURCE_STYLUS` **sintetizados** e inyectados con `UiAutomation` (o despachados a la vista). Prueban la app real y el flujo de entrada de Android, pero **no** la latencia, la presión física, el rechazo de palma real ni la ergonomía del S Pen.
@@ -54,26 +54,28 @@ Evidencia del motor (rotulada "SIMULACIÓN JVM"): `output/jvm/exercise-final.png
 
 | ID | Prueba | Resultado |
 |---|---|---|
-| T01 | `t01_freeDrawingCreatesAStrokeWithSamples` | ✅ corrida #2 |
-| T02 | `t02_integralHeldOneSecondBecomesHandwrittenOutput` | ✅ corrida #2 |
-| T03 | `t03_liftingAt900msNeverConverts` | ✅ corrida #2 |
-| T10 | `t10_twoStrokeRootIsReplacedAsVectors` | ✅ corrida #2 |
-| T11 | `t11_fractionLineBecomesHandwrittenBar` | ✅ corrida #2 |
-| T12 | `t12_outputCanBeWrittenOverAndPartiallyErased` | ✅ corrida #2 |
-| T13 / T14 | `t13_t14_undoAndRedoConversionAsSingleActions` | ✅ corrida #2 |
-| T17 | `t17_notesAndPatternsPersistAcrossRecreateAndBackground` | ✅ corrida #2 |
-| T18 | `t18_zoomKeepsDocumentGeometry` | ❌ corrida #2 (el pellizco de prueba era menor al mínimo de Android); prueba corregida, ⏳ |
-| T19 (simulada) | `t19_fingerTouchWhileStylusIsDownDoesNotDraw`, `t19b_actionCancelDiscardsTheStroke` | ✅ corrida #2 |
-| T20 | `t20_recreatingDuringAGestureCancelsSafely` | ❌ corrida #2: **error real de la app** (la pausa seguía contando durante la recreación y convertía); corregido (pausa/foco/ventana oculta cancelan), ⏳ |
-| T23 | `t23_noWebViewInTheHierarchy` | ✅ corrida #2 |
-| T16 | `ExportInstrumentedTest` (PDF con una página por hoja, PNG válido) | ⏳ nueva |
-| — | `t25_twoFingerTapUndoesTheLastChange` | ⏳ nueva |
+| T01 | `t01_freeDrawingCreatesAStrokeWithSamples` | ✅ |
+| T02 | `t02_integralHeldOneSecondBecomesHandwrittenOutput` | ✅ |
+| T03 | `t03_liftingAt900msNeverConverts` | ✅ |
+| T10 | `t10_twoStrokeRootIsReplacedAsVectors` | ✅ |
+| T11 | `t11_fractionLineBecomesHandwrittenBar` | ✅ |
+| T12 | `t12_outputCanBeWrittenOverAndPartiallyErased` | ✅ |
+| T13 / T14 | `t13_t14_undoAndRedoConversionAsSingleActions` | ✅ |
+| T17 | `t17_notesAndPatternsPersistAcrossRecreateAndBackground` | ✅ |
+| T18 | `t18_zoomKeepsDocumentGeometry` | ✅ (en la corrida #2 falló la prueba: el pellizco era menor al mínimo de Android; corregida) |
+| T19 (simulada) | `t19_fingerTouchWhileStylusIsDownDoesNotDraw`, `t19b_actionCancelDiscardsTheStroke` | ✅ |
+| T20 | `t20_recreatingDuringAGestureCancelsSafely` | ✅ (ver historia: se corrigió la app —interrupciones cancelan— y la prueba, que esperaba inactividad con el lápiz apoyado) |
+| T23 | `t23_noWebViewInTheHierarchy` | ✅ |
+| T16 | `ExportInstrumentedTest` (PDF con una página por hoja, PNG válido) | ✅ |
+| — | `t25_twoFingerTapUndoesTheLastChange` | ✅ |
 
 ### Historia de ejecuciones en CI
 
 - Corrida #1: compilación y pruebas JVM ✅ al primer intento; falló solo el paso que arma el video del motor (faltaba `ffmpeg` en el runner) → corregido.
 - Corrida #2: APK ✅; emulador: 11/13 instrumentadas ✅, demo del ejercicio ✅ (video de 7,5 MB y capturas); fallaron T18 (prueba) y T20 (error real) → corregidos.
-- Corrida #3: compilación de las nuevas capacidades ✅ (aprender de correcciones, páginas, selección, PDF/PNG, patrones, tablet).
+- Corrida #3: compilación de las nuevas capacidades ✅ (aprender de correcciones, páginas, selección, PDF/PNG, patrones, tablet); el emulador se canceló al llegar la corrida #4.
+- Corrida #4: 15/16 instrumentadas ✅ (T18 ya pasa; exportación y deshacer con dos dedos nuevos ✅) y **demo 2/2 ✅**; T20 seguía fallando porque la prueba esperaba inactividad con el lápiz apoyado (ese tiempo quieto contaba como pausa) → prueba corregida.
+- Corrida #6 (`c4491c7`): **todo verde** — compilación, JVM, 16/16 instrumentadas y demo 2/2 (video de 10 MB y 5 capturas).
 
 ## 5. Demo grabada (T22 en la app nativa)
 

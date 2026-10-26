@@ -29,17 +29,10 @@ jobs:
           ./gradlew --console=plain --stacktrace
           :core:test :app:testDebugUnitTest
           :app:assembleDebug :app:assembleDebugAndroidTest
-          -Ptrazo.frames=true
-      - name: Video del motor (simulación JVM, rotulada)
+      - name: Evidencias del motor (render JVM rotulado)
         if: always()
-        continue-on-error: true
         run: |
           mkdir -p output/jvm
-          command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
-          if ls core/build/reports/trazo-evidence/frames/*.png >/dev/null 2>&1; then
-            ffmpeg -loglevel error -y -framerate 30 -i core/build/reports/trazo-evidence/frames/f%05d.png \
-              -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -pix_fmt yuv420p output/jvm/simulacion-motor-jvm.mp4
-          fi
           cp core/build/reports/trazo-evidence/*.png core/build/reports/trazo-evidence/*.txt output/jvm/ 2>/dev/null || true
       - name: Reunir APKs
         run: |
@@ -95,7 +88,7 @@ jobs:
         run: |
           mkdir -p output
           cp artifact/output/Trazo-debug.apk artifact/output/SHA256SUMS-apk.txt output/
-          mkdir -p output/jvm && cp -r artifact/output/jvm/. output/jvm/ || true
+          mkdir -p output/jvm && cp artifact/output/jvm/*.png artifact/output/jvm/*.txt output/jvm/ 2>/dev/null || true
           mv output/emulator/demo-real-android-emulador.mp4 output/demo-real-android.mp4 || true
           git config user.name "trazo-ci"
           git config user.email "trazo-ci@users.noreply.github.com"
