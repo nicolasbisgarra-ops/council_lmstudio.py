@@ -10,7 +10,11 @@ App **nativa de Android** (Kotlin, Jetpack Compose + una `View` de tinta propia 
 - **Lápiz** con presión y muestras históricas; **goma parcial** (recorta tramos), **goma de trazo**, extremo goma del S Pen y botón lateral como goma; **lazo** para mover, escalar (tirador), girar o borrar.
 - **Gesto + pausa de 1 s con contacto**: reconoce el gesto (uno o varios trazos recientes y cercanos) y lo reemplaza en **un solo paso deshacible** por la tinta de salida. Si se levanta antes, no convierte. Si no hay coincidencia clara, conserva la escritura. Si dos patrones se parecen, no convierte y ofrece elegir (con vistas previas en tinta).
 - **Editor de patrones**: a la izquierda el *gesto a reconocer* (uno o más ejemplos), a la derecha *cómo quiero que quede*; tamaño de salida, escala, confianza mínima, pausa propia, y una zona de **prueba**. Incluye 3 patrones de ejemplo construidos con vectores (integral, raíz, fracción).
-- **Persistencia local offline** (JSON versionado, escritura atómica), autoguardado, **exportar/importar** `.trazo` (ZIP editable con cuaderno + patrones usados). Sin permisos de red.
+- **Aprende de tus correcciones**: si una pausa no reconoce el gesto, aparece "Enseñar"; elegís qué trazos eran el gesto y qué patrón querías, se reemplaza y el gesto queda guardado como ejemplo, así la próxima vez se reconoce solo. También se puede crear un patrón nuevo a partir de ese gesto.
+- **Páginas**: agregar, duplicar, mover y eliminar. **Selección**: mover, escalar, girar, duplicar, cambiar color, borrar; "Seleccionar todo". "Ajustar a la página" después de hacer zoom.
+- **Persistencia local offline** (JSON versionado, escritura atómica), autoguardado, **exportar/importar** `.trazo` (ZIP editable con cuaderno + patrones usados) y la **biblioteca de patrones** (JSON). Sin permisos de red.
+- **Compartir** el cuaderno como **PDF vectorial** o una página como **PNG** (solo exportación; el formato fuente sigue siendo de trazos).
+- En **tablet** los patrones quedan en un panel lateral; en teléfono, en una hoja inferior. Vibración breve al convertir, rechazo de palma también por tamaño de contacto, **toque con dos dedos = deshacer**.
 
 ## Estructura
 

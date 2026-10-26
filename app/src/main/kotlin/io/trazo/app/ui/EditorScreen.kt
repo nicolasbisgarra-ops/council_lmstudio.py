@@ -230,6 +230,7 @@ fun EditorScreen(
                                 InkCanvasView(ctx).apply {
                                     viewport = vm.viewport
                                     controller = vm.controller
+                                    onTwoFingerTap = vm::undo
                                 }
                             },
                             update = { v ->

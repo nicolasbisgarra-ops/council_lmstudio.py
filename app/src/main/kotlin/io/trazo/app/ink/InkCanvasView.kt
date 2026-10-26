@@ -17,11 +17,13 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.ViewConfiguration
 import io.trazo.core.InkController
 import io.trazo.core.InkEvent
 import io.trazo.core.Notebook
 import io.trazo.core.Paper
 import io.trazo.core.PointerKind
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
@@ -77,6 +79,8 @@ class InkCanvasView @JvmOverloads constructor(
     var showHoldIndicator = true
     /** Vibración breve al reemplazar un gesto por su tinta. */
     var hapticsEnabled = true
+    /** Toque rápido con dos dedos (sin desplazar ni hacer zoom): por defecto, deshacer. */
+    var onTwoFingerTap: (() -> Unit)? = null
     var darkPaper = false
         set(value) { if (field != value) { field = value; invalidateContent() } }
 
@@ -102,8 +106,14 @@ class InkCanvasView @JvmOverloads constructor(
     private var navigating = false
     private var lastFocusX = 0f
     private var lastFocusY = 0f
+    private var tapStartTime = 0L
+    private var tapMaxPointers = 0
+    private var tapTravel = 0f
+    private var tapScaled = false
+    private val tapSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
+            tapScaled = true
             zoomBy(detector.scaleFactor, detector.focusX, detector.focusY)
             return true
         }
@@ -371,6 +381,15 @@ class InkCanvasView @JvmOverloads constructor(
         if (mode == Mode.PAD) return
         scaleDetector.onTouchEvent(event)
         val action = event.actionMasked
+        when (action) {
+            MotionEvent.ACTION_DOWN -> { tapStartTime = event.eventTime; tapMaxPointers = 1; tapTravel = 0f; tapScaled = false }
+            MotionEvent.ACTION_POINTER_DOWN -> tapMaxPointers = max(tapMaxPointers, event.pointerCount)
+            MotionEvent.ACTION_UP -> if (tapMaxPointers == 2 && !tapScaled && tapTravel < tapSlop * 2 &&
+                event.eventTime - tapStartTime < TWO_FINGER_TAP_MS
+            ) {
+                onTwoFingerTap?.invoke()
+            }
+        }
         val skip = if (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) event.actionIndex else -1
         var sx = 0f; var sy = 0f; var n = 0
         for (i in 0 until event.pointerCount) {
@@ -380,7 +399,10 @@ class InkCanvasView @JvmOverloads constructor(
         if (n == 0) return
         val fx = sx / n
         val fy = sy / n
-        if (action == MotionEvent.ACTION_MOVE) panBy(fx - lastFocusX, fy - lastFocusY)
+        if (action == MotionEvent.ACTION_MOVE) {
+            tapTravel += hypot(fx - lastFocusX, fy - lastFocusY)
+            panBy(fx - lastFocusX, fy - lastFocusY)
+        }
         lastFocusX = fx; lastFocusY = fy
     }
 
@@ -472,5 +494,6 @@ class InkCanvasView @JvmOverloads constructor(
         private const val INVALID = -1
         private const val PALM_WINDOW_MS = 500L
         private const val FLAG_CANCELED = 0x20
+        private const val TWO_FINGER_TAP_MS = 300L
     }
 }

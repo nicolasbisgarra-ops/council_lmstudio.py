@@ -15,3 +15,8 @@
 13. **Entorno de desarrollo sin Android SDK.** El contenedor donde se escribió el código no podía descargar el SDK ni Google Maven (host bloqueado por la política de red). El motor se compiló y probó localmente; la app se compila, prueba y graba en GitHub Actions (`.github/workflows/android.yml`). Ver `test-results.md`.
 14. **APK de release** firmada con la clave debug para facilitar pruebas; cambiar la firma antes de publicar.
 15. **Demo automatizada:** `HandScript` (en `testFixtures`, nunca en la APK) genera los recorridos del lápiz sintético para escribir el ejercicio; la app los recibe como eventos de lápiz y los guarda como tinta normal. La demo muestra un cartel "DEMO AUTOMATIZADA" en la interfaz (fuera de la hoja).
+16. **Aprender de las correcciones** (opción activada por defecto): cuando el usuario elige qué patrón era un gesto no reconocido o ambiguo, ese gesto se guarda como ejemplo del patrón (máximo 8, se conservan el primero y los más recientes). Así el reconocimiento se adapta a la letra de cada persona sin red ni IA.
+17. **Interrupciones cancelan**: pausa de la actividad, pérdida de foco u ocultar la ventana descartan el trazo en curso (el handoff pide cancelar ante "interrupción, pérdida de foco"). Se pierde a lo sumo el trazo que se estaba dibujando.
+18. **Eliminar página no se deshace** (el historial es por página); por eso pide confirmación. Duplicar y mover sí son inmediatos.
+19. **Exportar PDF/PNG** solo para compartir. El PDF conserva los trazos como trayectos vectoriales; el formato editable sigue siendo `.trazo`.
+20. **Palma por tamaño**: además de ignorar el dedo mientras el lápiz está apoyado o cerca, un contacto de más de 20 mm de ancho (`touchMajor`) se trata como palma.

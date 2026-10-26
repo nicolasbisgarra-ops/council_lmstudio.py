@@ -96,9 +96,11 @@ jobs:
           mkdir -p output
           cp artifact/output/Trazo-debug.apk artifact/output/SHA256SUMS-apk.txt output/
           mkdir -p output/jvm && cp -r artifact/output/jvm/. output/jvm/ || true
-          cp output/emulator/demo-real-android-emulador.mp4 output/demo-real-android.mp4 || true
+          mv output/emulator/demo-real-android-emulador.mp4 output/demo-real-android.mp4 || true
           git config user.name "trazo-ci"
           git config user.email "trazo-ci@users.noreply.github.com"
-          git add -f output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm output/emulator output/demo-real-android.mp4 || true
+          for p in output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm output/emulator output/demo-real-android.mp4; do
+            if [ -e "$p" ]; then git add -f "$p"; fi
+          done
           git commit -m "Evidencias de CI: APK, demo en emulador y reportes [skip ci]" || exit 0
           git push origin HEAD:${{ github.ref_name }}

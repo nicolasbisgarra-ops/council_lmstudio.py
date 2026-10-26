@@ -201,6 +201,26 @@ class EditorInstrumentedTest {
         assertEquals(cy, p0.y, 2f)
     }
 
+    @Test fun t25_twoFingerTapUndoesTheLastChange() {
+        pen.stroke(listOf(150f to 300f, 400f to 360f))
+        assertEquals(1, strokes().size)
+        SystemClock.sleep(800) // fuera de la ventana de rechazo de palma
+        scenario.onActivity { a ->
+            val v = a.window.decorView.findViewWithTag<InkCanvasView>(InkCanvasView.TAG)
+            val t = SystemClock.uptimeMillis()
+            fun ev(action: Int, n: Int, time: Long): MotionEvent {
+                val props = Array(n) { i -> MotionEvent.PointerProperties().apply { id = i; toolType = MotionEvent.TOOL_TYPE_FINGER } }
+                val coords = Array(n) { i -> MotionEvent.PointerCoords().apply { x = 300f + i * 150f; y = 600f; pressure = 1f; size = 0.1f } }
+                return MotionEvent.obtain(t, time, action, n, props, coords, 0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
+            }
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_DOWN, 1, t))
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, t + 20))
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, t + 90))
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_UP, 1, t + 110))
+        }
+        assertTrue("deshecho con dos dedos", strokes().isEmpty())
+    }
+
     @Test fun t19_fingerTouchWhileStylusIsDownDoesNotDraw() {
         scenario.onActivity { a ->
             val v = a.window.decorView.findViewWithTag<InkCanvasView>(InkCanvasView.TAG)
