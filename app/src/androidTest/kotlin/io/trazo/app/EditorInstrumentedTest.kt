@@ -158,12 +158,19 @@ class EditorInstrumentedTest {
     }
 
     @Test fun t20_recreatingDuringAGestureCancelsSafely() {
+        // Pausa larga: si la recreación tarda, un lápiz quieto 1 s convertiría con toda razón.
+        app.settings.update { it.copy(holdMillis = 2000L) }
+        instrumentation.waitForIdleSync()
+        SystemClock.sleep(300)
         pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 300, lift = false)
         scenario.recreate()
         waitForCanvas()
         pen.liftAt(150f, 150f)
-        SystemClock.sleep(1200)
-        assertTrue("sin conversión ni trazo fantasma", strokes().none { it.patternId != null })
+        SystemClock.sleep(2500)
+        assertTrue("sin conversión ni trazo fantasma", strokes().isEmpty())
+        // La hoja sigue funcionando después de recrear.
+        pen.stroke(listOf(300f to 600f, 500f to 650f))
+        assertEquals(1, strokes().size)
     }
 
     @Test fun t18_zoomKeepsDocumentGeometry() {

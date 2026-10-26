@@ -65,8 +65,9 @@ class StylusDriver(private val view: () -> InkCanvasView) {
         if (lift) {
             SystemClock.sleep(sampleMs)
             inject(MotionEvent.ACTION_UP, ex, ey, 0.7f, tool)
+            // Con el lápiz apoyado no se espera inactividad: el tiempo quieto contaría como pausa.
+            instrumentation.waitForIdleSync()
         }
-        instrumentation.waitForIdleSync()
     }
 
     fun liftAt(docX: Float, docY: Float) {
