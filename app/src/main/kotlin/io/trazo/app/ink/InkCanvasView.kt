@@ -334,7 +334,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun kindOf(event: MotionEvent, index: Int): PointerKind = when (event.getToolType(index)) {
         MotionEvent.TOOL_TYPE_ERASER -> PointerKind.STYLUS_ERASER
         MotionEvent.TOOL_TYPE_STYLUS ->
-            if (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY != 0) PointerKind.STYLUS_ERASER else PointerKind.STYLUS
+            if ((event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0) PointerKind.STYLUS_ERASER else PointerKind.STYLUS
         MotionEvent.TOOL_TYPE_MOUSE -> PointerKind.MOUSE
         else -> PointerKind.FINGER
     }

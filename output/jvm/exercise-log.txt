@@ -1,0 +1,5 @@
+Simulación JVM del motor (lápiz sintético, sin Android ni S Pen)
+Trazos en la página: 59
+t=11408 convertido: integral (0.96)
+t=36672 convertido: raiz (0.97)
+t=42768 convertido: fraccion (0.98)

@@ -80,7 +80,7 @@ fun PatternLibraryScreen(onBack: () -> Unit, onEdit: (String?) -> Unit) {
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
             items(patterns, key = { it.id }) { p ->
-                Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), onClick = { onEdit(p.id) }) {
+                Card(onClick = { onEdit(p.id) }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         // Vista previa en tinta: gesto → salida.
                         InkPreview(p.gestureExamples.first(), Modifier.size(72.dp).background(MaterialTheme.colorScheme.surface))

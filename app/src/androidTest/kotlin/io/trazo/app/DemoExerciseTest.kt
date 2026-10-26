@@ -51,7 +51,7 @@ class DemoExerciseTest {
         SystemClock.sleep(1500)
         val pen = StylusDriver { canvas() }
 
-        fun strokes(): List<InkStroke> { var r = emptyList<InkStroke>(); scenario.onActivity { r = canvas().controller!!.page.strokes.toList() }; return r }
+        fun strokes(): List<InkStroke> { var r = emptyList<InkStroke>(); scenario.onActivity { a -> r = a.window.decorView.findViewWithTag<InkCanvasView>(InkCanvasView.TAG).controller!!.page.strokes.toList() }; return r }
         fun lastOutput(): Bounds = strokes().filter { it.patternId != null }.let { all -> all.filter { it.groupId == all.last().groupId }.bounds() }
         fun write(text: String, x: Float, y: Float, size: Float): Float {
             val (paths, end) = HandScript.write(text, x, y, size, seed = text.hashCode())

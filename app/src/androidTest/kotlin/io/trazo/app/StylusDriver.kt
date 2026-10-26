@@ -22,8 +22,8 @@ class StylusDriver(private val view: () -> InkCanvasView) {
     /** Convierte coordenadas de documento a pantalla usando la transformación actual de la vista. */
     fun toScreen(points: List<Pair<Float, Float>>): List<Pair<Float, Float>> {
         val out = ArrayList<Pair<Float, Float>>(points.size)
+        val v = view() // fuera del hilo principal: puede usar ActivityScenario.onActivity
         instrumentation.runOnMainSync {
-            val v = view()
             val loc = IntArray(2)
             v.getLocationOnScreen(loc)
             points.forEach { (x, y) ->

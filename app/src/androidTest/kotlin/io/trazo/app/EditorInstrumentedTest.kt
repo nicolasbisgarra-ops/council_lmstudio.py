@@ -77,7 +77,7 @@ class EditorInstrumentedTest {
 
     private fun <T> onController(block: (InkController) -> T): T {
         var r: T? = null
-        scenario.onActivity { r = block(canvas().controller!!) }
+        scenario.onActivity { a -> r = block(a.window.decorView.findViewWithTag<InkCanvasView>(InkCanvasView.TAG).controller!!) }
         @Suppress("UNCHECKED_CAST")
         return r as T
     }
