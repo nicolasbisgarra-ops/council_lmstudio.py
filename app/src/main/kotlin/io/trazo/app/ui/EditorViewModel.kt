@@ -21,6 +21,10 @@ import io.trazo.core.Page
 import io.trazo.core.PageState
 import io.trazo.core.Paper
 import io.trazo.core.Tool
+import io.trazo.core.withGestureExample
+import io.trazo.core.withPageDuplicated
+import io.trazo.core.withPageMoved
+import io.trazo.core.withPageRemoved
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -34,6 +38,7 @@ import java.io.OutputStream
  */
 class EditorViewModel(app: Application, val notebookId: String) : AndroidViewModel(app) {
     private val repo = app.trazo.repository
+    private val settings = app.trazo.settings
 
     var notebook by mutableStateOf(repo.loadNotebook(notebookId))
         private set
@@ -46,6 +51,10 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         private set
     var ambiguous by mutableStateOf<InkEvent.Ambiguous?>(null)
     var lastConversion by mutableStateOf<InkEvent.Converted?>(null)
+    /** Pausa sin coincidencia: se ofrece enseñar el gesto (aviso discreto). */
+    var teachOffer by mutableStateOf<InkEvent.NotRecognized?>(null)
+    /** Hoja abierta para elegir qué patrón era el gesto. */
+    var teaching by mutableStateOf<InkEvent.NotRecognized?>(null)
     var hasSelection by mutableStateOf(false)
         private set
     /** Cambia cuando se pide volver a encajar la hoja; la vista lo observa. */
@@ -65,7 +74,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
                 InkEvent.SelectionChanged -> hasSelection = selection.isNotEmpty()
                 is InkEvent.Converted -> lastConversion = e
                 is InkEvent.Ambiguous -> ambiguous = e
-                InkEvent.NotRecognized -> Unit
+                is InkEvent.NotRecognized -> teachOffer = e
             }
         }
     }
@@ -94,6 +103,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     fun redo() { controller.redo() }
     val canUndo: Boolean get() { revision; return controller.history.canUndo }
     val canRedo: Boolean get() { revision; return controller.history.canRedo }
+    /** Hay un trazo en curso: los diálogos esperan a que se levante el lápiz. */
+    val isDrawing: Boolean get() { revision; return controller.isContactActive }
 
     private fun attachPage(index: Int) {
         val n = notebook ?: return
@@ -131,10 +142,61 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         scheduleSave()
     }
 
+    /** Elección tras una ambigüedad; con "aprender" activo, el gesto queda como ejemplo del patrón elegido. */
     fun chooseAmbiguous(pattern: InkPattern?) {
         val a = ambiguous ?: return
         ambiguous = null
-        if (pattern != null) controller.chooseAmbiguous(pattern, a.gestureIds)
+        if (pattern != null) teach(pattern, a.gestureIds)
+    }
+
+    /** Trazos de un grupo candidato, si siguen en la página. */
+    fun strokesOf(ids: List<String>) = controller.strokesById(ids)
+
+    /** Reemplaza el gesto por la tinta del patrón y, si corresponde, lo guarda como ejemplo nuevo. */
+    fun teach(pattern: InkPattern, gestureIds: List<String>): Boolean {
+        val gesture = controller.strokesById(gestureIds) ?: return false
+        controller.convertWith(pattern, gestureIds, android.os.SystemClock.uptimeMillis()) ?: return false
+        if (settings.settings.value.learnFromCorrections) {
+            val current = repo.patterns.value.firstOrNull { it.id == pattern.id } ?: pattern
+            repo.upsertPattern(current.withGestureExample(gesture, now = System.currentTimeMillis()))
+        }
+        return true
+    }
+
+    fun duplicateSelection() { controller.duplicateSelection() }
+    fun recolorSelection(color: Int) { controller.recolorSelection(color) }
+    fun selectAll() {
+        selectTool(Tool.LASSO)
+        controller.selectAll()
+    }
+
+    fun duplicatePage() {
+        val n = syncNotebook() ?: return
+        notebook = n.withPageDuplicated(pageIndex)
+        attachPage(pageIndex + 1)
+        viewport.scale = 0f
+        scheduleSave()
+    }
+
+    /** Elimina la página actual (no se puede deshacer; la UI pide confirmación). */
+    fun deletePage() {
+        val n = syncNotebook() ?: return
+        if (n.pages.size < 2) return
+        val removed = n.pages[pageIndex].id
+        notebook = n.withPageRemoved(pageIndex)
+        pages.remove(removed)
+        attachPage(pageIndex.coerceAtMost(n.pages.size - 2))
+        viewport.scale = 0f
+        scheduleSave()
+    }
+
+    fun movePage(delta: Int) {
+        val n = syncNotebook() ?: return
+        val to = pageIndex + delta
+        if (to !in n.pages.indices) return
+        notebook = n.withPageMoved(pageIndex, to)
+        attachPage(to)
+        scheduleSave()
     }
 
     /** Inserta la tinta de salida de un patrón en el centro de la zona visible. */

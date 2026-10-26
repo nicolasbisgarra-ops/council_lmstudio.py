@@ -7,6 +7,7 @@ import io.trazo.core.InkPattern
 import io.trazo.core.Notebook
 import io.trazo.core.Page
 import io.trazo.core.Paper
+import io.trazo.core.PatternLibrary
 import io.trazo.core.TrazoFormat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -61,6 +62,23 @@ class TrazoRepository(root: File) {
         _patterns.value.firstOrNull { it.id == id }?.let { upsertPattern(it.copy(enabled = enabled)) }
     }
 
+    /** Biblioteca completa como JSON versionado, para llevar los patrones a otro dispositivo. */
+    fun exportPatterns(out: OutputStream) {
+        out.write(TrazoFormat.encodePatterns(patterns.value).toByteArray(Charsets.UTF_8))
+    }
+
+    /** Fusiona los patrones de un archivo exportado; devuelve cuántos se agregaron. */
+    fun importPatterns(input: InputStream): Int =
+        mergePatterns(TrazoFormat.decodePatterns(input.readBytes().toString(Charsets.UTF_8)))
+
+    private fun mergePatterns(incoming: List<InkPattern>): Int = synchronized(lock) {
+        val before = _patterns.value
+        val merged = PatternLibrary.merge(before, incoming)
+        _patterns.value = merged
+        writePatterns(merged)
+        merged.size - before.size
+    }
+
     /** Vuelve a agregar (o restaura) los patrones de ejemplo sin tocar los del usuario. */
     fun restoreDefaultPatterns() {
         val defaults = DefaultPatterns.all()
@@ -112,7 +130,7 @@ class TrazoRepository(root: File) {
         if (fileFor(n.id).baseFile.exists()) n = n.copy(id = IdGenerator.RANDOM.next(), name = n.name + " (importado)")
         n = n.copy(updatedAt = System.currentTimeMillis())
         saveNotebook(n)
-        archive.patterns.filter { p -> patterns.value.none { it.id == p.id } }.forEach { upsertPattern(it) }
+        mergePatterns(archive.patterns)
         return n
     }
 

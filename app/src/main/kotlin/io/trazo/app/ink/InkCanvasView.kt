@@ -60,12 +60,13 @@ class InkCanvasView @JvmOverloads constructor(
     var mode: Mode = Mode.NOTEBOOK
         set(value) { field = value; fitIfNeeded(force = true) }
 
+    /** El controlador vive más que la vista (ViewModel): solo se escucha mientras está en pantalla. */
     var controller: InkController? = null
         set(value) {
             if (field === value) return
             field?.removeListener(listener)
             field = value
-            value?.addListener(listener)
+            if (isAttachedToWindow) value?.addListener(listener)
             invalidateContent()
         }
 
@@ -243,12 +244,41 @@ class InkCanvasView @JvmOverloads constructor(
         invalidateContent()
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        controller?.let { it.removeListener(listener); it.addListener(listener) }
+        invalidateContent()
+    }
+
     override fun onDetachedFromWindow() {
         // Rotación / cierre a mitad de un trazo: cancelar, nunca convertir.
-        if (drawingPointerId != INVALID) { controller?.cancel(); drawingPointerId = INVALID }
-        removeCallbacks(ticker)
+        cancelContact()
+        controller?.removeListener(listener)
         cache?.recycle(); cache = null
         super.onDetachedFromWindow()
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (!hasWindowFocus) cancelContact()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility != VISIBLE) cancelContact()
+    }
+
+    /**
+     * Interrupción (pausa, pérdida de foco, ventana oculta): se descarta el trazo en curso y la pausa
+     * deja de contar, así nunca se convierte un gesto interrumpido.
+     */
+    fun cancelContact() {
+        if (drawingPointerId != INVALID) {
+            controller?.cancel()
+            drawingPointerId = INVALID
+            invalidate()
+        }
+        removeCallbacks(ticker)
     }
 
     // ------------------------------------------------------------------ entrada
@@ -265,6 +295,8 @@ class InkCanvasView @JvmOverloads constructor(
         val index = event.actionIndex
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                // Un DOWN inicia siempre un gesto nuevo: se descarta cualquier contacto que quedó colgado.
+                if (action == MotionEvent.ACTION_DOWN) { cancelContact(); navigating = false }
                 val tool = event.getToolType(index)
                 val kind = kindOf(event, index)
                 val canDraw = isStylus(tool) || tool == MotionEvent.TOOL_TYPE_MOUSE ||

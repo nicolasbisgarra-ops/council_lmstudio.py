@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import io.trazo.app.trazo
+import io.trazo.core.GestureExamples
 import io.trazo.core.History
 import io.trazo.core.IdGenerator
 import io.trazo.core.InkController
@@ -37,7 +38,11 @@ class Pad(strokes: List<InkStroke> = emptyList(), patterns: () -> List<InkPatter
  * Editor izquierda/derecha: "Gesto a reconocer" (uno o varios ejemplos) y "Cómo quiero que quede".
  * Al guardar se crea un [InkPattern] nuevo; las notas existentes no cambian (tienen copias).
  */
-class PatternEditorViewModel(app: Application, private val patternId: String?) : AndroidViewModel(app) {
+class PatternEditorViewModel(
+    app: Application,
+    private val patternId: String?,
+    seedGesture: List<InkStroke>? = null,
+) : AndroidViewModel(app) {
     private val repo = app.trazo.repository
     private val original = patternId?.let { id -> repo.patterns.value.firstOrNull { it.id == id } }
 
@@ -52,7 +57,9 @@ class PatternEditorViewModel(app: Application, private val patternId: String?) :
     var testResult by mutableStateOf<String?>(null)
 
     val gestureExamples = mutableStateListOf<Pad>().apply {
-        (original?.gestureExamples ?: listOf(emptyList())).forEach { add(Pad(it)) }
+        // Un gesto enseñado desde la hoja llega como primer ejemplo.
+        val initial = original?.gestureExamples ?: listOf(seedGesture?.let { GestureExamples.normalize(it) } ?: emptyList())
+        initial.forEach { add(Pad(it)) }
     }
     var currentExample by mutableIntStateOf(0)
     val output = Pad(original?.outputInk ?: emptyList())
@@ -66,7 +73,7 @@ class PatternEditorViewModel(app: Application, private val patternId: String?) :
             testResult = when (e) {
                 is InkEvent.Converted -> "Reconocido (${"%.0f".format(e.score * 100)} %)"
                 is InkEvent.Ambiguous -> "Dudoso: no se convierte"
-                InkEvent.NotRecognized -> "No reconocido: se conserva la escritura"
+                is InkEvent.NotRecognized -> "No reconocido: se conserva la escritura"
                 else -> testResult
             }
         }

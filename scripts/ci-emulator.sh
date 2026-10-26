@@ -24,7 +24,7 @@ adb shell svc wifi disable || true
 adb shell svc data disable || true
 
 echo "== Pruebas instrumentadas =="
-adb shell am instrument -w -e class io.trazo.app.EditorInstrumentedTest "$RUNNER" | tee "$OUT/pruebas-instrumentadas.txt"
+adb shell am instrument -w -e class io.trazo.app.EditorInstrumentedTest,io.trazo.app.ExportInstrumentedTest "$RUNNER" | tee "$OUT/pruebas-instrumentadas.txt"
 
 echo "== Demo grabada =="
 adb shell rm -f /sdcard/trazo-demo.mp4
@@ -37,7 +37,7 @@ adb shell pkill -INT screenrecord || true
 wait $REC || true
 sleep 4
 adb pull /sdcard/trazo-demo.mp4 "$OUT/demo-real-android-emulador.mp4" || true
-for f in trazo-demo-1-integral trazo-demo-2-integral-resuelta trazo-demo-3-final; do
+for f in trazo-demo-1-integral trazo-demo-2-integral-resuelta trazo-demo-3-final trazo-demo-4-ensenar trazo-demo-5-aprendido; do
   adb pull "/data/local/tmp/$f.png" "$OUT/$f.png" || true
 done
 adb logcat -d -t 2000 > "$OUT/logcat.txt" || true

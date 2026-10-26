@@ -122,7 +122,9 @@ class EditorInstrumentedTest {
     @Test fun t12_outputCanBeWrittenOverAndPartiallyErased() {
         pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 1300)
         val output = strokes().single()
-        pen.stroke(listOf(260f to 240f, 330f to 260f))
+        // Escritura nueva sobre la salida (un límite arriba a la derecha), lejos de la goma.
+        val top = output.bounds
+        pen.stroke(listOf(top.right + 4f to top.top - 30f, top.right + 30f to top.top))
         onController { it.tool = Tool.ERASER }
         val mid = output.points[output.points.size / 2]
         pen.stroke(listOf(mid.x - 4f to mid.y, mid.x + 4f to mid.y))
@@ -181,11 +183,12 @@ class EditorInstrumentedTest {
                 return MotionEvent.obtain(t, time, action, n, props, coords, 0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
             }
             val scale0 = v.pxPerUnit
-            v.dispatchTouchEvent(ev(MotionEvent.ACTION_DOWN, 100f, 1, t))
-            v.dispatchTouchEvent(ev(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 100f, 2, t + 10))
-            for (k in 1..10) v.dispatchTouchEvent(ev(MotionEvent.ACTION_MOVE, 100f + k * 20f, 2, t + 10 + k * 16))
-            v.dispatchTouchEvent(ev(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 300f, 2, t + 200))
-            v.dispatchTouchEvent(ev(MotionEvent.ACTION_UP, 300f, 1, t + 210))
+            // ScaleGestureDetector ignora separaciones menores a ~27 mm: se abre de 300 a 1200 px.
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_DOWN, 150f, 1, t))
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 150f, 2, t + 10))
+            for (k in 1..15) v.dispatchTouchEvent(ev(MotionEvent.ACTION_MOVE, 150f + k * 30f, 2, t + 10 + k * 16))
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 600f, 2, t + 300))
+            v.dispatchTouchEvent(ev(MotionEvent.ACTION_UP, 600f, 1, t + 310))
             assertTrue("zoom aplicado", v.pxPerUnit > scale0 * 1.5f)
             center = v.screenToDocument(v.width / 2f, v.height / 2f)
         }

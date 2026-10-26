@@ -3,6 +3,9 @@
 package io.trazo.app.ui
 
 import android.app.Application
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -55,21 +58,35 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.trazo.app.ink.InkCanvasView
 import io.trazo.app.trazo
+import io.trazo.core.InkStroke
 import io.trazo.core.OutputSizing
 import io.trazo.core.Paper
 
 @Composable
 fun PatternLibraryScreen(onBack: () -> Unit, onEdit: (String?) -> Unit) {
-    val repo = LocalContext.current.trazo.repository
+    val context = LocalContext.current
+    val repo = context.trazo.repository
     val patterns by repo.patterns.collectAsState()
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) runCatching { context.contentResolver.openOutputStream(uri)?.use(repo::exportPatterns) }
+            .onSuccess { Toast.makeText(context, "Patrones exportados", Toast.LENGTH_SHORT).show() }
+            .onFailure { Toast.makeText(context, "No se pudo exportar: ${it.message}", Toast.LENGTH_LONG).show() }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) runCatching { context.contentResolver.openInputStream(uri)?.use(repo::importPatterns) ?: 0 }
+            .onSuccess { n -> Toast.makeText(context, "Patrones agregados: $n", Toast.LENGTH_SHORT).show() }
+            .onFailure { Toast.makeText(context, "Archivo no válido: ${it.message}", Toast.LENGTH_LONG).show() }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Patrones") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver") } },
                 actions = {
+                    TextButton(onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) }) { Text("Importar") }
+                    TextButton(onClick = { exportLauncher.launch("patrones.trazo-patrones.json") }) { Text("Exportar") }
                     TextButton(onClick = repo::restoreDefaultPatterns) {
-                        Icon(Icons.Filled.Refresh, null); Text(" Restaurar ejemplos")
+                        Icon(Icons.Filled.Refresh, null); Text(" Ejemplos")
                     }
                 },
             )
@@ -104,9 +121,9 @@ fun PatternLibraryScreen(onBack: () -> Unit, onEdit: (String?) -> Unit) {
 }
 
 @Composable
-fun PatternEditorScreen(patternId: String?, onDone: () -> Unit) {
+fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null, onDone: () -> Unit) {
     val app = LocalContext.current.applicationContext as Application
-    val vm: PatternEditorViewModel = viewModel(key = "pattern-${patternId ?: "new"}") { PatternEditorViewModel(app, patternId) }
+    val vm: PatternEditorViewModel = viewModel(key = "pattern-${patternId ?: "new"}") { PatternEditorViewModel(app, patternId, seedGesture) }
     val settings by app.trazo.settings.settings.collectAsState()
     val density = LocalDensity.current.density
     vm.revision // recomponer al dibujar
