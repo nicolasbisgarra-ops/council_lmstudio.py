@@ -60,6 +60,9 @@ fun SettingsScreen(onBack: () -> Unit) {
             Slider(value = s.eraserRadiusDp, valueRange = 4f..40f, onValueChange = { v -> store.update { it.copy(eraserRadiusDp = v) } })
             SwitchRow("Gestos con pausa de lápiz", s.gesturesEnabled) { on -> store.update { it.copy(gesturesEnabled = on) } }
             SwitchRow("Escribir también con el dedo (el dedo deja de desplazar la hoja)", s.fingerDraws) { on -> store.update { it.copy(fingerDraws = on) } }
+            SwitchRow("Mostrar el anillo de pausa", s.showHoldIndicator) { on -> store.update { it.copy(showHoldIndicator = on) } }
+            SwitchRow("Vibrar al reemplazar un gesto", s.haptics) { on -> store.update { it.copy(haptics = on) } }
+            SwitchRow("Aprender de mis correcciones (guardar el gesto como ejemplo)", s.learnFromCorrections) { on -> store.update { it.copy(learnFromCorrections = on) } }
             Spacer(Modifier.height(16.dp))
             Text("Papel de los cuadernos nuevos (cada cuaderno puede cambiarlo):", style = MaterialTheme.typography.bodySmall)
             Row {

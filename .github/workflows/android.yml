@@ -32,8 +32,10 @@ jobs:
           -Ptrazo.frames=true
       - name: Video del motor (simulación JVM, rotulada)
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p output/jvm
+          command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
           if ls core/build/reports/trazo-evidence/frames/*.png >/dev/null 2>&1; then
             ffmpeg -loglevel error -y -framerate 30 -i core/build/reports/trazo-evidence/frames/f%05d.png \
               -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -pix_fmt yuv420p output/jvm/simulacion-motor-jvm.mp4

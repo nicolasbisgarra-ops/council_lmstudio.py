@@ -17,6 +17,10 @@ data class TrazoSettings(
     val paper: Paper = Paper.LINES,
     val penColor: Int = DEFAULT_INK_COLOR,
     val penWidth: Float = 3f,
+    val showHoldIndicator: Boolean = true,
+    val haptics: Boolean = true,
+    /** Cuando el usuario corrige o enseña un gesto en la hoja, se guarda como ejemplo del patrón. */
+    val learnFromCorrections: Boolean = true,
 )
 
 class SettingsStore(context: Context) {
@@ -33,6 +37,9 @@ class SettingsStore(context: Context) {
         paper = runCatching { Paper.valueOf(prefs.getString("paper", Paper.LINES.name)!!) }.getOrDefault(Paper.LINES),
         penColor = prefs.getInt("penColor", DEFAULT_INK_COLOR),
         penWidth = prefs.getFloat("penWidth", 3f),
+        showHoldIndicator = prefs.getBoolean("showHoldIndicator", true),
+        haptics = prefs.getBoolean("haptics", true),
+        learnFromCorrections = prefs.getBoolean("learnFromCorrections", true),
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
@@ -46,6 +53,9 @@ class SettingsStore(context: Context) {
             .putString("paper", s.paper.name)
             .putInt("penColor", s.penColor)
             .putFloat("penWidth", s.penWidth)
+            .putBoolean("showHoldIndicator", s.showHoldIndicator)
+            .putBoolean("haptics", s.haptics)
+            .putBoolean("learnFromCorrections", s.learnFromCorrections)
             .apply()
         _settings.value = s
     }

@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.trazo.app.data.PageExporter
 import io.trazo.app.data.TrazoSettings
 import io.trazo.app.ink.Viewport
 import io.trazo.app.trazo
@@ -25,6 +26,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.OutputStream
 
 /**
  * Estado de un cuaderno abierto. El [controller] sobrevive a rotaciones; cada página tiene su
@@ -32,7 +34,6 @@ import kotlinx.coroutines.withContext
  */
 class EditorViewModel(app: Application, val notebookId: String) : AndroidViewModel(app) {
     private val repo = app.trazo.repository
-    private val settingsStore = app.trazo.settings
 
     var notebook by mutableStateOf(repo.loadNotebook(notebookId))
         private set
@@ -46,6 +47,9 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     var ambiguous by mutableStateOf<InkEvent.Ambiguous?>(null)
     var lastConversion by mutableStateOf<InkEvent.Converted?>(null)
     var hasSelection by mutableStateOf(false)
+        private set
+    /** Cambia cuando se pide volver a encajar la hoja; la vista lo observa. */
+    var fitRequest by mutableIntStateOf(0)
         private set
 
     val viewport = Viewport()
@@ -139,6 +143,22 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(80f, Notebook.PAGE_WIDTH - 80f)
         val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(80f, Notebook.PAGE_HEIGHT - 80f)
         controller.insertPattern(pattern, cx, cy, 140f, android.os.SystemClock.uptimeMillis())
+    }
+
+    fun fitToPage() {
+        viewport.scale = 0f
+        fitRequest++
+    }
+
+    /** PDF vectorial de todo el cuaderno (para compartir; el formato editable es `.trazo`). */
+    fun exportPdf(out: OutputStream) {
+        val n = syncNotebook() ?: return
+        PageExporter.writePdf(n, out)
+    }
+
+    fun exportPagePng(out: OutputStream) {
+        val n = syncNotebook() ?: return
+        PageExporter.writePng(n.pages[pageIndex], n.paper, out)
     }
 
     /** Vuelca las páginas en edición al modelo inmutable. */

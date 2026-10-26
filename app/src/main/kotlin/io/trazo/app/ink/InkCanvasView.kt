@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
@@ -73,6 +74,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     var fingerDraws = false
     var showHoldIndicator = true
+    /** Vibración breve al reemplazar un gesto por su tinta. */
+    var hapticsEnabled = true
     var darkPaper = false
         set(value) { if (field != value) { field = value; invalidateContent() } }
 
@@ -131,9 +134,21 @@ class InkCanvasView @JvmOverloads constructor(
     private val listener: (InkEvent) -> Unit = { e ->
         when (e) {
             InkEvent.PageChanged -> invalidateContent()
+            is InkEvent.Converted -> {
+                if (hapticsEnabled) {
+                    performHapticFeedback(
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) HapticFeedbackConstants.CONFIRM
+                        else HapticFeedbackConstants.VIRTUAL_KEY,
+                    )
+                }
+                invalidate()
+            }
             else -> invalidate()
         }
     }
+
+    /** Contacto de dedo más ancho que esto (en px) se trata como palma. */
+    private val palmTouchMajorPx = 20f * resources.displayMetrics.xdpi / 25.4f
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -169,6 +184,9 @@ class InkCanvasView @JvmOverloads constructor(
         if (width == 0 || height == 0) 0f
         else if (mode == Mode.PAD) min(width / pageWidth, height / pageHeight)
         else width / pageWidth
+
+    /** Vuelve a encajar la hoja al ancho de la vista (botón "Ajustar"). */
+    fun fitToPage() = fitIfNeeded(force = true)
 
     private fun fitIfNeeded(force: Boolean) {
         if (width == 0 || height == 0) return
@@ -255,8 +273,11 @@ class InkCanvasView @JvmOverloads constructor(
                     stylusNearUntil = event.eventTime + PALM_WINDOW_MS
                     if (navigating) navigating = false
                 }
+                // Palma: dedo mientras el lápiz está apoyado o cerca, o un contacto demasiado ancho.
                 val palmBlocked = tool == MotionEvent.TOOL_TYPE_FINGER &&
-                    (drawingKind != PointerKind.FINGER && drawingPointerId != INVALID || event.eventTime < stylusNearUntil)
+                    (drawingKind != PointerKind.FINGER && drawingPointerId != INVALID ||
+                        event.eventTime < stylusNearUntil ||
+                        event.getTouchMajor(index) > palmTouchMajorPx)
                 if (canDraw && drawingPointerId == INVALID && !navigating && !palmBlocked) {
                     if (action == MotionEvent.ACTION_DOWN && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         requestUnbufferedDispatch(event)

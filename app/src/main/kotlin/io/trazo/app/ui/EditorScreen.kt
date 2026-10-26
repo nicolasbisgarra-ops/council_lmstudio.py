@@ -3,6 +3,9 @@
 package io.trazo.app.ui
 
 import android.app.Application
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,7 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -78,7 +81,8 @@ import io.trazo.core.Tool
 
 @Composable
 fun EditorScreen(notebookId: String, onBack: () -> Unit, onPatterns: () -> Unit, onSettings: () -> Unit) {
-    val app = LocalContext.current.applicationContext as Application
+    val context = LocalContext.current
+    val app = context.applicationContext as Application
     val vm: EditorViewModel = viewModel(key = "editor-$notebookId") { EditorViewModel(app, notebookId) }
     val settings by app.trazo.settings.settings.collectAsState()
     val patterns by app.trazo.repository.patterns.collectAsState()
@@ -88,6 +92,19 @@ fun EditorScreen(notebookId: String, onBack: () -> Unit, onPatterns: () -> Unit,
     var canvasSize by remember { mutableStateOf(0 to 0) }
 
     LaunchedEffect(settings, density) { vm.applySettings(settings, density) }
+
+    fun saveTo(uri: android.net.Uri?, done: String, write: (java.io.OutputStream) -> Unit) {
+        if (uri == null) return
+        runCatching { context.contentResolver.openOutputStream(uri)?.use(write) }
+            .onSuccess { Toast.makeText(context, done, Toast.LENGTH_SHORT).show() }
+            .onFailure { Toast.makeText(context, "No se pudo exportar: ${it.message}", Toast.LENGTH_LONG).show() }
+    }
+    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        saveTo(uri, "PDF exportado", vm::exportPdf)
+    }
+    val pngLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
+        saveTo(uri, "Página exportada", vm::exportPagePng)
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -135,7 +152,12 @@ fun EditorScreen(notebookId: String, onBack: () -> Unit, onPatterns: () -> Unit,
                     }
                     IconButton(onClick = vm::addPage) { Icon(Icons.Filled.Add, "Nueva página") }
                     PaperMenu(vm.paper, vm::setPaper)
-                    IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Ajustes") }
+                    EditorMenu(
+                        onFit = vm::fitToPage,
+                        onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
+                        onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
+                        onSettings = onSettings,
+                    )
                 },
             )
         },
@@ -164,10 +186,13 @@ fun EditorScreen(notebookId: String, onBack: () -> Unit, onPatterns: () -> Unit,
                     },
                     update = { v ->
                         vm.pageIndex // releer al cambiar de página
+                        vm.fitRequest // y al pedir "Ajustar a la página"
                         v.controller = vm.controller
                         v.viewport = vm.viewport
                         v.paper = vm.paper
                         v.fingerDraws = settings.fingerDraws
+                        v.showHoldIndicator = settings.showHoldIndicator
+                        v.hapticsEnabled = settings.haptics
                         v.darkPaper = dark
                     },
                     modifier = Modifier.fillMaxSize(),
@@ -282,6 +307,20 @@ private fun SelectionBar(vm: EditorViewModel) {
             IconButton(onClick = { vm.controller.deleteSelection() }) { Icon(Icons.Filled.Delete, "Borrar selección") }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { vm.controller.clearSelection() }) { Icon(Icons.Filled.Close, "Quitar selección") }
+        }
+    }
+}
+
+@Composable
+private fun EditorMenu(onFit: () -> Unit, onPdf: () -> Unit, onPng: () -> Unit, onSettings: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Más opciones") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Ajustar a la página") }, onClick = { open = false; onFit() })
+            DropdownMenuItem(text = { Text("Exportar cuaderno como PDF…") }, onClick = { open = false; onPdf() })
+            DropdownMenuItem(text = { Text("Exportar página como PNG…") }, onClick = { open = false; onPng() })
+            DropdownMenuItem(text = { Text("Ajustes") }, onClick = { open = false; onSettings() })
         }
     }
 }
