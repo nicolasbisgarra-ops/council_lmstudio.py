@@ -1,7 +1,7 @@
 
 io.trazo.app.DemoExerciseTest:..
 
-Time: 183.841
+Time: 176.189
 
 OK (2 tests)
 
