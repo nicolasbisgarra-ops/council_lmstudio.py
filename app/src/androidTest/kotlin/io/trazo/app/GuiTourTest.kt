@@ -130,16 +130,32 @@ class GuiTourTest {
      * emulador de CI el deslizamiento con el dedo no movía la fila.
      */
     private fun scrollToolbarTo(desc: String, y: Int) {
-        repeat(12) {
+        val tried = mutableListOf<String>()
+        repeat(12) { i ->
             // Lo que queda fuera de la fila no está en el árbol: si no aparece, se sigue deslizando.
             val b = device.findObject(By.desc(desc))?.visibleBounds
             if (b != null && b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return
-            val row = scrollableAt(instrumentation.uiAutomation.rootInActiveWindow, y)
-                ?: error("No hay fila deslizable en y=$y. En pantalla: ${onScreen()}")
-            row.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-            SystemClock.sleep(400)
+            // Se alternan tres vías porque cada emulador responde a una distinta: el gesto de
+            // UiAutomator dentro de la fila, la acción de accesibilidad «a la derecha» y la «adelante».
+            val row = device.findObjects(By.scrollable(true)).firstOrNull {
+                val r = it.visibleBounds
+                y in r.top..r.bottom && r.width() > r.height()
+            }
+            when (i % 3) {
+                0 -> {
+                    row?.setGestureMargins(row.visibleBounds.width() / 8, 0, row.visibleBounds.width() / 8, 0)
+                    tried += "gesto:${row?.visibleBounds}:${row?.scroll(androidx.test.uiautomator.Direction.RIGHT, 0.8f)}"
+                }
+                else -> {
+                    val node = scrollableAt(instrumentation.uiAutomation.rootInActiveWindow, y)
+                    val action = if (i % 3 == 1) android.R.id.accessibilityActionScrollRight
+                    else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                    tried += "a11y$action:${node?.className}:${node?.performAction(action)}"
+                }
+            }
+            SystemClock.sleep(500)
         }
-        error("$desc no quedó a la vista. En pantalla: ${onScreen()}")
+        error("$desc no quedó a la vista. Intentos: $tried. En pantalla: ${onScreen()}")
     }
 
     /** El nodo deslizable más bajo que cruza la altura [y]. */
