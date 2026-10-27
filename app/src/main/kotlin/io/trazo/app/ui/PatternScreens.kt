@@ -409,7 +409,7 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                 )
                 SwitchRow("Pausa propia para este patrón", vm.customHold, { vm.customHold = it })
                 if (vm.customHold) {
-                    LabeledSlider("Pausa", "${vm.holdMillis.toLong()} ms", vm.holdMillis, 500f..2000f, onChange = { vm.holdMillis = it }, steps = 14)
+                    LabeledSlider("Pausa", "${vm.holdMillis.toLong()} ms", vm.holdMillis, 100f..1000f, onChange = { vm.holdMillis = Math.round(it / 100) * 100f }, steps = 8)
                 }
                 SwitchRow(
                     "Barra elástica", vm.elastic, { vm.elastic = it },

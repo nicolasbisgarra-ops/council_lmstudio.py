@@ -111,8 +111,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         subtitle = "Sostené la punta quieta al terminar un gesto y se reemplaza por tu tinta.",
                     )
                     LabeledSlider(
-                        "Pausa para convertir", "${s.holdMillis} ms", s.holdMillis.toFloat(), 500f..2000f,
-                        onChange = { v -> update { it.copy(holdMillis = (v / 100).toLong() * 100) } }, steps = 14,
+                        "Pausa para convertir", "${s.holdMillis} ms", s.holdMillis.toFloat(), 100f..1000f,
+                        onChange = { v -> update { it.copy(holdMillis = Math.round(v / 100) * 100L) } }, steps = 8,
                     )
                     LabeledSlider(
                         "Temblor tolerado", "${"%.0f".format(s.tremorRadiusDp)} dp", s.tremorRadiusDp, 2f..16f,
