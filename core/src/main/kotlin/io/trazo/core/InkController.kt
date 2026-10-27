@@ -413,14 +413,14 @@ class InkController(
         return output
     }
 
-    /** Inserta la tinta de un patrón centrada en (cx, cy) con altura [height] (desde la biblioteca), con el estilo actual. */
+    /** Inserta la tinta de un patrón centrada en (cx, cy) con altura [height] (desde la biblioteca), con el estilo actual; la barra elástica conserva su largo natural. */
     fun insertPattern(pattern: InkPattern, cx: Float, cy: Float, height: Float, nowMs: Long = 0L): List<InkStroke> {
         val src = pattern.outputInk.bounds()
         val aspect = if (src.height > 0.5f) src.width / src.height else 1f
         val h = (if (src.height > 0.5f) height else height * 0.1f) / pattern.outputScale.coerceAtLeast(0.01f)
         val w = if (src.height > 0.5f) h * aspect else height * 2f / pattern.outputScale.coerceAtLeast(0.01f)
         val anchor = Bounds(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
-        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style)
+        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style, elastic = false)
         history.perform(page, StrokeEdit(emptyList(), output, StrokeEdit.Kind.INSERT))
         emit(InkEvent.PageChanged)
         return output

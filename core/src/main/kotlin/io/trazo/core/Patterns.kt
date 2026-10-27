@@ -15,6 +15,68 @@ enum class OutputSizing {
     FIXED,
 }
 
+/** Eje de una [Stretch]. */
+@Serializable
+enum class Axis { HORIZONTAL, VERTICAL }
+
+/**
+ * Zona elástica de la salida: entre [from] y [to] (fracciones del ancho —o del alto, según [axis]— de la
+ * tinta de salida) la tinta se estira o se encoge para llegar hasta donde terminó el gesto; el resto
+ * conserva su forma. Así la barra de la raíz cubre todo el radicando sin deformar el ✓.
+ * [minFactor] limita cuánto puede encogerse la zona (fracción de su largo natural).
+ */
+@Serializable
+data class Stretch(
+    val axis: Axis = Axis.HORIZONTAL,
+    val from: Float,
+    val to: Float = 1f,
+    val minFactor: Float = 0.2f,
+) {
+    companion object {
+        /** Barra horizontal al final (derecha) de [ink], como la de la raíz; null si no hay una barra clara (larga y fina). */
+        fun detectBar(ink: List<InkStroke>): Stretch? {
+            if (ink.isEmpty()) return null
+            val b = ink.bounds()
+            if (b.width <= 0.5f || b.height <= 0.5f) return null
+            val maxThickness = 0.12f * b.height
+            var start = b.right
+            var thickness = 0f
+            for (i in 1..200) {
+                val x = b.right - b.width * i / 200f
+                val t = extentRightOf(ink, x)
+                if (t > maxThickness) break
+                start = x
+                thickness = t
+            }
+            val length = b.right - start
+            if (length < 0.3f * b.width || length < 4f * thickness) return null
+            return Stretch(Axis.HORIZONTAL, from = (start - b.left) / b.width, to = 1f)
+        }
+
+        /** Alto de la tinta a la derecha de [x] (los segmentos que cruzan [x] se recortan). */
+        private fun extentRightOf(ink: List<InkStroke>, x: Float): Float {
+            var lo = Float.POSITIVE_INFINITY
+            var hi = Float.NEGATIVE_INFINITY
+            fun add(y: Float) {
+                if (y < lo) lo = y
+                if (y > hi) hi = y
+            }
+            for (stroke in ink) {
+                val pts = stroke.points
+                for (i in pts.indices) {
+                    val p = pts[i]
+                    if (p.x >= x) add(p.y)
+                    if (i > 0) {
+                        val q = pts[i - 1]
+                        if ((q.x < x) != (p.x < x)) add(q.y + (p.y - q.y) * (x - q.x) / (p.x - q.x))
+                    }
+                }
+            }
+            return if (hi >= lo) hi - lo else 0f
+        }
+    }
+}
+
 /**
  * Patrón enseñado por el usuario: dos dibujos independientes.
  *  - [gestureExamples]: uno o más ejemplos del gesto a reconocer (cada uno es una lista de trazos).
@@ -39,6 +101,8 @@ data class InkPattern(
     val updatedAt: Long = 0L,
     /** Sección de la biblioteca ([PatternCategory]); null = patrones propios del usuario. */
     val category: String? = null,
+    /** Barra elástica de la salida ([Stretch]); null = la salida se escala sin deformarse. */
+    val stretch: Stretch? = null,
 ) {
     init {
         require(gestureExamples.isNotEmpty() && gestureExamples.all { it.isNotEmpty() }) { "Pattern needs a gesture" }
@@ -101,10 +165,13 @@ object GestureExamples {
 /** Inserta la salida de un patrón como copia profunda transformada de sus trazos. */
 object InkReplacement {
     /**
-     * @param anchor rectángulo del gesto; la salida se centra en él.
+     * @param anchor rectángulo del gesto; la salida se centra en él. Si el patrón tiene una [InkPattern.stretch]
+     *  y [elastic] es true, la salida se alinea a la izquierda (o arriba) del gesto y su zona elástica se
+     *  estira o se encoge para terminar justo donde terminó el gesto.
      * @param style estilo con que se escribió el gesto: los trazos de salida con el color por defecto
      *  adoptan su color, su grosor (proporcional) y su punta; los que se enseñaron con otro color lo
      *  conservan. Un estilo de resaltador no se adopta.
+     * @param elastic false = escala uniforme aunque haya zona elástica (inserción desde la biblioteca).
      * @return trazos nuevos (ids nuevos, mismo [InkStroke.groupId], [InkStroke.patternId] = patrón).
      */
     fun place(
@@ -114,9 +181,12 @@ object InkReplacement {
         startTime: Long = 0L,
         groupId: String = ids.next(),
         style: InkStyle? = null,
+        elastic: Boolean = true,
     ): List<InkStroke> {
         val src = pattern.outputInk.bounds()
         val eps = 0.5f
+        val zone = pattern.stretch?.takeIf { elastic }?.sanitized()
+            ?.takeIf { (if (it.axis == Axis.HORIZONTAL) src.width else src.height) > eps }
         val scaleH = if (src.height > eps) anchor.height / src.height else Float.NaN
         val scaleW = if (src.width > eps) anchor.width / src.width else Float.NaN
         val s = when (pattern.sizing) {
@@ -131,22 +201,72 @@ object InkReplacement {
             when {
                 raw.isNaN() || raw <= 0f -> 1f
                 // Un gesto casi plano (p. ej. una línea) no debe encoger la salida hasta desaparecer.
-                pattern.sizing != OutputSizing.FIXED && raw * src.maxSide < 0.25f * anchor.maxSide ->
+                // Con zona elástica no hace falta: el largo lo pone la zona, no la escala.
+                zone == null && pattern.sizing != OutputSizing.FIXED && raw * src.maxSide < 0.25f * anchor.maxSide ->
                     anchor.maxSide / src.maxSide.coerceAtLeast(eps)
                 else -> raw
             }
         } * pattern.outputScale
-        val t = Affine.translate(-src.centerX, -src.centerY)
-            .then(Affine(a = s, d = s))
-            .then(Affine.translate(anchor.centerX, anchor.centerY))
-        return pattern.outputInk.map { stroke ->
-            stroke.transformed(t, scaleWidth = false).adopting(style).copy(
+        val placed = if (zone != null) {
+            stretched(pattern.outputInk, src, anchor, s, zone)
+        } else {
+            val t = Affine.translate(-src.centerX, -src.centerY)
+                .then(Affine(a = s, d = s))
+                .then(Affine.translate(anchor.centerX, anchor.centerY))
+            pattern.outputInk.map { it.transformed(t, scaleWidth = false) }
+        }
+        return placed.map { stroke ->
+            stroke.adopting(style).copy(
                 id = ids.next(),
                 startTime = startTime,
                 groupId = groupId,
                 patternId = pattern.id,
             )
         }
+    }
+
+    /**
+     * Escala uniforme [s] salvo en la zona elástica, que absorbe la diferencia hasta el borde del gesto:
+     * la salida empieza en el borde izquierdo (o superior) de [anchor] y termina en el opuesto, salvo que la
+     * zona ya no pueda encogerse más ([Stretch.minFactor]). En el otro eje se centra como siempre.
+     */
+    private fun stretched(ink: List<InkStroke>, src: Bounds, anchor: Bounds, s: Float, zone: Stretch): List<InkStroke> {
+        val horizontal = zone.axis == Axis.HORIZONTAL
+        val start = if (horizontal) src.left else src.top
+        val natural = (if (horizontal) src.width else src.height) * s
+        val target = if (horizontal) anchor.width else anchor.height
+        val za = zone.from * natural
+        val zb = zone.to * natural
+        val len = zb - za
+        val newLen = maxOf(len + target - natural, zone.minFactor * len)
+        val k = if (len > 0f) newLen / len else 1f
+        val delta = newLen - len
+        fun along(v: Float): Float {
+            val u = (v - start) * s
+            return when {
+                u <= za -> u
+                u >= zb -> u + delta
+                else -> za + (u - za) * k
+            }
+        }
+        val origin = if (horizontal) anchor.left else anchor.top
+        val crossFrom = if (horizontal) src.centerY else src.centerX
+        val crossTo = if (horizontal) anchor.centerY else anchor.centerX
+        return ink.map { stroke ->
+            stroke.copy(points = stroke.points.map { p ->
+                if (horizontal) p.copy(x = origin + along(p.x), y = (p.y - crossFrom) * s + crossTo)
+                else p.copy(x = (p.x - crossFrom) * s + crossTo, y = origin + along(p.y))
+            })
+        }
+    }
+
+    /** Zona saneada (finita, dentro de [0, 1] y con largo); null si no sirve. */
+    private fun Stretch.sanitized(): Stretch? {
+        if (!from.isFinite() || !to.isFinite() || !minFactor.isFinite()) return null
+        val a = from.coerceIn(0f, 1f)
+        val b = to.coerceIn(0f, 1f)
+        if (b - a < 0.01f) return null
+        return copy(from = a, to = b, minFactor = minFactor.coerceIn(0f, 1f))
     }
 
     private fun InkStroke.adopting(style: InkStyle?): InkStroke {

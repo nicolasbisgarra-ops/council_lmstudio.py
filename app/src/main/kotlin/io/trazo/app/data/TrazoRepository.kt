@@ -8,6 +8,7 @@ import io.trazo.core.Notebook
 import io.trazo.core.Page
 import io.trazo.core.Paper
 import io.trazo.core.PatternLibrary
+import io.trazo.core.PatternUpgrades
 import io.trazo.core.TrazoFormat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,8 +36,12 @@ class TrazoRepository(root: File) {
 
     private fun loadPatterns(): List<InkPattern> = synchronized(lock) {
         if (!patternsFile.baseFile.exists()) return DefaultPatterns.all().also { writePatterns(it) }
-        runCatching { TrazoFormat.decodePatterns(patternsFile.readFully().toString(Charsets.UTF_8)) }
-            .getOrElse { DefaultPatterns.all() }
+        val decoded = runCatching { TrazoFormat.decodePatterns(patternsFile.readFully().toString(Charsets.UTF_8)) }
+            .getOrElse { return DefaultPatterns.all() }
+        // Patrones de ejemplo guardados con una versión anterior: se completan sin perder los ejemplos del usuario.
+        val upgraded = PatternUpgrades.upgrade(decoded)
+        if (upgraded != decoded) runCatching { writePatterns(upgraded) }
+        upgraded
     }
 
     private fun writePatterns(list: List<InkPattern>) = synchronized(lock) {
@@ -73,7 +78,7 @@ class TrazoRepository(root: File) {
 
     private fun mergePatterns(incoming: List<InkPattern>): Int = synchronized(lock) {
         val before = _patterns.value
-        val merged = PatternLibrary.merge(before, incoming)
+        val merged = PatternLibrary.merge(before, PatternUpgrades.upgrade(incoming))
         _patterns.value = merged
         writePatterns(merged)
         merged.size - before.size

@@ -56,6 +56,8 @@ object DefaultPatterns {
         outputScale = 1.15f,
         builtIn = true,
         category = PatternCategory.CALCULUS,
+        // La barra (desde el final del ✓) llega hasta donde terminó el gesto.
+        stretch = Stretch(Axis.HORIZONTAL, from = 0.24f),
     )
 
     fun fraction() = InkPattern(

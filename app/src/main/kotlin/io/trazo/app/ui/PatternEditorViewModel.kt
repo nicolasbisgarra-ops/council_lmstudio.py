@@ -18,6 +18,8 @@ import io.trazo.core.InkPattern
 import io.trazo.core.InkStroke
 import io.trazo.core.OutputSizing
 import io.trazo.core.PageState
+import io.trazo.core.PatternUpgrades
+import io.trazo.core.Stretch
 
 /** Lienzo pequeño editable (gesto, salida o prueba). */
 class Pad(strokes: List<InkStroke> = emptyList(), patterns: () -> List<InkPattern> = { emptyList() }, recognize: Boolean = false) {
@@ -52,6 +54,7 @@ class PatternEditorViewModel(
     var minScore by mutableFloatStateOf(original?.minScore ?: InkPattern.DEFAULT_MIN_SCORE)
     var customHold by mutableStateOf(original?.holdMillis != null)
     var holdMillis by mutableFloatStateOf((original?.holdMillis ?: 1000L).toFloat())
+    var elastic by mutableStateOf(original?.stretch != null)
     var revision by mutableIntStateOf(0)
         private set
     var testResult by mutableStateOf<String?>(null)
@@ -110,7 +113,21 @@ class PatternEditorViewModel(
             holdMillis = if (customHold) holdMillis.toLong() else null,
             enabled = original?.enabled ?: true,
             builtIn = original?.builtIn ?: false,
+            category = original?.category,
+            stretch = stretchFor(out),
         )
+    }
+
+    /** Zona elástica que se guardaría con [out]: la del patrón si la salida no cambió, si no la detectada. */
+    private fun stretchFor(out: List<InkStroke>): Stretch? {
+        if (!elastic || out.isEmpty()) return null
+        return original?.takeIf { PatternUpgrades.sameInk(out, it.outputInk) }?.stretch ?: Stretch.detectBar(out)
+    }
+
+    /** La barra elástica está activada pero la salida no tiene una barra a la derecha. */
+    fun elasticMissing(): Boolean {
+        revision
+        return elastic && output.strokes.isNotEmpty() && stretchFor(output.strokes.toList()) == null
     }
 
     fun canSave(): Boolean { revision; return draft() != null }

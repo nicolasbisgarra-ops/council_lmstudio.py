@@ -207,6 +207,17 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                 Text("  Pausa propia para este patrón")
             }
             if (vm.customHold) LabeledSlider("Pausa ${vm.holdMillis.toLong()} ms", vm.holdMillis, 500f..2000f, steps = 14) { vm.holdMillis = it }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = vm.elastic, onCheckedChange = { vm.elastic = it })
+                Text("  Barra elástica: la barra final llega hasta donde termina el gesto")
+            }
+            if (vm.elasticMissing()) {
+                Text(
+                    "No encontré una barra horizontal a la derecha de la salida.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
             Card(Modifier.fillMaxWidth()) {
