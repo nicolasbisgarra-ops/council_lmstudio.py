@@ -6,6 +6,7 @@ import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -271,7 +272,8 @@ private fun NotebookCard(
             PageThumbnail(nb.firstPage.strokes, nb.paper, colors, Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
         }
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(start = 2.dp)) {
+            // El nombre también abre el cuaderno, no solo la miniatura.
+            Column(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpen).padding(start = 2.dp)) {
                 Text(nb.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     (if (nb.pageCount == 1) "1 página" else "${nb.pageCount} páginas") + " · " + whenText(nb.updatedAt),
