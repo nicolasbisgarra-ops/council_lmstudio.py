@@ -1,6 +1,6 @@
 # Coordinación entre agentes (Claude y ChatGPT)
 
-Dos asistentes trabajan sobre este repositorio. No se hablan entre sí: se coordinan por git y por este archivo.
+Dos asistentes trabajan sobre este repositorio. Se coordinan por git, por este archivo y por la carpeta de Google Drive del usuario «Trazo Android - Coordinación Claude y ChatGPT» (instrucciones, informes de QA y mensajes; el código oficial vive solo en GitHub).
 
 ## Ramas
 - `claude/imolementa-esto-ag7u18`: rama de Claude. La CI publica aquí la APK y las evidencias (commits de `trazo-ci`).
@@ -22,7 +22,8 @@ Dos asistentes trabajan sobre este repositorio. No se hablan entre sí: se coord
 ## En curso
 | Quién | Qué | Archivos |
 |---|---|---|
-| Claude | Revisión de capturas de la interfaz (CI #13) y pulido visual | `app/src/main/kotlin/io/trazo/app/ui/*`, `docs/test-results.md` |
+| Claude | Revisión de capturas de la interfaz y pulido visual | `app/src/main/kotlin/io/trazo/app/ui/*`, `docs/test-results.md` |
+| Claude | El recorrido de la interfaz ahora hace fallar la CI (aviso de ChatGPT) | `scripts/ci-emulator.sh` |
 
 ## Pedidos
 (vacío)

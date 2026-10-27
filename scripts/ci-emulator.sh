@@ -110,19 +110,18 @@ for f in trazo-demo-1-integral trazo-demo-2-integral-resuelta trazo-demo-3-final
   adb pull "/data/local/tmp/$f.png" "$OUT/$f.png" || true
 done
 
-# Capturas de la interfaz (lista, editor, paneles, biblioteca, preferencias, tema oscuro). No
-# bloquea: es evidencia visual; la lógica la cubren las pruebas de arriba.
+# Capturas de la interfaz (lista, editor, paneles, biblioteca, preferencias, tema oscuro). Bloquea:
+# si un control no aparece, la interfaz cambió o se rompió y la APK no se da por validada.
 echo "== Recorrido de la interfaz =="
 settle 1
 timeout 420 adb shell am instrument -w -e class io.trazo.app.GuiTourTest "$RUNNER" | tee "$OUT/interfaz.txt"
-grep -q "^OK (" "$OUT/interfaz.txt" || echo "AVISO: el recorrido de la interfaz no terminó (no bloquea)"
 for f in $(adb shell ls /data/local/tmp 2>/dev/null | tr -d '\r' | grep -E '^trazo-gui-.*[.]png$'); do
   adb pull "/data/local/tmp/$f" "$OUT/$f" || true
 done
 adb logcat -d -t 2000 > "$OUT/logcat.txt" || true
 
 status=0
-for f in pruebas-instrumentadas.txt demo.txt; do
+for f in pruebas-instrumentadas.txt demo.txt interfaz.txt; do
   if grep -q "FAILURES!!!" "$OUT/$f" || ! grep -q "^OK (" "$OUT/$f"; then
     echo "FALLÓ: $f"; status=1
   fi
