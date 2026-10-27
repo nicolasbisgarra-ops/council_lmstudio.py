@@ -93,37 +93,51 @@ diag "antes de pruebas"
 adb shell am instrument -w -e class io.trazo.app.EditorInstrumentedTest,io.trazo.app.ExportInstrumentedTest "$RUNNER" | tee "$OUT/pruebas-instrumentadas.txt"
 diag "tras pruebas"
 
-echo "== Demo grabada =="
-settle 1
-adb shell rm -f /sdcard/trazo-demo.mp4
-adb shell screenrecord --bit-rate 6000000 --time-limit 175 /sdcard/trazo-demo.mp4 &
-REC=$!
-sleep 3
-adb shell am instrument -w -e class io.trazo.app.DemoExerciseTest "$RUNNER" | tee "$OUT/demo.txt"
-diag "tras demo"
-sleep 2
-adb shell pkill -INT screenrecord || true
-wait $REC || true
-sleep 4
-adb pull /sdcard/trazo-demo.mp4 "$OUT/demo-real-android-emulador.mp4" || true
-for f in trazo-demo-1-integral trazo-demo-2-integral-resuelta trazo-demo-3-final trazo-demo-4-ensenar trazo-demo-5-aprendido; do
-  adb pull "/data/local/tmp/$f.png" "$OUT/$f.png" || true
-done
-
 # Capturas de la interfaz (lista, editor, paneles, biblioteca, preferencias, tema oscuro). Bloquea:
-# si un control no aparece, la interfaz cambió o se rompió y la APK no se da por validada.
+# si un control no aparece, la interfaz cambió o se rompió y la APK no se da por validada. Va antes
+# de la demo grabada, con el emulador fresco: después de grabar el emulador llegó a cerrarse solo.
 echo "== Recorrido de la interfaz =="
+timeout 20 adb shell am force-stop io.trazo || true
 settle 1
+# El logcat corre en el host durante el recorrido: si el emulador se cae, la causa queda guardada.
+timeout 480 adb logcat -v time > "$OUT/logcat-interfaz.txt" 2>&1 &
+LOGCAT=$!
 timeout 420 adb shell am instrument -w -e class io.trazo.app.GuiTourTest "$RUNNER" | tee "$OUT/interfaz.txt"
+kill $LOGCAT 2>/dev/null || true
 # Si el emulador se cae, cada `adb` queda «waiting for device» hasta que se cancela el job y no
 # se sube nada: de acá en adelante todo con tope y, sin dispositivo, se informa y se termina.
 if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
   echo "FALLÓ: se perdió el emulador durante el recorrido de la interfaz" | tee -a "$OUT/interfaz.txt"
+  grep -iE 'FATAL|ANR in|lowmemorykiller|Out of memory|Killing' "$OUT/logcat-interfaz.txt" | tail -n 40
+  tail -n 40 "$OUT/logcat-interfaz.txt"
   exit 1
 fi
 for f in $(timeout 20 adb shell ls /data/local/tmp 2>/dev/null | tr -d '\r' | grep -E '^trazo-gui-.*[.]png$'); do
   timeout 30 adb pull "/data/local/tmp/$f" "$OUT/$f" || true
 done
+
+echo "== Demo grabada =="
+timeout 20 adb shell am force-stop io.trazo || true
+settle 1
+adb shell rm -f /sdcard/trazo-demo.mp4
+adb shell screenrecord --bit-rate 6000000 --time-limit 175 /sdcard/trazo-demo.mp4 &
+REC=$!
+sleep 3
+timeout 600 adb shell am instrument -w -e class io.trazo.app.DemoExerciseTest "$RUNNER" | tee "$OUT/demo.txt"
+diag "tras demo"
+sleep 2
+adb shell pkill -INT screenrecord || true
+wait $REC || true
+sleep 4
+timeout 120 adb pull /sdcard/trazo-demo.mp4 "$OUT/demo-real-android-emulador.mp4" || true
+for f in trazo-demo-1-integral trazo-demo-2-integral-resuelta trazo-demo-3-final trazo-demo-4-ensenar trazo-demo-5-aprendido; do
+  timeout 30 adb pull "/data/local/tmp/$f.png" "$OUT/$f.png" || true
+done
+
+if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
+  echo "FALLÓ: se perdió el emulador durante la demo" | tee -a "$OUT/demo.txt"
+  exit 1
+fi
 timeout 60 adb logcat -d -t 2000 > "$OUT/logcat.txt" || true
 
 status=0
