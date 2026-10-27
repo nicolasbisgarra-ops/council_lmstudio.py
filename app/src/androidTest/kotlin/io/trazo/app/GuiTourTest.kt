@@ -91,13 +91,13 @@ class GuiTourTest {
             device.pressBack()
 
             menu("Biblioteca de patrones")
-            find(By.text("Enseñar patrón"))
+            find(By.text("Biblioteca de patrones"))
             shot("7-biblioteca")
             find(By.text("Integral")).click()
             find(By.text("Editar patrón"))
             shot("8-patron")
             device.pressBack()
-            find(By.text("Enseñar patrón"))
+            find(By.text("Biblioteca de patrones"))
             device.pressBack()
 
             menu("Preferencias")
