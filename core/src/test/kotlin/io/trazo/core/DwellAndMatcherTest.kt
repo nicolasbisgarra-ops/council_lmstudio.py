@@ -112,6 +112,20 @@ class GestureMatcherTest {
         }
     }
 
+    @Test fun `a part drawn longer than in the example still matches`() {
+        // Sin alineación elástica las muestras del codo caen sobre otro tramo del ejemplo y no alcanza el umbral.
+        val cases = listOf(
+            listOf(0f to 0f, 0f to 100f, 60f to 100f) to listOf(0f to 0f, 0f to 100f, 90f to 100f),
+            listOf(0f to 100f, 0f to 0f, 60f to 100f, 60f to 0f) to listOf(0f to 100f, 0f to 0f, 60f to 70f, 60f to 0f),
+        )
+        for ((example, drawn) in cases) {
+            val p = pattern("p", fromPath(example))
+            assertEquals(MatchResult.NoMatch, GestureMatcher(warpBand = 0).recognize(listOf(fromPath(drawn)), listOf(p)))
+            val r = matcher.recognize(listOf(fromPath(drawn)), listOf(p))
+            assertTrue("$r", r is MatchResult.Found && r.match.score > 0.85f)
+        }
+    }
+
     @Test fun `every built-in gesture example matches only its own pattern`() {
         val all = DefaultPatterns.all()
         for (p in all) for (example in p.gestureExamples) {

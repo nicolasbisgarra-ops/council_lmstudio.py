@@ -23,7 +23,10 @@ sealed interface MatchResult {
  * 2. Remuestrea cada trazo a [sampleCount] puntos equiespaciados.
  * 3. Distancia = mezcla de distancia posicional media y diferencia media de dirección
  *    (la dirección evita confundir, p. ej., una línea recta con una integral estrecha). En trazos
- *    muy cortos (puntos, como los de ÷) la dirección es ruido y pesa menos.
+ *    muy cortos (puntos, como los de ÷) la dirección es ruido y pesa menos. Los puntos se alinean
+ *    con un desfase de hasta [warpBand] muestras (alineación elástica): una curva hecha un poco
+ *    más rápido o más larga en un tramo, o con un ganchito en la punta, no se compara contra el
+ *    tramo equivocado del ejemplo.
  * 4. Admite trazos dibujados al revés y, hasta [maxPermutedStrokes] trazos, en otro orden.
  * 5. Devuelve [MatchResult.NoMatch] bajo el umbral del patrón y [MatchResult.Ambiguous] si el
  *    segundo candidato está a menos de [ambiguityMargin].
@@ -35,8 +38,9 @@ class GestureMatcher(
     private val sampleCount: Int = 32,
     private val ambiguityMargin: Float = 0.06f,
     private val maxPermutedStrokes: Int = 4,
+    private val warpBand: Int = 3,
 ) {
-    init { require(sampleCount >= 3) }
+    init { require(sampleCount >= 3 && warpBand >= 0) }
 
     fun recognize(gesture: List<InkStroke>, patterns: List<InkPattern>): MatchResult {
         if (gesture.isEmpty()) return MatchResult.NoMatch
@@ -103,6 +107,9 @@ class GestureMatcher(
         min(pairDistance(a, b, reversed = false), pairDistance(a, b, reversed = true))
 
     private fun pairDistance(a: Resampled, b: Resampled, reversed: Boolean): Float {
+        // La dirección pesa menos cuanto más corto es el trazo: un punto no tiene dirección.
+        val w = ((min(a.length, b.length) - DOT_LENGTH) / (FULL_DIRECTION_LENGTH - DOT_LENGTH)).coerceIn(0f, 1f)
+        if (warpBand > 0) return warpedDistance(a, b, reversed, w)
         val m = sampleCount
         var pos = 0f
         for (k in 0 until m) {
@@ -110,14 +117,46 @@ class GestureMatcher(
             pos += hypot(a.x[k] - b.x[j], a.y[k] - b.y[j])
         }
         pos /= m
-        // La dirección pesa menos cuanto más corto es el trazo: un punto no tiene dirección.
-        val w = ((min(a.length, b.length) - DOT_LENGTH) / (FULL_DIRECTION_LENGTH - DOT_LENGTH)).coerceIn(0f, 1f)
         if (w == 0f) return pos / POSITION_SCALE
         val bAng = if (reversed) b.revAng else b.ang
         var dir = 0f
         for (k in 0 until m - 1) dir += angularDiff(a.ang[k], bAng[k])
         dir /= (m - 1) * PI.toFloat()
         return (1f - DIRECTION_WEIGHT * w) * pos / POSITION_SCALE + DIRECTION_WEIGHT * w * dir / DIRECTION_SCALE
+    }
+
+    /**
+     * Alineación elástica simétrica (DTW con banda de Sakoe-Chiba): la diagonal pesa doble, así
+     * todo camino suma 2·m pasos y el resultado es un costo medio comparable con el de [pairDistance]
+     * sin desfase, que es uno de los caminos posibles (nunca da más).
+     */
+    private fun warpedDistance(a: Resampled, b: Resampled, reversed: Boolean, w: Float): Float {
+        val m = sampleCount
+        val bAng = if (reversed) b.revAng else b.ang
+        var prev = FloatArray(m) { Float.POSITIVE_INFINITY }
+        var cur = FloatArray(m)
+        for (i in 0 until m) {
+            cur.fill(Float.POSITIVE_INFINITY)
+            for (j in max(0, i - warpBand)..min(m - 1, i + warpBand)) {
+                val bj = if (reversed) m - 1 - j else j
+                var c = hypot(a.x[i] - b.x[bj], a.y[i] - b.y[bj]) / POSITION_SCALE
+                if (w > 0f) {
+                    val dir = angularDiff(a.ang[min(i, m - 2)], bAng[min(j, m - 2)]) / PI.toFloat()
+                    c = (1f - DIRECTION_WEIGHT * w) * c + DIRECTION_WEIGHT * w * dir / DIRECTION_SCALE
+                }
+                cur[j] = if (i == 0 && j == 0) {
+                    2 * c
+                } else {
+                    var best = Float.POSITIVE_INFINITY
+                    if (i > 0 && j > 0) best = prev[j - 1] + 2 * c
+                    if (i > 0) best = min(best, prev[j] + c)
+                    if (j > 0) best = min(best, cur[j - 1] + c)
+                    best
+                }
+            }
+            val t = prev; prev = cur; cur = t
+        }
+        return prev[m - 1] / (2 * m)
     }
 
     /** Trazo remuestreado, con las direcciones de cada tramo (y las del recorrido al revés) precalculadas. */
@@ -180,7 +219,7 @@ class GestureMatcher(
     companion object {
         // Pesos iniciales calibrados con las pruebas JVM (no con usuarios reales; ver DECISIONES.md).
         private const val POSITION_SCALE = 0.45f
-        private const val DIRECTION_WEIGHT = 0.4f
+        private const val DIRECTION_WEIGHT = 0.5f
         private const val DIRECTION_SCALE = 0.45f
         /** Largo (relativo al gesto) bajo el cual un trazo es un punto y su dirección no cuenta. */
         private const val DOT_LENGTH = 0.02f

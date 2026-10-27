@@ -27,14 +27,22 @@ class ExerciseEvidenceTest {
     private val evidenceDir = File(System.getProperty("trazo.evidenceDir") ?: "build/reports/trazo-evidence")
     private val recordFrames = System.getProperty("trazo.frames") == "true"
 
-    @Test fun `T22 engine solves the full integral exercise by hand with gesture conversions`() {
-        val controller = InkController(patterns = { DefaultPatterns.all() }, ids = IdGenerator.sequential())
+    @Test fun `T22 engine solves the full integral exercise by hand with gesture conversions`() =
+        solveExercise(DefaultPatterns.all(), evidence = true)
+
+    /** Lo mismo con la biblioteca de partida completa: ~100 patrones (signos y los del usuario) no estorban. */
+    @Test fun `T22b the same exercise with the whole starting library`() =
+        solveExercise(PresetPatterns.install(emptyList(), 0), evidence = false)
+
+    private fun solveExercise(patterns: List<InkPattern>, evidence: Boolean) {
+        val controller = InkController(patterns = { patterns }, ids = IdGenerator.sequential())
         var frame = 0
         var sampleCount = 0
-        val framesDir = File(evidenceDir, "frames").apply { if (recordFrames) { deleteRecursively(); mkdirs() } }
+        val frames = recordFrames && evidence
+        val framesDir = File(evidenceDir, "frames").apply { if (frames) { deleteRecursively(); mkdirs() } }
         lateinit var pen: SyntheticPen
         pen = SyntheticPen(controller, onSample = {
-            if (recordFrames && sampleCount++ % 4 == 0) {
+            if (frames && sampleCount++ % 4 == 0) {
                 ImageIO.write(render(controller, pen.nowMs, 0.62f), "png", File(framesDir, "f%05d.png".format(frame++)))
             }
         })
@@ -95,6 +103,7 @@ class ExerciseEvidenceTest {
         assertTrue("todo son trazos con puntos", strokes.all { it.points.isNotEmpty() })
         assertEquals(3, strokes.mapNotNull { it.groupId }.toSet().size)
         assertTrue(pen.events.none { it is InkEvent.Ambiguous || it is InkEvent.NotRecognized })
+        if (!evidence) return
 
         evidenceDir.mkdirs()
         ImageIO.write(render(controller, pen.nowMs, 1f), "png", File(evidenceDir, "exercise-final.png"))
