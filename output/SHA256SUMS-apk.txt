@@ -1,2 +1,2 @@
-c33a49bfb2cf34a8f77b453ff08d989aefd2473483ccc864afe071f446e7f7f5  output/Trazo-debug-androidTest.apk
+5e207b141f99d5efa7e3b9b81a2c3f56e34afe37b7634b6d760f97a1bc9a8160  output/Trazo-debug-androidTest.apk
 ddc8cd16805b2ab9125c121207dfcbb2cd3a7f27314039572f8565fc62f78a89  output/Trazo-debug.apk
