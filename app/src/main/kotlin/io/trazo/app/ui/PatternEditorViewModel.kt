@@ -104,7 +104,7 @@ class PatternEditorViewModel(
         if (examples.isEmpty() || out.isEmpty()) return null
         return InkPattern(
             id = original?.id ?: "draft",
-            name = name.ifBlank { "Patrón" },
+            name = name.ifBlank { PatternUpgrades.UNNAMED },
             gestureExamples = examples,
             outputInk = out,
             sizing = sizing,

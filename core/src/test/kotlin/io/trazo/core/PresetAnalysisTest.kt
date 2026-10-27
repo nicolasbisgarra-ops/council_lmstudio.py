@@ -119,6 +119,16 @@ class PresetAnalysisTest {
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }
 
+    @Test fun `an unknown zigzag is not taken for a sign and once taught it converts`() {
+        // Lo mismo que hace la demo en el emulador: el gesto no se conoce, se enseña como integral y se reutiliza.
+        fun zigzag(x: Float, y: Float, step: Float, amp: Float) = (0..10).map { i -> (x + i * step) to (if (i % 2 == 0) y else y + amp) }
+        val first = listOf(ink("z1", zigzag(120f, 160f, 22f, 60f), 0L))
+        assertEquals(MatchResult.NoMatch, matcher.recognize(first, lib))
+        val taught = lib.map { if (it.id == DefaultPatterns.INTEGRAL) it.withGestureExample(first) else it }
+        val r = matcher.recognize(listOf(ink("z2", zigzag(480f, 620f, 26f, 75f), 0L)), taught)
+        assertTrue("$r", r is MatchResult.Found && r.match.pattern.id == DefaultPatterns.INTEGRAL)
+    }
+
     @Test fun `contact sheet of the starting library`() {
         val cols = 10
         val cell = 132

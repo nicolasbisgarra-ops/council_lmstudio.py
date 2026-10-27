@@ -2,22 +2,29 @@ package io.trazo.core
 
 import kotlin.math.abs
 
-/** Actualiza patrones de ejemplo guardados con versiones anteriores sin perder lo que el usuario cambió. */
+/** Actualiza patrones guardados con versiones anteriores sin perder lo que el usuario cambió. */
 object PatternUpgrades {
+    /** Nombre que reciben los patrones nuevos si el usuario no les pone uno. */
+    const val UNNAMED = "Patrón"
+
     /**
      * Completa en los patrones de ejemplo ([InkPattern.builtIn]) los campos nuevos que falten: la categoría y,
-     * si la salida sigue siendo la original, la barra elástica. Ejemplos de gesto, pausa, umbral y estado
-     * activado se conservan tal cual; los patrones propios del usuario no se tocan.
+     * si la salida sigue siendo la original, la barra elástica. Los patrones del usuario incluidos con la app
+     * que todavía se llaman [UNNAMED] reciben su nombre («Igual», «2»…). Ejemplos de gesto, pausa, umbral y
+     * estado activado se conservan tal cual; nada más de los patrones propios del usuario se toca.
      */
-    fun upgrade(list: List<InkPattern>, defaults: List<InkPattern> = DefaultPatterns.all()): List<InkPattern> {
+    fun upgrade(list: List<InkPattern>, defaults: List<InkPattern> = PresetPatterns.all()): List<InkPattern> {
         val byId = defaults.associateBy { it.id }
         return list.map { p ->
             val d = byId[p.id]
-            if (!p.builtIn || d == null) p
-            else p.copy(
-                category = p.category ?: d.category,
-                stretch = p.stretch ?: d.stretch?.takeIf { sameInk(p.outputInk, d.outputInk) },
-            )
+            when {
+                d == null -> p
+                !p.builtIn -> if (p.name.trim() == UNNAMED && !d.builtIn && d.name != UNNAMED) p.copy(name = d.name) else p
+                else -> p.copy(
+                    category = p.category ?: d.category,
+                    stretch = p.stretch ?: d.stretch?.takeIf { sameInk(p.outputInk, d.outputInk) },
+                )
+            }
         }
     }
 

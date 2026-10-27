@@ -1,14 +1,15 @@
 package io.trazo.app.data
 
 import android.util.AtomicFile
-import io.trazo.core.DefaultPatterns
 import io.trazo.core.IdGenerator
 import io.trazo.core.InkPattern
 import io.trazo.core.Notebook
 import io.trazo.core.Page
 import io.trazo.core.Paper
+import io.trazo.core.PatternCategory
 import io.trazo.core.PatternLibrary
 import io.trazo.core.PatternUpgrades
+import io.trazo.core.PresetPatterns
 import io.trazo.core.TrazoFormat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,12 +22,14 @@ data class NotebookSummary(val id: String, val name: String, val pageCount: Int,
 
 /**
  * Persistencia local, offline. Cada cuaderno es un JSON versionado escrito de forma atómica
- * ([AtomicFile]); la biblioteca de patrones vive en `patterns.json`. Se guardan los trazos
+ * ([AtomicFile]); la biblioteca de patrones vive en `patterns.json` y `presets-version` recuerda qué
+ * versión de la biblioteca de partida ([PresetPatterns]) ya se instaló. Se guardan los trazos
  * originales, nunca solo una imagen.
  */
 class TrazoRepository(root: File) {
     private val notebooksDir = File(root, "notebooks").apply { mkdirs() }
     private val patternsFile = AtomicFile(File(root, "patterns.json"))
+    private val presetsFile = File(root, "presets-version")
     private val lock = Any()
 
     private val _patterns = MutableStateFlow(loadPatterns())
@@ -35,13 +38,22 @@ class TrazoRepository(root: File) {
     // ------------------------------------------------------------------ patrones
 
     private fun loadPatterns(): List<InkPattern> = synchronized(lock) {
-        if (!patternsFile.baseFile.exists()) return DefaultPatterns.all().also { writePatterns(it) }
-        val decoded = runCatching { TrazoFormat.decodePatterns(patternsFile.readFully().toString(Charsets.UTF_8)) }
-            .getOrElse { return DefaultPatterns.all() }
-        // Patrones de ejemplo guardados con una versión anterior: se completan sin perder los ejemplos del usuario.
-        val upgraded = PatternUpgrades.upgrade(decoded)
-        if (upgraded != decoded) runCatching { writePatterns(upgraded) }
-        upgraded
+        val fresh = !patternsFile.baseFile.exists()
+        val decoded = if (fresh) emptyList() else {
+            runCatching { TrazoFormat.decodePatterns(patternsFile.readFully().toString(Charsets.UTF_8)) }
+                .getOrElse { return PresetPatterns.install(emptyList(), 0) }
+        }
+        // Una biblioteca guardada antes de existir `presets-version` ya tiene el núcleo (versión 1).
+        val installed = if (fresh) 0 else presetsFile.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 1
+        // Primero se completan los guardados con una versión anterior (y los del usuario reciben su nombre),
+        // así los signos nuevos ya ven esos nombres al instalarse.
+        var list = PatternUpgrades.upgrade(decoded)
+        if (installed < PresetPatterns.VERSION) list = PresetPatterns.install(list, installed)
+        runCatching {
+            if (fresh || list != decoded) writePatterns(list)
+            if (installed < PresetPatterns.VERSION) presetsFile.writeText(PresetPatterns.VERSION.toString())
+        }
+        list
     }
 
     private fun writePatterns(list: List<InkPattern>) = synchronized(lock) {
@@ -67,6 +79,16 @@ class TrazoRepository(root: File) {
         _patterns.value.firstOrNull { it.id == id }?.let { upsertPattern(it.copy(enabled = enabled)) }
     }
 
+    /** Activa o desactiva de una vez todos los patrones de una sección ([PatternCategory]). */
+    fun setCategoryEnabled(category: String, enabled: Boolean) = synchronized(lock) {
+        val now = System.currentTimeMillis()
+        val list = _patterns.value.map {
+            if (PatternCategory.of(it) == category && it.enabled != enabled) it.copy(enabled = enabled, updatedAt = now) else it
+        }
+        _patterns.value = list
+        writePatterns(list)
+    }
+
     /** Biblioteca completa como JSON versionado, para llevar los patrones a otro dispositivo. */
     fun exportPatterns(out: OutputStream) {
         out.write(TrazoFormat.encodePatterns(patterns.value).toByteArray(Charsets.UTF_8))
@@ -84,10 +106,9 @@ class TrazoRepository(root: File) {
         merged.size - before.size
     }
 
-    /** Vuelve a agregar (o restaura) los patrones de ejemplo sin tocar los del usuario. */
-    fun restoreDefaultPatterns() {
-        val defaults = DefaultPatterns.all()
-        val list = _patterns.value.filterNot { p -> defaults.any { it.id == p.id } } + defaults
+    /** Restaura integral, raíz y fracción y vuelve a agregar los signos que falten, sin tocar los del usuario. */
+    fun restoreDefaultPatterns() = synchronized(lock) {
+        val list = PresetPatterns.restore(_patterns.value)
         _patterns.value = list
         writePatterns(list)
     }

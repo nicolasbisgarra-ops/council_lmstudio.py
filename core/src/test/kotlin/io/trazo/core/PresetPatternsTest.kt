@@ -81,6 +81,20 @@ class PresetPatternsTest {
         assertTrue(lib.none { it.id == DefaultPatterns.FRACTION || it.id in bundled.map { b -> b.id } })
     }
 
+    @Test fun `the user's unnamed patterns get their names on upgrade and nothing else changes`() {
+        val igual = bundled.single { it.name == "Igual" }
+        val onDevice = igual.copy(name = PatternUpgrades.UNNAMED, gestureExamples = igual.gestureExamples.take(2), enabled = false)
+        assertEquals(onDevice.copy(name = "Igual"), PatternUpgrades.upgrade(listOf(onDevice)).single())
+        // Uno al que el usuario ya le puso nombre, o uno propio que se llama «Patrón», quedan igual.
+        val named = onDevice.copy(name = "Mi igual")
+        assertSame(named, PatternUpgrades.upgrade(listOf(named)).single())
+        val other = onDevice.copy(id = "otro")
+        assertSame(other, PatternUpgrades.upgrade(listOf(other)).single())
+        // Ya con su nombre, el signo «Igual» se instala desactivado en su tablet.
+        val lib = PresetPatterns.install(PatternUpgrades.upgrade(listOf(onDevice.copy(enabled = true))), 1)
+        assertFalse(lib.single { it.id == sign("igual").id }.enabled)
+    }
+
     @Test fun `installing twice changes nothing and deleted signs stay deleted`() {
         val lib = PresetPatterns.install(emptyList(), 0)
         assertEquals(lib, PresetPatterns.install(lib, PresetPatterns.VERSION))
