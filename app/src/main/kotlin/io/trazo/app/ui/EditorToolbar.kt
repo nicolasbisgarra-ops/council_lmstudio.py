@@ -101,8 +101,9 @@ class EditorActions(
  * Barra superior del editor, al estilo de las apps de notas: volver, título y páginas, deshacer y
  * rehacer siempre a mano, herramientas con ícono, colores rápidos, gestos, patrones y zoom.
  * En una sola fila necesita unos 1100 dp (tablet apaisada); por debajo va en dos filas, con las
- * herramientas centradas en la segunda, que se desliza si no entra (teléfono).
+ * herramientas centradas debajo, en tantos renglones como hagan falta (teléfono).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EditorTopBar(
     vm: EditorViewModel,
@@ -147,10 +148,10 @@ fun EditorTopBar(
                         history()
                         EditorMenu(vm, actions)
                     }
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 2.dp),
+                    // En el teléfono las herramientas bajan de renglón en vez de quedar ocultas a la derecha.
+                    FlowRow(
+                        Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp),
                         horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
                     ) { tools() }
                 }
             } else {
