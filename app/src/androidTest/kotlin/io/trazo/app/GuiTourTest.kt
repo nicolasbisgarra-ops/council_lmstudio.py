@@ -88,9 +88,15 @@ class GuiTourTest {
             // (con swiftshader y con render en el invitado), así que el recorrido no lo abre.
             shot("5-color")
 
-            // En el teléfono la segunda fila de la barra no entra: se desliza hasta el final.
-            // La «Pluma» puede haber quedado fuera al buscar el color: se usa la fila medida antes.
-            device.swipe(device.displayWidth - 40, tools.centerY(), 40, tools.centerY(), 40)
+            // Sigue en la misma fila. Lejos de los bordes: desde el borde el gesto es «atrás».
+            var insert = device.findObject(By.desc("Insertar patrón"))
+            repeat(4) {
+                val b = insert?.visibleBounds
+                if (b != null && b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return@repeat
+                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 30)
+                SystemClock.sleep(400)
+                insert = device.findObject(By.desc("Insertar patrón"))
+            }
             find(By.desc("Insertar patrón")).click()
             find(By.text("Integral"))
             shot("6-insertar")
