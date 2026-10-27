@@ -4,8 +4,8 @@
 
 | Módulo | Contenido | Depende de Android |
 |---|---|---|
-| `:core` | `InkStroke`/`InkPoint` (coordenadas de documento, presión, tiempo), `DwellDetector`, `GestureMatcher` + `GestureRecognizer`, `InkPattern` + `InkReplacement`, `PageState` + `History` (comandos atómicos), `Eraser`, `Lasso`, `InkController` (máquina de estados de la sesión), `TrazoFormat` (JSON/ZIP versionado), `DefaultPatterns` | No |
-| `:app` | `InkCanvasView` (entrada `MotionEvent`, render), `TrazoRepository` (AtomicFile), `SettingsStore`, pantallas Compose, ViewModels | Sí |
+| `:core` | `InkStroke`/`InkPoint` (coordenadas de documento, presión, tiempo), `DwellDetector`, `GestureMatcher` + `GestureRecognizer`, `InkPattern` + `InkReplacement`, `PageState` + `History` (comandos atómicos), `Eraser`, `Lasso`, `InkController` (máquina de estados de la sesión), `TrazoFormat` (JSON/ZIP versionado), `DefaultPatterns`, `PresetPatterns` (biblioteca de partida: signos escritos en un mini lenguaje de trazos + tus patrones como recurso), `PatternUpgrades`, `Shapes` | No |
+| `:app` | `InkCanvasView` (entrada `MotionEvent`, render), `TrazoRepository` (AtomicFile), `SettingsStore`, pantallas Compose (barra de íconos, paneles por herramienta, selector de patrones, tema), ViewModels | Sí |
 
 La lógica completa del flujo "dibujar → pausa → reemplazo → deshacer" vive en `InkController`, así se prueba en JVM con un lápiz sintético (`core/src/testFixtures`). La capa Android solo traduce eventos y dibuja.
 
@@ -14,6 +14,7 @@ La lógica completa del flujo "dibujar → pausa → reemplazo → deshacer" viv
 ```
 MotionEvent (InkCanvasView)
   ├─ STYLUS / ERASER / botón lateral ──► InkController.penDown/penMove(históricos)/penUp
+  │     (apretar el botón a mitad de trazo ──► changeKind: termina el trazo y sigue con la herramienta del botón)
   ├─ FINGER ──► pan / zoom (ScaleGestureDetector) · ignorado si el lápiz está apoyado o cerca (palma)
   ├─ ACTION_CANCEL o FLAG_CANCELED ──► InkController.cancel()  (nunca convierte)
   └─ postOnAnimation(ticker) mientras hay contacto ──► InkController.tick(uptime)
@@ -32,7 +33,7 @@ DOWN → DRAWING ── quieto ≥ pausa (radio de temblor) y tinta ≥ mínimo 
 
 - La cola de temblor de la pausa se reemplaza por un punto de reposo antes de reconocer.
 - `GestureRecognizer` arma grupos con el trazo actual y hasta 3 trazos anteriores manuscritos, consecutivos, cercanos en tiempo (≤1,5 s) y espacio; prueba del grupo más grande al más chico. Nunca incluye tinta que vino de un patrón.
-- `GestureMatcher`: normaliza el conjunto (escala uniforme), remuestrea a 32 puntos, mezcla distancia de posición y de dirección, admite trazos invertidos y otro orden (≤4 trazos), umbral por patrón y margen de ambigüedad.
+- `GestureMatcher`: normaliza el conjunto (escala uniforme), remuestrea a 32 puntos, mezcla distancia de posición y de dirección con alineación elástica (desfase de hasta 3 muestras), admite trazos invertidos y otro orden (≤4 trazos), umbral por patrón y margen de ambigüedad.
 - `InkReplacement.place` copia en profundidad la tinta de salida (puntos, presión, tiempos), la escala según el modo (alto/ancho del gesto, dentro del gesto o fijo), la centra en el gesto y le asigna un `groupId`.
 
 ## Aprender de las correcciones
@@ -67,7 +68,7 @@ Pila de pantallas propia (`NavViewModel`); cada entrada es un `ViewModelStoreOwn
 ## Persistencia
 
 - `filesDir/notebooks/<id>.trazo.json`: `{format, schemaVersion, notebook}` escrito con `AtomicFile`.
-- `filesDir/patterns.json`: biblioteca de patrones.
+- `filesDir/patterns.json`: biblioteca de patrones; `filesDir/presets-version`: versión de la biblioteca de partida ya instalada (al actualizar la app solo se agregan los patrones nuevos, ver `PresetPatterns.install`).
 - Autoguardado 0,7 s después de cada cambio y guardado inmediato en `ON_STOP`.
 - Exportación `.trazo` = ZIP con `manifest.json`, `notebook.json`, `patterns.json` (los patrones usados).
 - `TrazoFormat.migrate` es el punto único de migraciones; rechaza esquemas más nuevos e ignora campos desconocidos.

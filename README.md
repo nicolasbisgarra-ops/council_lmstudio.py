@@ -6,12 +6,17 @@ App **nativa de Android** (Kotlin, Jetpack Compose + una `View` de tinta propia 
 
 ## Qué hace
 
-- **Cuadernos** con páginas (rayado, cuadriculado, punteado, liso), zoom y desplazamiento con dos dedos, modo oscuro.
-- **Lápiz** con presión y muestras históricas; **goma parcial** (recorta tramos), **goma de trazo**, extremo goma del S Pen y botón lateral como goma; **lazo** para mover, escalar (tirador), girar o borrar.
+- **Cuadernos** con páginas (rayado, cuadriculado, punteado, liso). La lista muestra una miniatura de la primera página de cada cuaderno, se puede buscar y ordenar (recientes o nombre).
+- **Barra de herramientas de íconos**: volver, páginas (anterior, siguiente, nueva), deshacer y rehacer, pluma, resaltador, goma, lazo, formas, mover la hoja, colores, gestos sí/no, insertar patrón, zoom (−, %, +; tocar el % ajusta a la página) y papel. Cada herramienta abre su panel (color, grosor, estilo…) al tocarla de nuevo o con una pulsación larga.
+- **Pluma** con presión y muestras históricas, en cuatro estilos (pluma, bolígrafo, caligrafía, lápiz); **resaltador** translúcido que queda debajo de la tinta; **goma** de área (recorta tramos) o de trazo; **lazo** para mover, escalar, girar, duplicar, cambiar el color o borrar; **formas** (línea, flecha, rectángulo, elipse, triángulo, ejes) que se dibujan arrastrando: la línea se alinea cada 45° y el rectángulo o la elipse se vuelven cuadrado o círculo si casi lo son.
+- **Colores**: cinco colores rápidos en la barra (se cambian con una pulsación larga o desde Preferencias) y un selector con cuadro de saturación y brillo, barra de tono y código hexadecimal.
+- **S Pen**: mientras se mantiene apretado el **botón lateral**, el lápiz borra (o selecciona con lazo, según Preferencias); el extremo goma también borra. Al soltar el botón se vuelve a la herramienta anterior.
 - **Gesto + pausa de 1 s con contacto**: reconoce el gesto (uno o varios trazos recientes y cercanos) y lo reemplaza en **un solo paso deshacible** por la tinta de salida. Si se levanta antes, no convierte. Si no hay coincidencia clara, conserva la escritura. Si dos patrones se parecen, no convierte y ofrece elegir (con vistas previas en tinta).
-- **Editor de patrones**: a la izquierda el *gesto a reconocer* (uno o más ejemplos), a la derecha *cómo quiero que quede*; tamaño de salida, escala, confianza mínima, pausa propia, y una zona de **prueba**. Incluye 3 patrones de ejemplo construidos con vectores (integral, raíz, fracción).
+- **Biblioteca de partida con 104 patrones**: integral, raíz y fracción; tus 11 patrones (a, b, x, y, 2, 3, Más, Igual, f( ), f(x), g( ) con sus ejemplos; y **90 signos dibujados como tinta vectorial**: números del 0 al 10, operadores, paréntesis, cálculo, letras griegas, conjuntos y lógica, flechas y geometría. Se ven por secciones, se buscan sin importar tildes y se activan o desactivan de a uno o por sección.
+- **Editor de patrones**: a la izquierda el *gesto a reconocer* (uno o más ejemplos), a la derecha *cómo quiero que quede*; sección, tamaño de salida, escala, confianza mínima, pausa propia, barra elástica y una zona de **prueba**.
 - **Aprende de tus correcciones**: si una pausa no reconoce el gesto, aparece "Enseñar"; elegís qué trazos eran el gesto y qué patrón querías, se reemplaza y el gesto queda guardado como ejemplo, así la próxima vez se reconoce solo. También se puede crear un patrón nuevo a partir de ese gesto.
-- **Páginas**: agregar, duplicar, mover y eliminar. **Selección**: mover, escalar, girar, duplicar, cambiar color, borrar; "Seleccionar todo". "Ajustar a la página" después de hacer zoom.
+- **Páginas**: agregar, duplicar, mover, borrar el contenido (deshacible) y eliminar. "Seleccionar todo" y "Ajustar a la página".
+- **Apariencia**: tema del sistema, claro, oscuro u OLED; ocho acentos de color o uno propio; hoja clara, oscura o según el tema (la tinta negra se aclara sobre la hoja oscura sin cambiar el archivo).
 - **Persistencia local offline** (JSON versionado, escritura atómica), autoguardado, **exportar/importar** `.trazo` (ZIP editable con cuaderno + patrones usados) y la **biblioteca de patrones** (JSON). Sin permisos de red.
 - **Compartir** el cuaderno como **PDF vectorial** o una página como **PNG** (solo exportación; el formato fuente sigue siendo de trazos).
 - En **tablet** los patrones quedan en un panel lateral; en teléfono, en una hoja inferior. Vibración breve al convertir, rechazo de palma también por tamaño de contacto, **toque con dos dedos = deshacer**.
@@ -51,10 +56,11 @@ La APK también la genera GitHub Actions (artefacto `trazo-build`); el job `emul
 
 ## Uso rápido
 
-1. **Nuevo cuaderno** → escribí con el S Pen. El dedo desplaza / hace zoom (se puede habilitar escribir con el dedo en Ajustes).
+1. **Nuevo cuaderno** → elegí el papel y escribí con el S Pen. El dedo desplaza / hace zoom (se puede habilitar escribir con el dedo en Preferencias). Con el botón lateral apretado, el lápiz borra.
 2. Dibujá una **integral** sin levantar el lápiz y quedate quieto: aparece un anillo; al completarse (1 s) el gesto se reemplaza por la integral manuscrita. *Deshacer* lo revierte de una vez.
 3. Escribí límites e integrando alrededor: es tinta normal, se borra y edita.
-4. **Patrones → Enseñar patrón**: dibujá el gesto y, aparte, la salida. Probalo abajo y guardá.
+4. **Insertar patrón** (ícono de patrones en la barra) agrega cualquier signo de la biblioteca al centro de la vista, sin dibujar el gesto.
+5. **Biblioteca de patrones → Enseñar patrón**: dibujá el gesto y, aparte, la salida. Probalo abajo y guardá.
 
 ## Estado y evidencias
 
