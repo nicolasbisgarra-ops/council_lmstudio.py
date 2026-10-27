@@ -80,7 +80,7 @@ class GuiTourTest {
             repeat(4) {
                 val b = dot.visibleBounds
                 if (b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return@repeat
-                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 30)
+                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 12)
                 SystemClock.sleep(400)
                 dot = find(By.desc("Otro color"))
             }
@@ -93,7 +93,7 @@ class GuiTourTest {
             repeat(4) {
                 val b = insert?.visibleBounds
                 if (b != null && b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return@repeat
-                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 30)
+                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 12)
                 SystemClock.sleep(400)
                 insert = device.findObject(By.desc("Insertar patrón"))
             }
@@ -127,7 +127,15 @@ class GuiTourTest {
     }
 
     private fun find(selector: BySelector, timeoutMs: Long = 10_000): UiObject2 =
-        device.wait(Until.findObject(selector), timeoutMs) ?: error("No apareció $selector")
+        device.wait(Until.findObject(selector), timeoutMs) ?: error("No apareció $selector. En pantalla: ${onScreen()}")
+
+    /** Textos y descripciones visibles con su posición, para saber qué había cuando algo falta. */
+    private fun onScreen(): String {
+        shot("fallo")
+        val xml = java.io.ByteArrayOutputStream().also { device.dumpWindowHierarchy(it) }.toString()
+        return Regex("""(text|content-desc)="([^"]+)"[^>]*?bounds="([^"]+)"""").findAll(xml)
+            .joinToString(" | ") { "${it.groupValues[2]} ${it.groupValues[3]}" }
+    }
 
     /** Abre «Más opciones» del editor y elige [item]. */
     private fun menu(item: String) {
