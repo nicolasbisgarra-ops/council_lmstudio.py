@@ -1,0 +1,8 @@
+Gestos deformados (8 por ejemplo): 1240 intentos
+  RIGHT: 1239 (1.00)
+  AMBIGUOUS: 1 (0.00)
+  MISSED: 0 (0.00)
+  WRONG: 0 (0.00)
+
+Por patrón (bien / ambiguo / nada / MAL):
+  7 (preset-7): 15 / 1 / 0 / 0  → ambiguo preset-7 0.86 / preset-1 0.82

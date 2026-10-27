@@ -1,0 +1,13 @@
+Ejemplos del usuario, dejando cada uno afuera: 59 intentos
+  RIGHT: 51 (0.86)
+  AMBIGUOUS: 0 (0.00)
+  MISSED: 8 (0.14)
+  WRONG: 0 (0.00)
+
+Por patrón (bien / ambiguo / nada / MAL):
+  Raíz (raiz): 4 / 0 / 1 / 0  → nada (propio 0.00)
+  b (a99a137f-9291-45bf-96de-5b4be4b42b4d): 3 / 0 / 1 / 0  → nada (propio 0.79)
+  Igual (10d32576-c220-412c-bf98-486b1af12cce): 6 / 0 / 2 / 0  → nada (propio 0.76)
+  2 (e021ae57-0d65-4f8d-abcd-3870822ba1db): 2 / 0 / 2 / 0  → nada (propio 0.79); → nada (propio 0.75)
+  f(x) (54b7bbcc-c0f8-4470-a168-7954cb0bc00f): 5 / 0 / 1 / 0  → nada (propio 0.77)
+  g( (b275f2b1-ac0c-45aa-ab82-c7c3d4173885): 7 / 0 / 1 / 0  → nada (propio 0.00)
