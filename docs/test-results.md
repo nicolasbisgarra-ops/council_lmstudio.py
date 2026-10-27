@@ -6,7 +6,7 @@ Separados por **nivel de evidencia**, como pide `05_PRUEBAS_ACEPTACION.md`. Una 
 
 | Nivel | Estado | Dónde |
 |---|---|---|
-| 1. JVM — motor `:core` | ✅ **81/81** | local (OpenJDK 21) y GitHub Actions (JDK 17) |
+| 1. JVM — motor `:core` | ✅ **133/133** | local (OpenJDK 21) y GitHub Actions (JDK 17) |
 | 2. JVM — app (`SourcePolicyTest`: sin WebView/LaTeX/texto en la hoja) | ✅ 5/5 | GitHub Actions |
 | 3. Compilación `assembleDebug` + `assembleDebugAndroidTest` | ✅ | GitHub Actions, AGP 8.7.3, compileSdk 35 |
 | 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ✅ **16/16** (corrida #10, commit `2c5f848`) | GitHub Actions, emulador API 34 Pixel 6, sin red |
@@ -22,7 +22,7 @@ Los niveles 4 y 5 usan eventos `TOOL_TYPE_STYLUS` / `SOURCE_STYLUS` **sintetizad
 ./gradlew :core:test :app:testDebugUnitTest          # con SDK (CI)
 ```
 
-81 pruebas, 0 fallas. Cobertura de la matriz **a nivel motor** (lápiz sintético):
+133 pruebas en 14 clases, 0 fallas. Cobertura de la matriz **a nivel motor** (lápiz sintético):
 
 | ID | Prueba | Resultado |
 |---|---|---|
@@ -43,10 +43,20 @@ Los niveles 4 y 5 usan eventos `TOOL_TYPE_STYLUS` / `SOURCE_STYLUS` **sintetizad
 | T16 | `T16 notebook json round trip…`, `T16 editable zip export and import…` | ✅ |
 | T22 (motor) | `T22 engine solves the full integral exercise…` | ✅ |
 | Aprender | `unrecognized gesture can be converted, then taught and recognized automatically` y otras 13 de `CapabilitiesTest` | ✅ |
+| Signos de partida | `PresetPatternsTest` (13): números 0–10 y secciones, tus patrones con nombre, instalar sin pisar nada (ni lo borrado), signos que ceden ante tus patrones; `PresetAnalysisTest` (6): ningún par activo confundible, tus ejemplos y gestos deformados nunca se convierten en otro patrón, un número escrito antes de un gesto no se absorbe | ✅ |
+| Raíz elástica | `StretchTest` (10): la barra llega hasta donde terminó el gesto, largo mínimo con gestos chicos, raíces viejas mejoradas sin tocar los ejemplos | ✅ |
+| Herramientas y S Pen | `ToolsTest` (21): formas, mano, resaltador, lazo, color y punta tomados al apoyar; botón lateral (goma, lazo o nada; apretarlo o soltarlo a mitad de un trazo) y extremo goma | ✅ |
+| Comparador elástico | `a part drawn longer than in the example still matches` y las otras 13 de `GestureMatcherTest` | ✅ |
 
 Además: casos del core de referencia del handoff, sin trazo fantasma, `CANCEL` en la pausa, escritura cercana no absorbida, pausa propia por patrón, gomas, lazo, páginas (eliminar/duplicar/mover), duplicar y recolorear selección, fusión de bibliotecas de patrones, esquemas futuros rechazados.
 
 Evidencia del motor (rotulada "SIMULACIÓN JVM"): `output/jvm/exercise-final.png`, `output/jvm/simulacion-motor-jvm.mp4`.
+
+Calibración con los patrones del usuario (`PresetAnalysisTest`; reportes en `output/jvm/presets-*.txt`):
+
+- Biblioteca de partida: 104 patrones (3 del núcleo, 11 del usuario, 90 signos), 89 activos. El par activo más parecido puntúa 0,81, por debajo del umbral de confusión (0,84).
+- Cada uno de los 59 ejemplos del usuario, sacado de su patrón y usado como gesto nuevo: 51 bien, 8 sin convertir y **0 convertidos en otro patrón**. Antes del comparador elástico: 12 bien.
+- 1240 gestos deformados como los haría una mano (8 por ejemplo): 1239 bien, 1 ambiguo (7 frente a 1: se ofrece elegir), 0 mal.
 
 ## 4. Instrumentadas en emulador
 
