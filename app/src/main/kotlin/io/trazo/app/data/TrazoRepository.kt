@@ -18,7 +18,14 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 
-data class NotebookSummary(val id: String, val name: String, val pageCount: Int, val updatedAt: Long, val firstPage: Page)
+data class NotebookSummary(
+    val id: String,
+    val name: String,
+    val pageCount: Int,
+    val updatedAt: Long,
+    val firstPage: Page,
+    val paper: Paper = Paper.LINES,
+)
 
 /**
  * Persistencia local, offline. Cada cuaderno es un JSON versionado escrito de forma atómica
@@ -80,10 +87,15 @@ class TrazoRepository(root: File) {
     }
 
     /** Activa o desactiva de una vez todos los patrones de una sección ([PatternCategory]). */
-    fun setCategoryEnabled(category: String, enabled: Boolean) = synchronized(lock) {
+    fun setCategoryEnabled(category: String, enabled: Boolean) =
+        setPatternsEnabled(_patterns.value.filter { PatternCategory.of(it) == category }.map { it.id }, enabled)
+
+    /** Activa o desactiva varios patrones con una sola escritura (una sección o un resultado de búsqueda). */
+    fun setPatternsEnabled(ids: Collection<String>, enabled: Boolean) = synchronized(lock) {
         val now = System.currentTimeMillis()
+        val wanted = ids.toSet()
         val list = _patterns.value.map {
-            if (PatternCategory.of(it) == category && it.enabled != enabled) it.copy(enabled = enabled, updatedAt = now) else it
+            if (it.id in wanted && it.enabled != enabled) it.copy(enabled = enabled, updatedAt = now) else it
         }
         _patterns.value = list
         writePatterns(list)
@@ -120,7 +132,7 @@ class TrazoRepository(root: File) {
     fun listNotebooks(): List<NotebookSummary> = synchronized(lock) {
         notebooksDir.listFiles { f -> f.name.endsWith(".trazo.json") }.orEmpty()
             .mapNotNull { f -> runCatching { TrazoFormat.decodeNotebook(AtomicFile(f).readFully().toString(Charsets.UTF_8)) }.getOrNull() }
-            .map { NotebookSummary(it.id, it.name, it.pages.size, it.updatedAt, it.pages.first()) }
+            .map { NotebookSummary(it.id, it.name, it.pages.size, it.updatedAt, it.pages.first(), it.paper) }
             .sortedByDescending { it.updatedAt }
     }
 

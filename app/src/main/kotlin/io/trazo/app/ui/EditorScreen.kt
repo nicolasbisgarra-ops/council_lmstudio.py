@@ -6,11 +6,8 @@ import android.app.Application
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,48 +16,28 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -69,15 +46,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -89,7 +67,10 @@ import io.trazo.core.InkEvent
 import io.trazo.core.InkPattern
 import io.trazo.core.InkStroke
 import io.trazo.core.Paper
-import io.trazo.core.Tool
+import kotlinx.coroutines.launch
+
+/** La vista de tinta en pantalla, para los botones de zoom de la barra. */
+private class CanvasRef { var view: InkCanvasView? = null }
 
 @Composable
 fun EditorScreen(
@@ -102,13 +83,21 @@ fun EditorScreen(
     val context = LocalContext.current
     val app = context.applicationContext as Application
     val vm: EditorViewModel = viewModel(key = "editor-$notebookId") { EditorViewModel(app, notebookId) }
-    val settings by app.trazo.settings.settings.collectAsState()
+    val store = app.trazo.settings
+    val settings by store.settings.collectAsState()
     val patterns by app.trazo.repository.patterns.collectAsState()
+    val enabledPatterns = remember(patterns) { patterns.filter { it.enabled } }
     val density = LocalDensity.current.density
     val snackbar = remember { SnackbarHostState() }
-    var showPatterns by remember { mutableStateOf(false) }
-    var confirmDeletePage by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val canvas = remember { CanvasRef() }
     var canvasSize by remember { mutableStateOf(0 to 0) }
+    var showInsert by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var confirmDeletePage by remember { mutableStateOf(false) }
+    var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
+    val paper = paperColors(settings.paperTone)
+    val accent = MaterialTheme.colorScheme.primary.toArgb()
 
     LaunchedEffect(settings, density) { vm.applySettings(settings, density) }
 
@@ -176,88 +165,93 @@ fun EditorScreen(
         return
     }
 
+    // Borrar la página entera se deshace como cualquier otro cambio; el aviso lo ofrece a mano.
+    fun clearPage() {
+        if (vm.pageIsEmpty) return
+        vm.clearPage()
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val r = snackbar.showSnackbar("Página borrada", actionLabel = "Deshacer", withDismissAction = true, duration = SnackbarDuration.Short)
+            if (r == SnackbarResult.ActionPerformed) vm.undo()
+        }
+    }
+
+    // Un color rápido recolorea la selección si la hay; si no, es la tinta de la herramienta.
+    fun quickColor(c: Int) {
+        when {
+            vm.hasSelection -> vm.recolorSelection(c)
+            vm.editorTool == EditorTool.HIGHLIGHTER -> store.update { it.copy(highlighterColor = c) }
+            else -> {
+                store.update { it.copy(penColor = c) }
+                if (vm.editorTool != EditorTool.PEN && vm.editorTool != EditorTool.SHAPE) vm.selectTool(EditorTool.PEN)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(notebook.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("Página ${vm.pageIndex + 1} de ${vm.pageCount}", style = MaterialTheme.typography.labelMedium)
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = { vm.saveNow(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver") }
-                },
-                actions = {
-                    IconButton(onClick = { vm.goToPage(vm.pageIndex - 1) }, enabled = vm.pageIndex > 0) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Página anterior")
-                    }
-                    IconButton(onClick = { vm.goToPage(vm.pageIndex + 1) }, enabled = vm.pageIndex < vm.pageCount - 1) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Página siguiente")
-                    }
-                    IconButton(onClick = vm::addPage) { Icon(Icons.Filled.Add, "Nueva página") }
-                    PaperMenu(vm.paper, vm::setPaper)
-                    EditorMenu(
-                        pageIndex = vm.pageIndex,
-                        pageCount = vm.pageCount,
-                        onFit = vm::fitToPage,
-                        onSelectAll = vm::selectAll,
-                        onDuplicatePage = vm::duplicatePage,
-                        onMovePage = vm::movePage,
-                        onDeletePage = { confirmDeletePage = true },
-                        onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
-                        onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
-                        onSettings = onSettings,
-                    )
-                },
+            EditorTopBar(
+                vm, notebook.name, settings, store::update,
+                EditorActions(
+                    onBack = { vm.saveNow(); onBack() },
+                    onRename = { renaming = true },
+                    onInsert = { showInsert = true },
+                    onZoom = { f -> canvas.view?.zoomStep(f) },
+                    onPickColor = { colorTarget = it },
+                    onQuickColor = ::quickColor,
+                    onClearPage = ::clearPage,
+                    onDeletePage = { confirmDeletePage = true },
+                    onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
+                    onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
+                    onPatterns = onPatterns,
+                    onSettings = onSettings,
+                ),
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        containerColor = Color(paper.desk),
     ) { padding ->
         BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
             // En tablet los patrones quedan en un panel lateral; en teléfono, en la hoja inferior.
             val wide = maxWidth >= 840.dp
             Row(Modifier.fillMaxSize()) {
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    ToolBar(
-                        vm = vm,
-                        gesturesOn = settings.gesturesEnabled,
-                        penColor = settings.penColor,
-                        penWidth = settings.penWidth,
-                        onGestures = { on -> app.trazo.settings.update { it.copy(gesturesEnabled = on) } },
-                        onColor = { c -> app.trazo.settings.update { it.copy(penColor = c) } },
-                        onWidth = { w -> app.trazo.settings.update { it.copy(penWidth = w) } },
-                        onPatterns = { showPatterns = true },
+                Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { canvasSize = it.width to it.height }) {
+                    AndroidView(
+                        factory = { ctx ->
+                            InkCanvasView(ctx).apply {
+                                viewport = vm.viewport
+                                controller = vm.controller
+                                onTwoFingerTap = vm::undo
+                                onViewportChanged = { vm.zoomPercent = this.zoomPercent }
+                                canvas.view = this
+                            }
+                        },
+                        onRelease = { v -> if (canvas.view === v) canvas.view = null },
+                        update = { v ->
+                            vm.pageIndex // releer al cambiar de página
+                            vm.fitRequest // y al pedir "Ajustar a la página"
+                            v.controller = vm.controller
+                            v.viewport = vm.viewport
+                            v.paper = vm.paper
+                            v.fingerDraws = settings.fingerDraws
+                            v.showHoldIndicator = settings.showHoldIndicator
+                            v.hapticsEnabled = settings.haptics
+                            v.paperColors = paper
+                            v.accentColor = accent
+                        },
+                        modifier = Modifier.fillMaxSize(),
                     )
-                    if (vm.hasSelection) SelectionBar(vm)
-                    val dark = isSystemInDarkTheme()
-                    Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { canvasSize = it.width to it.height }) {
-                        AndroidView(
-                            factory = { ctx ->
-                                InkCanvasView(ctx).apply {
-                                    viewport = vm.viewport
-                                    controller = vm.controller
-                                    onTwoFingerTap = vm::undo
-                                }
-                            },
-                            update = { v ->
-                                vm.pageIndex // releer al cambiar de página
-                                vm.fitRequest // y al pedir "Ajustar a la página"
-                                v.controller = vm.controller
-                                v.viewport = vm.viewport
-                                v.paper = vm.paper
-                                v.fingerDraws = settings.fingerDraws
-                                v.showHoldIndicator = settings.showHoldIndicator
-                                v.hapticsEnabled = settings.haptics
-                                v.darkPaper = dark
-                            },
-                            modifier = Modifier.fillMaxSize(),
+                    if (vm.hasSelection) {
+                        SelectionPill(
+                            vm,
+                            onCustomColor = { colorTarget = ColorTarget.Selection },
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
                         )
                     }
                 }
                 if (wide) {
                     PatternRail(
-                        patterns = patterns.filter { it.enabled },
+                        patterns = enabledPatterns,
                         onInsert = { vm.insertPattern(it, canvasSize.first, canvasSize.second) },
                         onLibrary = onPatterns,
                     )
@@ -274,12 +268,9 @@ fun EditorScreen(
             text = {
                 Column {
                     Text("Tu escritura se conservó. ¿Querés reemplazarla por alguno?")
-                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         amb.options.forEach { m ->
-                            Card(onClick = { vm.chooseAmbiguous(m.pattern) }, modifier = Modifier.weight(1f)) {
-                                InkPreview(m.pattern.outputInk, Modifier.fillMaxWidth().height(90.dp).background(MaterialTheme.colorScheme.surface))
-                                Text(m.pattern.name, Modifier.padding(8.dp), maxLines = 1)
-                            }
+                            PatternTile(m.pattern, onClick = { vm.chooseAmbiguous(m.pattern) }, Modifier.weight(1f), previewHeight = 84.dp)
                         }
                     }
                 }
@@ -288,25 +279,27 @@ fun EditorScreen(
         )
     }
 
-    if (showPatterns) {
-        ModalBottomSheet(onDismissRequest = { showPatterns = false }) {
-            Column(Modifier.padding(horizontal = 16.dp)) {
+    if (showInsert) {
+        ModalBottomSheet(
+            onDismissRequest = { showInsert = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(Modifier.fillMaxHeight(0.8f).padding(horizontal = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Insertar patrón", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { showPatterns = false; onPatterns() }) { Text("Editar biblioteca") }
+                    Text("Insertar patrón", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { showInsert = false; onPatterns() }) { Text("Biblioteca") }
                 }
-                LazyVerticalGrid(GridCells.Adaptive(120.dp), Modifier.height(320.dp)) {
-                    items(patterns.filter { it.enabled }, key = { it.id }) { p ->
-                        Card(
-                            onClick = { vm.insertPattern(p, canvasSize.first, canvasSize.second); showPatterns = false },
-                            modifier = Modifier.padding(6.dp),
-                        ) {
-                            InkPreview(p.outputInk, Modifier.fillMaxWidth().height(80.dp).background(MaterialTheme.colorScheme.surface))
-                            Text(p.name, Modifier.padding(8.dp), maxLines = 1)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(24.dp))
+                Text(
+                    "Va al centro de la vista como tinta tuya, editable con el lazo.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                PatternPicker(
+                    enabledPatterns,
+                    onPick = { p -> vm.insertPattern(p, canvasSize.first, canvasSize.second); showInsert = false },
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
@@ -315,10 +308,48 @@ fun EditorScreen(
         TeachSheet(
             offer = offer,
             vm = vm,
-            patterns = patterns.filter { it.enabled },
+            patterns = enabledPatterns,
             learn = settings.learnFromCorrections,
             onNewPattern = { gesture -> vm.teaching = null; onTeachNewPattern(gesture) },
         )
+    }
+
+    colorTarget?.let { target ->
+        val initial = when (target) {
+            ColorTarget.Pen -> settings.penColor
+            ColorTarget.Highlighter -> settings.highlighterColor
+            ColorTarget.Selection -> vm.selectionColor ?: settings.penColor
+            is ColorTarget.Quick -> settings.quickColors.getOrElse(target.slot) { settings.penColor }
+        }
+        ColorPickerDialog(
+            initial = initial,
+            title = when (target) {
+                ColorTarget.Pen -> "Color de la pluma"
+                ColorTarget.Highlighter -> "Color del resaltador"
+                ColorTarget.Selection -> "Color de la selección"
+                is ColorTarget.Quick -> "Cambiar este color rápido"
+            },
+            onDismiss = { colorTarget = null },
+            onPick = { c ->
+                colorTarget = null
+                when (target) {
+                    ColorTarget.Pen -> store.update { it.copy(penColor = c) }
+                    ColorTarget.Highlighter -> store.update { it.copy(highlighterColor = c) }
+                    ColorTarget.Selection -> vm.recolorSelection(c)
+                    is ColorTarget.Quick -> store.update { s ->
+                        s.copy(quickColors = s.quickColors.mapIndexed { i, q -> if (i == target.slot) c else q }, penColor = c)
+                    }
+                }
+            },
+            suggestions = if (target == ColorTarget.Highlighter) HighlighterPalette else PenPalette,
+        )
+    }
+
+    if (renaming) {
+        NameDialog("Renombrar cuaderno", notebook.name) { name ->
+            renaming = false
+            if (!name.isNullOrBlank()) vm.rename(name)
+        }
     }
 
     if (confirmDeletePage) {
@@ -353,9 +384,13 @@ private fun TeachSheet(
     }
     var chosen by remember(offer) { mutableIntStateOf(0) }
     val group = groups[chosen.coerceIn(0, groups.lastIndex)]
-    ModalBottomSheet(onDismissRequest = { vm.teaching = null }) {
-        Column(Modifier.padding(horizontal = 16.dp)) {
-            Text("¿Qué patrón era?", style = MaterialTheme.typography.titleMedium)
+    val scheme = MaterialTheme.colorScheme
+    ModalBottomSheet(
+        onDismissRequest = { vm.teaching = null },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(Modifier.fillMaxHeight(0.85f).padding(horizontal = 16.dp)) {
+            Text("¿Qué patrón era?", style = MaterialTheme.typography.titleLarge)
             if (groups.size > 1) {
                 Text("Trazos que forman el gesto:", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
                 Row(
@@ -363,16 +398,17 @@ private fun TeachSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     groups.forEachIndexed { i, (_, strokes) ->
-                        Card(
+                        val selected = i == chosen
+                        Surface(
                             onClick = { chosen = i },
-                            modifier = Modifier.border(
-                                if (i == chosen) 3.dp else 0.dp,
-                                if (i == chosen) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                MaterialTheme.shapes.medium,
-                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh,
+                            border = if (selected) BorderStroke(2.dp, scheme.primary) else null,
                         ) {
-                            InkPreview(strokes, Modifier.size(88.dp).background(MaterialTheme.colorScheme.surface))
-                            Text(if (strokes.size == 1) "1 trazo" else "${strokes.size} trazos", Modifier.padding(6.dp), style = MaterialTheme.typography.labelMedium)
+                            Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                InkPreview(strokes, Modifier.size(84.dp))
+                                Text(if (strokes.size == 1) "1 trazo" else "${strokes.size} trazos", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
                     }
                 }
@@ -380,171 +416,28 @@ private fun TeachSheet(
             Text(
                 if (learn) "Reemplazar y recordar este gesto como ejemplo:" else "Reemplazar por:",
                 style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = 8.dp, bottom = 8.dp),
             )
-            LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.height(260.dp)) {
-                items(patterns, key = { it.id }) { p ->
-                    Card(
-                        onClick = { vm.teach(p, group.first); vm.teaching = null },
-                        modifier = Modifier.padding(6.dp),
-                    ) {
-                        InkPreview(p.outputInk, Modifier.fillMaxWidth().height(72.dp).background(MaterialTheme.colorScheme.surface))
-                        Text(p.name, Modifier.padding(8.dp), maxLines = 1)
-                    }
-                }
+            PatternPicker(patterns, onPick = { p -> vm.teach(p, group.first); vm.teaching = null }, modifier = Modifier.weight(1f))
+            TextButton(onClick = { onNewPattern(group.second) }) {
+                Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Crear un patrón nuevo con este gesto")
             }
-            TextButton(onClick = { onNewPattern(group.second) }) { Text("Crear un patrón nuevo con este gesto") }
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
-@Composable
-private fun ToolBar(
-    vm: EditorViewModel,
-    gesturesOn: Boolean,
-    penColor: Int,
-    penWidth: Float,
-    onGestures: (Boolean) -> Unit,
-    onColor: (Int) -> Unit,
-    onWidth: (Float) -> Unit,
-    onPatterns: () -> Unit,
-) {
-    Surface(tonalElevation = 2.dp) {
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            ToolChip("Lápiz", vm.tool == Tool.PEN) { vm.selectTool(Tool.PEN) }
-            ToolChip("Goma", vm.tool == Tool.ERASER) { vm.selectTool(Tool.ERASER) }
-            ToolChip("Goma de trazo", vm.tool == Tool.STROKE_ERASER) { vm.selectTool(Tool.STROKE_ERASER) }
-            ToolChip("Lazo", vm.tool == Tool.LASSO) { vm.selectTool(Tool.LASSO) }
-            VerticalDivider(Modifier.height(28.dp))
-            TextButton(onClick = vm::undo, enabled = vm.canUndo) { Text("Deshacer") }
-            TextButton(onClick = vm::redo, enabled = vm.canRedo) { Text("Rehacer") }
-            VerticalDivider(Modifier.height(28.dp))
-            InkColors.forEach { c ->
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .background(Color(c), CircleShape)
-                        .border(if (c == penColor) 3.dp else 1.dp, MaterialTheme.colorScheme.primary.copy(alpha = if (c == penColor) 1f else 0.3f), CircleShape)
-                        .clickable { onColor(c) },
-                )
-            }
-            listOf(2f to "Fino", 3f to "Medio", 5f to "Grueso").forEach { (w, label) ->
-                ToolChip(label, penWidth == w) { onWidth(w) }
-            }
-            VerticalDivider(Modifier.height(28.dp))
-            ToolChip("Gestos 1 s", gesturesOn) { onGestures(!gesturesOn) }
-            TextButton(onClick = onPatterns) { Text("Patrones") }
-        }
-    }
-}
-
+/** Panel lateral de tablet: los patrones a mano para insertar con un toque. */
 @Composable
 private fun PatternRail(patterns: List<InkPattern>, onInsert: (InkPattern) -> Unit, onLibrary: () -> Unit) {
-    Surface(tonalElevation = 1.dp, modifier = Modifier.width(136.dp).fillMaxHeight()) {
-        Column {
-            Text("Patrones", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(12.dp))
-            LazyColumn(Modifier.weight(1f)) {
-                items(patterns, key = { it.id }) { p ->
-                    Card(onClick = { onInsert(p) }, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).fillMaxWidth()) {
-                        InkPreview(p.outputInk, Modifier.fillMaxWidth().height(64.dp).background(MaterialTheme.colorScheme.surface))
-                        Text(p.name, Modifier.padding(6.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                    }
-                }
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(232.dp).fillMaxHeight()) {
+        Column(Modifier.padding(horizontal = 8.dp)) {
+            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel("Patrones", Modifier.weight(1f).padding(start = 8.dp))
+                TextButton(onClick = onLibrary) { Text("Biblioteca") }
             }
-            TextButton(onClick = onLibrary, modifier = Modifier.padding(4.dp)) { Text("Biblioteca") }
-        }
-    }
-}
-
-@Composable
-private fun ToolChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
-}
-
-@Composable
-private fun SelectionBar(vm: EditorViewModel) {
-    Surface(color = MaterialTheme.colorScheme.primaryContainer) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { vm.controller.clearSelection() }) { Icon(Icons.Filled.Close, "Quitar selección") }
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()).padding(end = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = { vm.controller.rotateSelection(-15f) }) { Text("Girar −15°") }
-                TextButton(onClick = { vm.controller.rotateSelection(15f) }) { Text("Girar +15°") }
-                TextButton(onClick = { vm.controller.scaleSelection(0.85f) }) { Text("Achicar") }
-                TextButton(onClick = { vm.controller.scaleSelection(1.15f) }) { Text("Agrandar") }
-                TextButton(onClick = vm::duplicateSelection) { Text("Duplicar") }
-                InkColors.forEach { c ->
-                    Box(
-                        Modifier
-                            .padding(horizontal = 4.dp)
-                            .size(24.dp)
-                            .background(Color(c), CircleShape)
-                            .clickable { vm.recolorSelection(c) },
-                    )
-                }
-                IconButton(onClick = { vm.controller.deleteSelection() }) { Icon(Icons.Filled.Delete, "Borrar selección") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EditorMenu(
-    pageIndex: Int,
-    pageCount: Int,
-    onFit: () -> Unit,
-    onSelectAll: () -> Unit,
-    onDuplicatePage: () -> Unit,
-    onMovePage: (Int) -> Unit,
-    onDeletePage: () -> Unit,
-    onPdf: () -> Unit,
-    onPng: () -> Unit,
-    onSettings: () -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Más opciones") }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(text = { Text("Ajustar a la página") }, onClick = { open = false; onFit() })
-            DropdownMenuItem(text = { Text("Seleccionar todo") }, onClick = { open = false; onSelectAll() })
-            HorizontalDivider()
-            DropdownMenuItem(text = { Text("Duplicar página") }, onClick = { open = false; onDuplicatePage() })
-            DropdownMenuItem(
-                text = { Text("Mover página antes") }, enabled = pageIndex > 0,
-                onClick = { open = false; onMovePage(-1) },
-            )
-            DropdownMenuItem(
-                text = { Text("Mover página después") }, enabled = pageIndex < pageCount - 1,
-                onClick = { open = false; onMovePage(1) },
-            )
-            DropdownMenuItem(
-                text = { Text("Eliminar página…") }, enabled = pageCount > 1,
-                onClick = { open = false; onDeletePage() },
-            )
-            HorizontalDivider()
-            DropdownMenuItem(text = { Text("Exportar cuaderno como PDF…") }, onClick = { open = false; onPdf() })
-            DropdownMenuItem(text = { Text("Exportar página como PNG…") }, onClick = { open = false; onPng() })
-            DropdownMenuItem(text = { Text("Ajustes") }, onClick = { open = false; onSettings() })
-        }
-    }
-}
-
-@Composable
-private fun PaperMenu(current: Paper, onSelect: (Paper) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { open = true }) { Text(paperName(current)) }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            Paper.entries.forEach { p ->
-                DropdownMenuItem(text = { Text(paperName(p)) }, onClick = { onSelect(p); open = false })
-            }
+            PatternPicker(patterns, onInsert, Modifier.weight(1f), minTile = 96.dp, showSections = false)
         }
     }
 }

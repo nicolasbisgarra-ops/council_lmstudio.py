@@ -55,6 +55,8 @@ class PatternEditorViewModel(
     var customHold by mutableStateOf(original?.holdMillis != null)
     var holdMillis by mutableFloatStateOf((original?.holdMillis ?: 1000L).toFloat())
     var elastic by mutableStateOf(original?.stretch != null)
+    /** Sección de la biblioteca; null = "Mis patrones". */
+    var category by mutableStateOf(original?.category)
     var revision by mutableIntStateOf(0)
         private set
     var testResult by mutableStateOf<String?>(null)
@@ -113,7 +115,7 @@ class PatternEditorViewModel(
             holdMillis = if (customHold) holdMillis.toLong() else null,
             enabled = original?.enabled ?: true,
             builtIn = original?.builtIn ?: false,
-            category = original?.category,
+            category = category,
             stretch = stretchFor(out),
         )
     }

@@ -2,6 +2,7 @@ package io.trazo.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,6 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
@@ -28,6 +32,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import io.trazo.app.ui.EditorScreen
+import io.trazo.app.ui.LocalDarkTheme
 import io.trazo.app.ui.NotebookListScreen
 import io.trazo.app.ui.PatternEditorScreen
 import io.trazo.app.ui.PatternLibraryScreen
@@ -67,10 +72,28 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra(EXTRA_NOTEBOOK_ID)?.let { nav.push(Screen.Editor(it)) }
         }
         val banner = intent.getStringExtra(EXTRA_DEMO_BANNER)
-        setContent { TrazoTheme { TrazoRoot(nav, banner) } }
+        setContent {
+            val settings by trazo.settings.settings.collectAsState()
+            TrazoTheme(settings.themeMode, settings.accent, settings.accent2) {
+                // Íconos de las barras del sistema según el tema elegido en la app, no el del sistema.
+                val dark = LocalDarkTheme.current
+                DisposableEffect(dark) {
+                    enableEdgeToEdge(
+                        statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark },
+                        navigationBarStyle = SystemBarStyle.auto(LIGHT_SCRIM, DARK_SCRIM) { dark },
+                    )
+                    onDispose {}
+                }
+                TrazoRoot(nav, banner)
+            }
+        }
     }
 
     companion object {
+        // Velos de la barra de navegación con botones: los mismos que usa enableEdgeToEdge por defecto.
+        private val LIGHT_SCRIM = android.graphics.Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
+        private val DARK_SCRIM = android.graphics.Color.argb(0x80, 0x1b, 0x1b, 0x1b)
+
         /** Abre directamente un cuaderno (atajos y pruebas instrumentadas). */
         const val EXTRA_NOTEBOOK_ID = "io.trazo.extra.NOTEBOOK_ID"
         /** Cartel de interfaz que identifica una demo automatizada (no aparece sobre la hoja). */

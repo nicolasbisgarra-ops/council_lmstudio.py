@@ -2,40 +2,52 @@
 
 package io.trazo.app.ui
 
+import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,33 +56,47 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.trazo.app.data.NotebookSummary
+import io.trazo.app.ink.PaperColors
 import io.trazo.app.trazo
-import io.trazo.core.Bounds
 import io.trazo.core.Notebook
+import io.trazo.core.Paper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.DateFormat
-import java.util.Date
+
+/** Orden de la lista de cuadernos. */
+private enum class NotebookSort(val label: String) { RECENT("Recientes"), NAME("Nombre") }
 
 @Composable
 fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     val repo = context.trazo.repository
+    val settings by context.trazo.settings.settings.collectAsState()
     var items by remember { mutableStateOf(emptyList<NotebookSummary>()) }
+    var loaded by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<NotebookSummary?>(null) }
     var deleting by remember { mutableStateOf<NotebookSummary?>(null) }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var sort by rememberSaveable { mutableStateOf(NotebookSort.RECENT) }
+    var menu by remember { mutableStateOf(false) }
     // Sobrevive a una recreación mientras el selector de archivos está abierto.
     var exportId by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val colors = paperColors(settings.paperTone)
     fun refresh() {
-        scope.launch { items = withContext(Dispatchers.IO) { repo.listNotebooks() } }
+        scope.launch {
+            items = withContext(Dispatchers.IO) { repo.listNotebooks() }
+            loaded = true
+        }
     }
     LaunchedEffect(Unit) { refresh() }
 
@@ -102,17 +128,71 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
         }
     }
 
+    val shown = remember(items, query, sort) {
+        val q = searchKey(query)
+        val filtered = if (q.isEmpty()) items else items.filter { searchKey(it.name).contains(q) }
+        when (sort) {
+            NotebookSort.RECENT -> filtered.sortedByDescending { it.updatedAt }
+            NotebookSort.NAME -> filtered.sortedBy { searchKey(it.name) }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Trazo · cuadernos") },
-                actions = {
-                    TextButton(onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }) {
-                        Text("Importar")
+                title = {
+                    if (searching) {
+                        SearchField(query, { query = it }, "Buscar cuaderno", Modifier.fillMaxWidth().padding(end = 4.dp))
+                    } else {
+                        Column {
+                            Text("Cuadernos")
+                            Text(
+                                if (items.size == 1) "1 cuaderno" else "${items.size} cuadernos",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
-                    TextButton(onClick = onPatterns) { Text("Patrones") }
-                    IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Ajustes") }
                 },
+                actions = {
+                    if (searching) {
+                        IconButton(onClick = { searching = false; query = "" }) { Icon(Icons.Filled.Close, "Cerrar búsqueda") }
+                    } else {
+                        IconButton(onClick = { searching = true }) { Icon(Icons.Filled.Search, "Buscar") }
+                    }
+                    Box {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Más opciones") }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp)) {
+                            NotebookSort.entries.forEach { o ->
+                                DropdownMenuItem(
+                                    text = { Text("Ordenar: ${o.label}") },
+                                    leadingIcon = { Icon(TrazoIcons.Sort, null) },
+                                    trailingIcon = if (sort == o) {
+                                        { Icon(Icons.Filled.Check, "Elegido") }
+                                    } else null,
+                                    onClick = { menu = false; sort = o },
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Importar cuaderno…") },
+                                leadingIcon = { Icon(TrazoIcons.Import, null) },
+                                onClick = { menu = false; importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Biblioteca de patrones") },
+                                leadingIcon = { Icon(TrazoIcons.Patterns, null) },
+                                onClick = { menu = false; onPatterns() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Preferencias") },
+                                leadingIcon = { Icon(Icons.Filled.Settings, null) },
+                                onClick = { menu = false; onSettings() },
+                            )
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
         },
         floatingActionButton = {
@@ -123,47 +203,36 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
             )
         },
     ) { padding ->
-        if (items.isEmpty()) {
-            Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Creá un cuaderno y escribí con el lápiz.\nDibujá una integral y sostené la punta 1 s.", style = MaterialTheme.typography.bodyLarge)
+        when {
+            loaded && items.isEmpty() -> EmptyState(Modifier.padding(padding))
+            loaded && shown.isEmpty() -> Box(Modifier.padding(padding).fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                Text("Ningún cuaderno se llama así.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        }
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(200.dp),
-            modifier = Modifier.padding(padding).fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(items, key = { it.id }) { nb ->
-                Card(onClick = { onOpen(nb.id) }) {
-                    InkPreview(
-                        nb.firstPage.strokes,
-                        Modifier.fillMaxWidth().aspectRatio(Notebook.PAGE_WIDTH / Notebook.PAGE_HEIGHT).background(Color(0xFFFBFAF5)),
-                        frame = Bounds(0f, 0f, Notebook.PAGE_WIDTH, Notebook.PAGE_HEIGHT),
+            else -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(168.dp),
+                modifier = Modifier.padding(padding).fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 96.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                items(shown, key = { it.id }) { nb ->
+                    NotebookCard(
+                        nb, colors,
+                        onOpen = { onOpen(nb.id) },
+                        onRename = { renaming = nb },
+                        onExport = { exportId = nb.id; exportLauncher.launch("${nb.name}.trazo") },
+                        onDelete = { deleting = nb },
                     )
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text(nb.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            "${nb.pageCount} pág. · " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(nb.updatedAt)),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                    Row(Modifier.padding(start = 4.dp, bottom = 4.dp)) {
-                        IconButton(onClick = { renaming = nb }) { Icon(Icons.Filled.Edit, "Renombrar") }
-                        TextButton(onClick = { exportId = nb.id; exportLauncher.launch("${nb.name}.trazo") }) {
-                            Text("Exportar")
-                        }
-                        IconButton(onClick = { deleting = nb }) { Icon(Icons.Filled.Delete, "Eliminar") }
-                    }
                 }
             }
         }
     }
 
-    if (creating) NameDialog("Nuevo cuaderno", "Cálculo") { name ->
-        creating = false
-        if (name != null) onOpen(repo.createNotebook(name, context.trazo.settings.settings.value.paper).id)
+    if (creating) {
+        NewNotebookDialog(settings.paper) { name, paper ->
+            creating = false
+            if (name != null) onOpen(repo.createNotebook(name, paper).id)
+        }
     }
     renaming?.let { nb ->
         NameDialog("Renombrar", nb.name) { name ->
@@ -174,12 +243,102 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
     deleting?.let { nb ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("¿Eliminar \"${nb.name}\"?") },
+            title = { Text("¿Eliminar «${nb.name}»?") },
             text = { Text("Se borran sus páginas y trazos de este dispositivo.") },
             confirmButton = { TextButton(onClick = { repo.deleteNotebook(nb.id); deleting = null; refresh() }) { Text("Eliminar") } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancelar") } },
         )
     }
+}
+
+/** Tapa del cuaderno: la primera página como miniatura real (papel y tinta) y su menú. */
+@Composable
+private fun NotebookCard(
+    nb: NotebookSummary,
+    colors: PaperColors,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    Column {
+        Surface(
+            onClick = onOpen,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth().aspectRatio(Notebook.PAGE_WIDTH / Notebook.PAGE_HEIGHT).shadow(4.dp, RoundedCornerShape(10.dp)),
+        ) {
+            PageThumbnail(nb.firstPage.strokes, nb.paper, colors, Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
+        }
+        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(start = 2.dp)) {
+                Text(nb.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    (if (nb.pageCount == 1) "1 página" else "${nb.pageCount} páginas") + " · " + whenText(nb.updatedAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Opciones de ${nb.name}") }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp)) {
+                    DropdownMenuItem(text = { Text("Renombrar") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onRename() })
+                    DropdownMenuItem(text = { Text("Exportar…") }, leadingIcon = { Icon(TrazoIcons.Export, null) }, onClick = { menu = false; onExport() })
+                    DropdownMenuItem(text = { Text("Eliminar…") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { menu = false; onDelete() })
+                }
+            }
+        }
+    }
+}
+
+/** "hace 5 minutos", "ayer"… según el idioma del sistema. */
+private fun whenText(time: Long): String =
+    DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+
+@Composable
+private fun EmptyState(modifier: Modifier = Modifier) {
+    Column(
+        modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(TrazoIcons.Notebook, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+        Text(
+            "Creá un cuaderno y escribí con el lápiz.",
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            "Dibujá una integral y sostené la punta quieta 1 s: se reemplaza por tu propia tinta.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+    }
+}
+
+/** Nombre y papel de un cuaderno nuevo. */
+@Composable
+private fun NewNotebookDialog(defaultPaper: Paper, onResult: (String?, Paper) -> Unit) {
+    var name by remember { mutableStateOf("Cálculo") }
+    var paper by remember { mutableStateOf(defaultPaper) }
+    AlertDialog(
+        onDismissRequest = { onResult(null, paper) },
+        title = { Text("Nuevo cuaderno") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Nombre") })
+                SectionLabel("Papel")
+                ChoiceRow(Paper.entries, paper, ::paperName, { paper = it })
+            }
+        },
+        confirmButton = { TextButton(onClick = { onResult(name.trim(), paper) }, enabled = name.isNotBlank()) { Text("Crear") } },
+        dismissButton = { TextButton(onClick = { onResult(null, paper) }) { Text("Cancelar") } },
+    )
 }
 
 @Composable

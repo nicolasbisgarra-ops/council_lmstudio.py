@@ -51,7 +51,7 @@ class InkController(
 
     var tool: Tool = Tool.PEN
         set(value) {
-            if (field != value) { field = value; if (value != Tool.LASSO) clearSelection() }
+            if (field != value) { field = value; if (value != Tool.LASSO && value != Tool.PAN) clearSelection() }
         }
     var color: Int = DEFAULT_INK_COLOR
     var width: Float = DEFAULT_INK_WIDTH

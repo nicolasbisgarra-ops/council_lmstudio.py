@@ -1,8 +1,6 @@
 package io.trazo.app.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +63,8 @@ import io.trazo.core.Brush as InkBrush
 sealed interface ColorTarget {
     data object Pen : ColorTarget
     data object Highlighter : ColorTarget
+    /** Recolorea los trazos elegidos con el lazo. */
+    data object Selection : ColorTarget
     /** Reemplaza un color rápido de la barra (toque largo sobre él). */
     data class Quick(val slot: Int) : ColorTarget
 }
@@ -167,7 +167,6 @@ fun EditorTopBar(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NavGroup(vm: EditorViewModel, title: String, actions: EditorActions, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -273,7 +272,6 @@ private fun ColorStrip(vm: EditorViewModel, settings: TrazoSettings, actions: Ed
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ZoomGroup(vm: EditorViewModel, actions: EditorActions) {
     ToolButton(TrazoIcons.ZoomOut, "Alejar", onClick = { actions.onZoom(1f / 1.25f) }, size = 36.dp)
@@ -281,7 +279,7 @@ private fun ZoomGroup(vm: EditorViewModel, actions: EditorActions) {
         Modifier
             .heightIn(min = 36.dp)
             .widthIn(min = 52.dp)
-            .combinedClickable(role = Role.Button, onClick = vm::fitToPage)
+            .clickable(role = Role.Button, onClick = vm::fitToPage)
             .semantics { contentDescription = "Zoom ${vm.zoomPercent} %. Ajustar a la página" },
         contentAlignment = Alignment.Center,
     ) {
@@ -451,7 +449,7 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions) {
 
 /** Barra flotante de la selección: girar, tamaño, duplicar, color y borrar. */
 @Composable
-fun SelectionPill(vm: EditorViewModel, modifier: Modifier = Modifier) {
+fun SelectionPill(vm: EditorViewModel, onCustomColor: () -> Unit, modifier: Modifier = Modifier) {
     var colors by remember { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -477,7 +475,11 @@ fun SelectionPill(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 ToolButton(TrazoIcons.Palette, "Color de la selección", onClick = { colors = true }, selected = colors)
                 PanelMenu(colors, { colors = false }) {
                     ToolPanel("Color de la selección") {
-                        ColorGrid(PenPalette, selected = 0, onPick = { c -> vm.recolorSelection(c); colors = false }, onCustom = {})
+                        ColorGrid(
+                            PenPalette, selected = vm.selectionColor ?: 0,
+                            onPick = { c -> vm.recolorSelection(c); colors = false },
+                            onCustom = { colors = false; onCustomColor() },
+                        )
                     }
                 }
             }

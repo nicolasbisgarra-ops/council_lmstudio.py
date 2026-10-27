@@ -226,6 +226,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     fun duplicateSelection() { controller.duplicateSelection() }
     fun recolorSelection(color: Int) { controller.recolorSelection(color) }
+    /** Color del primer trazo elegido (para marcarlo en la paleta). */
+    val selectionColor: Int? get() { revision; return controller.strokesById(controller.selection.take(1))?.firstOrNull()?.color }
     fun selectAll() {
         selectTool(EditorTool.LASSO)
         controller.selectAll()
