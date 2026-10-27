@@ -6,12 +6,14 @@ Separados por **nivel de evidencia**, como pide `05_PRUEBAS_ACEPTACION.md`. Una 
 
 | Nivel | Estado | Dónde |
 |---|---|---|
-| 1. JVM — motor `:core` | ✅ **133/133** | local (OpenJDK 21) y GitHub Actions (JDK 17) |
+| 1. JVM — motor `:core` | ✅ **140/140** | local (OpenJDK 21) y GitHub Actions (JDK 17) |
 | 2. JVM — app (`SourcePolicyTest`: sin WebView/LaTeX/texto en la hoja) | ✅ 5/5 | GitHub Actions |
 | 3. Compilación `assembleDebug` + `assembleDebugAndroidTest` | ✅ | GitHub Actions, AGP 8.7.3, compileSdk 35 |
 | 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ✅ **16/16** (corrida #10, commit `2c5f848`) | GitHub Actions, emulador API 34 Pixel 6, sin red |
 | 5. Demo grabada en la app nativa (emulador, automatizada) | ✅ **2/2** (ejercicio completo + enseñar un gesto), video de 10,8 MB | `output/demo-real-android.mp4` |
 | 6. Físicas con S Pen (S24 Ultra / Tab S11) | ❌ **no realizadas** | no hubo hardware disponible |
+
+La pausa por defecto es de **500 ms** y el usuario la elige entre 100 y 1000 ms en Preferencias. Las pruebas que dicen «1000 ms» fijan esa pausa a propósito: el emulador de CI, muy cargado, entrega eventos con huecos que una pausa corta confundiría con quietud.
 
 Los niveles 4 y 5 usan eventos `TOOL_TYPE_STYLUS` / `SOURCE_STYLUS` **sintetizados** e inyectados con `UiAutomation` (o despachados a la vista). Prueban la app real y el flujo de entrada de Android, pero **no** la latencia, la presión física, el rechazo de palma real ni la ergonomía del S Pen.
 
@@ -22,7 +24,7 @@ Los niveles 4 y 5 usan eventos `TOOL_TYPE_STYLUS` / `SOURCE_STYLUS` **sintetizad
 ./gradlew :core:test :app:testDebugUnitTest          # con SDK (CI)
 ```
 
-133 pruebas en 14 clases, 0 fallas. Cobertura de la matriz **a nivel motor** (lápiz sintético):
+140 pruebas en 10 archivos, 0 fallas. Cobertura de la matriz **a nivel motor** (lápiz sintético):
 
 | ID | Prueba | Resultado |
 |---|---|---|
@@ -105,9 +107,10 @@ Archivos: `output/demo-real-android.mp4` y capturas `output/emulator/trazo-demo-
 En Galaxy S24 Ultra y Galaxy Tab S11, con la APK instalada, grabando pantalla y mano:
 
 1. T01/T18: escribir una página completa; zoom 1×–4× y desplazamiento: sin cortes ni pixelado.
-2. T02/T05: integral + mantener apoyado 1 s con la mano natural (tasa de éxito en 20 intentos; ajustar el temblor tolerado si hace falta).
-3. T03/T06: levantar a ~0,9 s y escribir lento: 0 conversiones involuntarias en 20 intentos.
-4. T19: escribir con la palma apoyada; palma antes del lápiz; botón lateral como goma.
+2. T02/T05: integral + mantener apoyado con la pausa por defecto (500 ms) y con 300 y 1000 ms, con la mano natural (tasa de éxito en 20 intentos por valor; ajustar el temblor tolerado si hace falta).
+3. T03/T06: levantar justo antes de la pausa y escribir lento: 0 conversiones involuntarias en 20 intentos.
+4. T19: escribir con la palma apoyada; palma antes del lápiz; botón lateral del S Pen como goma (apretarlo antes y a mitad de un trazo) y como lazo.
+4b. Presets: dibujar cada signo y los números 0–10 con la letra propia; probar los patrones importados del usuario.
 5. T09–T11 y aprendizaje: enseñar un patrón propio desde el editor y desde la hoja ("Enseñar") y reutilizarlo.
 6. T12–T14: escribir sobre la salida, borrar parcialmente, deshacer/rehacer.
 7. T17/T20/T21: cerrar y reabrir, rotar durante un gesto, modo avión.
