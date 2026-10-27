@@ -42,7 +42,11 @@ class EditorInstrumentedTest {
 
     @Before fun setUp() {
         app.repository.restoreDefaultPatterns()
-        app.settings.update { TrazoSettings() }
+        // Pausa de 1 s (la de diseño de estas pruebas), no la de 500 ms por defecto: el emulador de CI
+        // cargado frena la inyección más de medio segundo y la app ve, con razón, una pausa cumplida
+        // en medio de un trazo libre. Los 500 ms se prueban en JVM con reloj sintético
+        // (Dwell500msRegressionTest).
+        app.settings.update { TrazoSettings(holdMillis = 1000L) }
         notebookId = app.repository.createNotebook("Prueba instrumentada").id
         scenario = ActivityScenario.launch(
             Intent(app, MainActivity::class.java).putExtra(MainActivity.EXTRA_NOTEBOOK_ID, notebookId),

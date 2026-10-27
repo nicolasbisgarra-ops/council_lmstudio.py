@@ -22,7 +22,7 @@ adb shell svc power stayon true || true
 focus() { timeout 15 adb shell dumpsys window 2>/dev/null | tr -d '\r' | awk '/^WINDOW MANAGER /{skip = /LAST ANR/} !skip && /mCurrentFocus|mFocusedApp/'; }
 anrs() { timeout 15 adb shell dumpsys dropbox 2>/dev/null | grep -E '_anr|_crash' | tail -n 20; }
 diag() {
-  echo "-- $1: carga $(adb shell cat /proc/loadavg | tr -d '\r'); $(timeout 15 adb shell dumpsys power 2>/dev/null | grep -oE 'mWakefulness=[A-Za-z]+' | head -n 1)"
+  echo "-- $1: carga $(timeout 15 adb shell cat /proc/loadavg | tr -d '\r'); $(timeout 15 adb shell dumpsys power 2>/dev/null | grep -oE 'mWakefulness=[A-Za-z]+' | head -n 1)"
   focus
 }
 # Toca el botón con ese resource-id en la ventana activa (diálogos de error del sistema).
@@ -62,9 +62,9 @@ settle() {
 failure_diag() {
   echo "== Diagnóstico =="; diag "al fallar"
   anrs
-  adb logcat -d -b events 2>/dev/null | grep -E 'input_focus|input_interaction|am_anr|am_crash' | tail -n 60
-  adb logcat -d 2>/dev/null | grep -iE 'ANR in|not responding|FATAL EXCEPTION|untrusted touch|trazo' | tail -n 60
-  adb exec-out screencap -p > "$OUT/fallo-pantalla.png" 2>/dev/null || true
+  timeout 30 adb logcat -d -b events 2>/dev/null | grep -E 'input_focus|input_interaction|am_anr|am_crash' | tail -n 60
+  timeout 30 adb logcat -d 2>/dev/null | grep -iE 'ANR in|not responding|FATAL EXCEPTION|untrusted touch|trazo' | tail -n 60
+  timeout 30 adb exec-out screencap -p > "$OUT/fallo-pantalla.png" 2>/dev/null || true
   timeout 20 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb shell cat /sdcard/ui.xml | head -c 4000; echo
 }
 
@@ -115,10 +115,16 @@ done
 echo "== Recorrido de la interfaz =="
 settle 1
 timeout 420 adb shell am instrument -w -e class io.trazo.app.GuiTourTest "$RUNNER" | tee "$OUT/interfaz.txt"
-for f in $(adb shell ls /data/local/tmp 2>/dev/null | tr -d '\r' | grep -E '^trazo-gui-.*[.]png$'); do
-  adb pull "/data/local/tmp/$f" "$OUT/$f" || true
+# Si el emulador se cae, cada `adb` queda «waiting for device» hasta que se cancela el job y no
+# se sube nada: de acá en adelante todo con tope y, sin dispositivo, se informa y se termina.
+if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
+  echo "FALLÓ: se perdió el emulador durante el recorrido de la interfaz" | tee -a "$OUT/interfaz.txt"
+  exit 1
+fi
+for f in $(timeout 20 adb shell ls /data/local/tmp 2>/dev/null | tr -d '\r' | grep -E '^trazo-gui-.*[.]png$'); do
+  timeout 30 adb pull "/data/local/tmp/$f" "$OUT/$f" || true
 done
-adb logcat -d -t 2000 > "$OUT/logcat.txt" || true
+timeout 60 adb logcat -d -t 2000 > "$OUT/logcat.txt" || true
 
 status=0
 for f in pruebas-instrumentadas.txt demo.txt interfaz.txt; do
