@@ -74,8 +74,10 @@ class GuiTourTest {
             device.pressBack()
             find(By.desc("Pluma")).click()
 
-            find(By.descStartsWith("Color #")).longClick() // primer color rápido
-            find(By.text("Cambiar este color rápido"))
+            // Con un toque y no manteniendo apretado un color rápido: la vibración del toque largo
+            // tumbaba al emulador de CI. Es el mismo diálogo.
+            find(By.desc("Otro color")).click()
+            find(By.text("Color de la pluma"))
             shot("5-color")
             device.pressBack()
 
