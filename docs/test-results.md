@@ -9,8 +9,8 @@ Separados por **nivel de evidencia**, como pide `05_PRUEBAS_ACEPTACION.md`. Una 
 | 1. JVM — motor `:core` | ✅ **81/81** | local (OpenJDK 21) y GitHub Actions (JDK 17) |
 | 2. JVM — app (`SourcePolicyTest`: sin WebView/LaTeX/texto en la hoja) | ✅ 5/5 | GitHub Actions |
 | 3. Compilación `assembleDebug` + `assembleDebugAndroidTest` | ✅ | GitHub Actions, AGP 8.7.3, compileSdk 35 |
-| 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ✅ **16/16** (corrida #6, commit `c4491c7`) | GitHub Actions, emulador API 34 Pixel 6, sin red |
-| 5. Demo grabada en la app nativa (emulador, automatizada) | ✅ **2/2** (ejercicio completo + enseñar un gesto), video de 10 MB | `output/demo-real-android.mp4` |
+| 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ✅ **16/16** (corrida #10, commit `2c5f848`) | GitHub Actions, emulador API 34 Pixel 6, sin red |
+| 5. Demo grabada en la app nativa (emulador, automatizada) | ✅ **2/2** (ejercicio completo + enseñar un gesto), video de 10,8 MB | `output/demo-real-android.mp4` |
 | 6. Físicas con S Pen (S24 Ultra / Tab S11) | ❌ **no realizadas** | no hubo hardware disponible |
 
 Los niveles 4 y 5 usan eventos `TOOL_TYPE_STYLUS` / `SOURCE_STYLUS` **sintetizados** e inyectados con `UiAutomation` (o despachados a la vista). Prueban la app real y el flujo de entrada de Android, pero **no** la latencia, la presión física, el rechazo de palma real ni la ergonomía del S Pen.
@@ -64,7 +64,7 @@ Evidencia del motor (rotulada "SIMULACIÓN JVM"): `output/jvm/exercise-final.png
 | T17 | `t17_notesAndPatternsPersistAcrossRecreateAndBackground` | ✅ |
 | T18 | `t18_zoomKeepsDocumentGeometry` | ✅ (en la corrida #2 falló la prueba: el pellizco era menor al mínimo de Android; corregida) |
 | T19 (simulada) | `t19_fingerTouchWhileStylusIsDownDoesNotDraw`, `t19b_actionCancelDiscardsTheStroke` | ✅ |
-| T20 | `t20_recreatingDuringAGestureCancelsSafely` | ✅ (ver historia: se corrigió la app —interrupciones cancelan— y la prueba, que esperaba inactividad con el lápiz apoyado) |
+| T20 | `t20_recreatingDuringAGestureCancelsSafely` (pausa de 10 s: verifica que el gesto siga en curso antes de recrear y que recrear cancele el contacto) | ✅ (ver historia: se corrigió la app —interrupciones cancelan— y la prueba) |
 | T23 | `t23_noWebViewInTheHierarchy` | ✅ |
 | T16 | `ExportInstrumentedTest` (PDF con una página por hoja, PNG válido) | ✅ |
 | — | `t25_twoFingerTapUndoesTheLastChange` | ✅ |
@@ -79,6 +79,7 @@ Evidencia del motor (rotulada "SIMULACIÓN JVM"): `output/jvm/exercise-final.png
 - Corrida #7 (`381d5a2`, mismo código de la app): compilación ✅; emulador ❌ por el entorno: una ventana del sistema quedó encima de la app y se tragó los toques inyectados, aunque la inyección "funcionaba" (10 de 16 instrumentadas fallaron, todas las que dibujan con el lápiz por el sistema; la demo, 0/2). Corregido: `ci-emulator.sh` oculta los diálogos de error del sistema, desactiva el bloqueo, deja la pantalla encendida y espera un foco estable; `StylusDriver` espera a que el lienzo tenga el foco antes de apoyar el lápiz; T17 ahora verifica que haya trazos antes de comparar (si no, pasaba vacía).
 - Corrida #8 (`8e2afd0`): compilación ✅ y **APK publicada en la rama** al terminar de compilar (clave debug fija); emulador: 15/16 ✅ y demo 2/2 ✅ (video de 9,7 MB y 5 capturas). Falló T03: con pausa de 1 s y 800 ms quieto, el emulador muy cargado (carga 21) entregó tarde el UP y la app vio, con razón, una pausa completa → la prueba ahora levanta a mitad de una pausa de 2 s.
 - Corrida #9 (`17d0c83`): compilación ✅ (APK publicada); T03 ✅ y demo 2/2 ✅ (video de 9,1 MB). Falló T20: la hoja ya tenía trazos al levantar el lápiz tras recrear. La app cancela al recrear (al pausar y al soltar la vista), así que el trazo se cerró antes: lo más probable es que el emulador cargado frenara la inyección o la recreación más que la pausa de 2 s, o que esa pausa aún no hubiera llegado al controlador (la prueba no la esperaba). El mensaje no decía qué trazos había. → T20 fija una pausa de 10 s, espera a que llegue al controlador y verifica que el gesto siga en curso antes de recrear y que recrear cancele el contacto; T03 usa una pausa de 4 s. Los mensajes de falla ahora muestran los trazos y el mayor hueco entre eventos inyectados. Además, `settle` perdía ~3,5 min: leía el foco guardado en la sección «LAST ANR» de `dumpsys window` (null tras un ANR del arranque) → se ignora esa sección.
+- Corrida #10 (`2c5f848`): **todo verde** — compilación, JVM, 16/16 instrumentadas y demo 2/2 (video de 10,8 MB y 5 capturas, publicados en la rama).
 
 ## 5. Demo grabada (T22 en la app nativa)
 
