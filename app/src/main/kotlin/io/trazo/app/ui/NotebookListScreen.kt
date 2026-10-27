@@ -295,9 +295,18 @@ private fun NotebookCard(
     }
 }
 
-/** "hace 5 minutos", "ayer"… según el idioma del sistema. */
-private fun whenText(time: Long): String =
-    DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+/** "hace un momento", "hace 5 min", "ayer"… en castellano, como el resto de la interfaz. */
+private fun whenText(time: Long): String {
+    val ago = System.currentTimeMillis() - time
+    return when {
+        ago < DateUtils.MINUTE_IN_MILLIS -> "hace un momento"
+        ago < DateUtils.HOUR_IN_MILLIS -> "hace ${ago / DateUtils.MINUTE_IN_MILLIS} min"
+        ago < DateUtils.DAY_IN_MILLIS -> "hace ${ago / DateUtils.HOUR_IN_MILLIS} h"
+        ago < 2 * DateUtils.DAY_IN_MILLIS -> "ayer"
+        ago < DateUtils.WEEK_IN_MILLIS -> "hace ${ago / DateUtils.DAY_IN_MILLIS} días"
+        else -> java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale("es")).format(java.util.Date(time))
+    }
+}
 
 @Composable
 private fun EmptyState(modifier: Modifier = Modifier) {
