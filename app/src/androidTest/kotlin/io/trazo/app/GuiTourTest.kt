@@ -130,9 +130,10 @@ class GuiTourTest {
      * emulador de CI el deslizamiento con el dedo no movía la fila.
      */
     private fun scrollToolbarTo(desc: String, y: Int) {
-        repeat(8) {
-            val b = find(By.desc(desc)).visibleBounds
-            if (b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return
+        repeat(12) {
+            // Lo que queda fuera de la fila no está en el árbol: si no aparece, se sigue deslizando.
+            val b = device.findObject(By.desc(desc))?.visibleBounds
+            if (b != null && b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return
             val row = scrollableAt(instrumentation.uiAutomation.rootInActiveWindow, y)
                 ?: error("No hay fila deslizable en y=$y. En pantalla: ${onScreen()}")
             row.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
