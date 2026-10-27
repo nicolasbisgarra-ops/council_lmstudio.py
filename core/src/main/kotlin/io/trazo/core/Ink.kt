@@ -22,12 +22,27 @@ data class InkPoint(
     @SerialName("t") val timeMs: Long = 0L,
 )
 
+/** Punta con que se pinta un trazo. Solo cambia el pintado: el modelo sigue siendo el mismo recorrido vectorial. */
+@Serializable
+enum class Brush {
+    /** Pluma: el grosor sigue la presión. */
+    PEN,
+    /** Bolígrafo: grosor casi constante. */
+    BALLPOINT,
+    /** Caligrafía: punta biselada, el grosor depende de la dirección. */
+    CALLIGRAPHY,
+    /** Lápiz: más fino y más claro con poca presión. */
+    PENCIL,
+    /** Resaltador: ancho y translúcido, se pinta debajo de la tinta y nunca se reconoce como gesto. */
+    HIGHLIGHTER,
+}
+
 /**
  * Trazo vectorial editable. Toda marca sobre la hoja es un [InkStroke]: no existen
  * glifos tipográficos ni imágenes en el modelo del documento.
  *
  * @param startTime reloj monotónico de la sesión (o epoch al cargar); solo se usa para agrupar gestos.
- * @param groupId une los trazos insertados por un patrón para moverlos juntos.
+ * @param groupId une los trazos insertados juntos (salida de un patrón, una forma) para moverlos juntos.
  * @param patternId patrón del que proviene la tinta (null = escrita a mano en la hoja).
  */
 @Serializable
@@ -39,6 +54,7 @@ data class InkStroke(
     val startTime: Long = 0L,
     val groupId: String? = null,
     val patternId: String? = null,
+    val brush: Brush = Brush.PEN,
 ) {
     init {
         require(points.isNotEmpty()) { "A stroke needs at least one point" }
@@ -54,7 +70,15 @@ data class InkStroke(
             for (i in 1 until points.size) total += dist(points[i - 1], points[i])
             return total
         }
+
+    /** Escrita a mano en la hoja (no es salida de un patrón, ni una forma, ni resaltador): puede formar un gesto. */
+    val isHandwriting: Boolean get() = patternId == null && groupId == null && brush != Brush.HIGHLIGHTER
 }
+
+/** Color, grosor y punta con que se escribe; la salida de un patrón los adopta (ver [InkReplacement.place]). */
+data class InkStyle(val color: Int = DEFAULT_INK_COLOR, val width: Float = DEFAULT_INK_WIDTH, val brush: Brush = Brush.PEN)
+
+val InkStroke.style: InkStyle get() = InkStyle(color, width, brush)
 
 @Serializable
 data class Bounds(val left: Float, val top: Float, val right: Float, val bottom: Float) {

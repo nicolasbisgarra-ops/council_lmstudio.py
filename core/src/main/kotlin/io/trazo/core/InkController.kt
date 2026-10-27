@@ -1,12 +1,18 @@
 package io.trazo.core
 
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 
-enum class Tool { PEN, ERASER, STROKE_ERASER, LASSO }
+/** Herramienta activa. [PAN] desplaza la hoja: lo resuelve la vista y el controlador lo ignora. */
+enum class Tool { PEN, ERASER, STROKE_ERASER, LASSO, SHAPE, PAN }
 
-/** Origen del contacto; la capa Android lo deriva de `MotionEvent.getToolType`. */
-enum class PointerKind { STYLUS, STYLUS_ERASER, FINGER, MOUSE }
+/**
+ * Origen del contacto; la capa Android lo deriva de `MotionEvent.getToolType` y de los botones.
+ * [STYLUS_ERASER] es la goma del lápiz (extremo trasero) y [STYLUS_BUTTON], el lápiz con el botón
+ * lateral apretado (S Pen): cada uno usa su propia herramienta (ver [InkController.toolFor]).
+ */
+enum class PointerKind { STYLUS, STYLUS_ERASER, STYLUS_BUTTON, FINGER, MOUSE }
 
 sealed interface InkEvent {
     /** La página cambió (dibujo, borrado, conversión, deshacer…). */
@@ -49,7 +55,18 @@ class InkController(
         }
     var color: Int = DEFAULT_INK_COLOR
     var width: Float = DEFAULT_INK_WIDTH
+    /** Punta de la pluma. Con [Brush.HIGHLIGHTER] nunca se reconoce un gesto. */
+    var brush: Brush = Brush.PEN
+    /** Forma que dibuja [Tool.SHAPE]. */
+    var shape: ShapeKind = ShapeKind.LINE
+    /** Herramienta mientras se aprieta el botón lateral del lápiz; null = el botón no cambia nada. */
+    var sideButtonTool: Tool? = Tool.ERASER
+    /** Herramienta de la goma del lápiz (extremo trasero). */
+    var hardwareEraserTool: Tool = Tool.ERASER
     var recognitionEnabled: Boolean = true
+
+    /** Estilo con que se escribe ahora. */
+    val style: InkStyle get() = InkStyle(color, width, brush)
 
     /** Pausa global; un patrón puede pedir más con [InkPattern.holdMillis]. */
     var holdMillis: Long = 1000L
@@ -69,10 +86,18 @@ class InkController(
     fun removeListener(l: (InkEvent) -> Unit) { listeners -= l }
     private fun emit(e: InkEvent) = listeners.toList().forEach { it(e) }
 
-    private enum class Mode { NONE, DRAW, CONSUMED, ERASE, STROKE_ERASE, LASSO_PATH, MOVE_SELECTION, SCALE_SELECTION }
+    private enum class Mode { NONE, DRAW, CONSUMED, ERASE, STROKE_ERASE, LASSO_PATH, MOVE_SELECTION, SCALE_SELECTION, SHAPE }
 
     private var mode = Mode.NONE
     private var kind = PointerKind.STYLUS
+    /** Estilo y forma tomados al apoyar: cambiarlos a mitad de un trazo no lo altera. */
+    private var contactStyle = InkStyle()
+    private var contactShape = ShapeKind.LINE
+    /** Herramienta del contacto en curso (null sin contacto). */
+    var contactTool: Tool? = null
+        private set
+    /** El contacto empezó fuera de una selección y la quitó: si es solo un toque, no deja tinta. */
+    private var dismissedSelection = false
     private var pxPerUnit = 1f
     private var downTime = 0L
     private var currentId = ""
@@ -100,9 +125,27 @@ class InkController(
     private var dragStartY = 0f
     private var dragged = false
 
+    // Formas.
+    private var shapeX0 = 0f
+    private var shapeY0 = 0f
+    private var shapeX1 = 0f
+    private var shapeY1 = 0f
+
     /** Trazo en curso (tinta húmeda) para dibujar sin esperar al reconocimiento. */
     val inProgress: InkStroke?
         get() = if (mode == Mode.DRAW && points.isNotEmpty()) currentStroke() else null
+
+    /** Tinta húmeda del contacto: el trazo que se escribe o la forma que se arrastra. */
+    val wetInk: List<InkStroke>
+        get() = when (mode) {
+            Mode.DRAW -> listOfNotNull(inProgress)
+            Mode.SHAPE -> shapeStrokes(PREVIEW_IDS)
+            else -> emptyList()
+        }
+
+    /** Centro del borrador mientras se borra (para dibujar su contorno). */
+    val eraserPosition: InkPoint?
+        get() = if (mode == Mode.ERASE || mode == Mode.STROKE_ERASE) InkPoint(lastEraseX, lastEraseY) else null
 
     val lassoPath: List<InkPoint> get() = if (mode == Mode.LASSO_PATH) lassoPoints else emptyList()
 
@@ -124,12 +167,32 @@ class InkController(
 
     // ---------------------------------------------------------------- contactos
 
+    /** Herramienta que usa un contacto de ese tipo: la goma y el botón lateral del lápiz tienen la suya. */
+    fun toolFor(kind: PointerKind): Tool = when (kind) {
+        PointerKind.STYLUS_ERASER -> hardwareEraserTool
+        PointerKind.STYLUS_BUTTON -> sideButtonTool ?: tool
+        else -> tool
+    }
+
     fun penDown(x: Float, y: Float, pressure: Float, timeMs: Long, kind: PointerKind, pxPerUnit: Float = 1f) {
         if (mode != Mode.NONE) cancel()
         this.pxPerUnit = max(pxPerUnit, 1e-3f)
         this.kind = kind
         downTime = timeMs
-        val effective = if (kind == PointerKind.STYLUS_ERASER) Tool.ERASER else tool
+        contactStyle = style
+        contactShape = shape
+        val effective = toolFor(kind)
+        contactTool = effective
+        dismissedSelection = false
+        // Una selección hecha (lazo del botón lateral, patrón recién insertado) también se arrastra
+        // con la pluma o las formas; tocar fuera de ella la quita.
+        if (selection.isNotEmpty() && effective != Tool.LASSO) {
+            if (effective == Tool.PEN || effective == Tool.SHAPE) {
+                if (grabSelection(x, y)) return
+                dismissedSelection = true
+            }
+            clearSelection()
+        }
         when (effective) {
             Tool.PEN -> {
                 mode = Mode.DRAW
@@ -150,21 +213,30 @@ class InkController(
                 lastEraseX = x; lastEraseY = y
                 eraseAt(x, y)
             }
-            Tool.LASSO -> {
-                val sb = selectionBounds
-                val handle = sb?.let { handleBounds(it) }
-                dragStartX = x; dragStartY = y; dragged = false
-                when {
-                    handle != null && handle.contains(x, y) -> startDrag(Mode.SCALE_SELECTION, sb)
-                    sb != null && sb.inflate(8f / this.pxPerUnit).contains(x, y) -> startDrag(Mode.MOVE_SELECTION, sb)
-                    else -> {
-                        clearSelection()
-                        mode = Mode.LASSO_PATH
-                        lassoPoints.clear(); lassoPoints += InkPoint(x, y)
-                    }
-                }
+            Tool.LASSO -> if (!grabSelection(x, y)) {
+                clearSelection()
+                mode = Mode.LASSO_PATH
+                lassoPoints.clear(); lassoPoints += InkPoint(x, y)
             }
+            Tool.SHAPE -> {
+                mode = Mode.SHAPE
+                shapeX0 = x; shapeY0 = y; shapeX1 = x; shapeY1 = y
+            }
+            Tool.PAN -> Unit // desplazar la hoja es cosa de la vista
         }
+    }
+
+    /**
+     * Cambió el tipo de contacto sin levantar el lápiz. Al apretar el botón lateral se termina lo que
+     * se hacía y se sigue desde (x, y) con la herramienta del botón; un trazo todavía mínimo se
+     * descarta, porque el botón suele apretarse justo al apoyar. Al soltarlo se sigue con la misma
+     * herramienta hasta levantar el lápiz.
+     */
+    fun changeKind(kind: PointerKind, x: Float, y: Float, pressure: Float, timeMs: Long) {
+        if (contactTool == null || kind == this.kind) return
+        if (kind != PointerKind.STYLUS_BUTTON || toolFor(kind) == contactTool) { this.kind = kind; return }
+        if (mode == Mode.DRAW && lengthUnits * pxPerUnit < minInkLengthPx) cancel() else penUp(x, y, pressure, timeMs)
+        penDown(x, y, pressure, timeMs, kind, pxPerUnit)
     }
 
     fun penMove(x: Float, y: Float, pressure: Float, timeMs: Long) {
@@ -187,6 +259,7 @@ class InkController(
             }
             Mode.LASSO_PATH -> lassoPoints += InkPoint(x, y)
             Mode.MOVE_SELECTION, Mode.SCALE_SELECTION -> dragTo(x, y)
+            Mode.SHAPE -> { shapeX1 = x; shapeY1 = y }
             Mode.CONSUMED, Mode.NONE -> Unit // tras convertir no se crea un trazo fantasma
         }
     }
@@ -197,8 +270,10 @@ class InkController(
                 penMoveIfMoved(x, y, pressure, timeMs)
                 dwell.up()
                 val stroke = currentStroke()
-                val heldWithoutInk = lengthUnits * pxPerUnit < minInkLengthPx / 4f && timeMs - downTime >= holdMillis
-                if (!heldWithoutInk) {
+                val tiny = lengthUnits * pxPerUnit < minInkLengthPx / 4f
+                val heldWithoutInk = tiny && timeMs - downTime >= holdMillis
+                val tapToDismiss = tiny && dismissedSelection && timeMs - downTime < TAP_MS
+                if (!heldWithoutInk && !tapToDismiss) {
                     history.perform(page, StrokeEdit(emptyList(), listOf(stroke), StrokeEdit.Kind.DRAW))
                     emit(InkEvent.PageChanged)
                 }
@@ -226,8 +301,17 @@ class InkController(
                 resetContact()
                 emit(InkEvent.SelectionChanged)
             }
+            Mode.SHAPE -> {
+                shapeX1 = x; shapeY1 = y
+                val strokes = shapeStrokes(ids)
+                if (strokes.isNotEmpty()) {
+                    history.perform(page, StrokeEdit(emptyList(), strokes, StrokeEdit.Kind.INSERT))
+                    emit(InkEvent.PageChanged)
+                }
+                resetContact()
+            }
             Mode.CONSUMED -> resetContact()
-            Mode.NONE -> Unit
+            Mode.NONE -> resetContact()
         }
     }
 
@@ -254,7 +338,7 @@ class InkController(
      * @return true si conviene redibujar (indicador de pausa o conversión).
      */
     fun tick(nowMs: Long): Boolean {
-        if (mode != Mode.DRAW || !recognitionEnabled) return false
+        if (mode != Mode.DRAW || !recognitionEnabled || contactStyle.brush == Brush.HIGHLIGHTER) return false
         val pats = patterns().filter { it.enabled }
         val minHold = minOf(holdMillis, pats.minOfOrNull { it.holdMillis ?: holdMillis } ?: holdMillis)
         if (!dwell.isStill(nowMs, minHold, lengthUnits)) return dwell.isTouching
@@ -286,7 +370,8 @@ class InkController(
 
     /** Avance 0..1 del indicador de pausa. */
     fun dwellProgress(nowMs: Long): Float = when {
-        mode != Mode.DRAW || !recognitionEnabled || lengthUnits * pxPerUnit < minInkLengthPx -> 0f
+        mode != Mode.DRAW || !recognitionEnabled || contactStyle.brush == Brush.HIGHLIGHTER ||
+            lengthUnits * pxPerUnit < minInkLengthPx -> 0f
         // Ya evaluado sin coincidencia en esta quietud: no prometer una conversión.
         evaluatedStableFrom == dwell.stableFromMs && pendingConvert == null -> 0f
         else -> dwell.progress(nowMs)
@@ -320,7 +405,7 @@ class InkController(
         if (mode != Mode.NONE || gestureIds.isEmpty()) return null
         val gesture = strokesById(gestureIds.distinct()) ?: return null
         val start = strokeClock(if (nowMs != 0L) nowMs else gesture.last().endTime)
-        val output = InkReplacement.place(pattern, gesture.bounds(), ids, start)
+        val output = InkReplacement.place(pattern, gesture.bounds(), ids, start, style = gesture.last().style)
         history.perform(page, StrokeEdit(gesture, output, StrokeEdit.Kind.CONVERT))
         if (selection.any { it in gestureIds }) clearSelection()
         emit(InkEvent.Converted(pattern, 1f, gesture, output))
@@ -328,14 +413,14 @@ class InkController(
         return output
     }
 
-    /** Inserta la tinta de un patrón centrada en (cx, cy) con altura [height] (desde la biblioteca). */
+    /** Inserta la tinta de un patrón centrada en (cx, cy) con altura [height] (desde la biblioteca), con el estilo actual. */
     fun insertPattern(pattern: InkPattern, cx: Float, cy: Float, height: Float, nowMs: Long = 0L): List<InkStroke> {
         val src = pattern.outputInk.bounds()
         val aspect = if (src.height > 0.5f) src.width / src.height else 1f
         val h = (if (src.height > 0.5f) height else height * 0.1f) / pattern.outputScale.coerceAtLeast(0.01f)
         val w = if (src.height > 0.5f) h * aspect else height * 2f / pattern.outputScale.coerceAtLeast(0.01f)
         val anchor = Bounds(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
-        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs))
+        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style)
         history.perform(page, StrokeEdit(emptyList(), output, StrokeEdit.Kind.INSERT))
         emit(InkEvent.PageChanged)
         return output
@@ -429,7 +514,7 @@ class InkController(
 
     private fun convert(r: Recognition.Convert) {
         val anchorGesture = r.gesture.map { if (it.id == currentId) trimHold(it) else it }
-        val output = InkReplacement.place(r.match.pattern, anchorGesture.bounds(), ids, strokeClock(downTime))
+        val output = InkReplacement.place(r.match.pattern, anchorGesture.bounds(), ids, strokeClock(downTime), style = contactStyle)
         // Un solo comando: deshacer restaura todo el gesto (incluido el trazo en curso).
         val edit = StrokeEdit(r.gesture, output, StrokeEdit.Kind.CONVERT)
         history.perform(page, edit)
@@ -455,10 +540,17 @@ class InkController(
     private fun currentStroke() = InkStroke(
         id = currentId,
         points = points.toList(),
-        color = color,
-        width = width,
+        color = contactStyle.color,
+        width = contactStyle.width,
         startTime = strokeClock(downTime),
+        brush = contactStyle.brush,
     )
+
+    /** Trazos de la forma arrastrada; vacío mientras es demasiado chica (un toque no deja una forma). */
+    private fun shapeStrokes(idGen: IdGenerator): List<InkStroke> {
+        if (max(abs(shapeX1 - shapeX0), abs(shapeY1 - shapeY0)) * pxPerUnit < MIN_SHAPE_PX) return emptyList()
+        return Shapes.build(contactShape, shapeX0, shapeY0, shapeX1, shapeY1, contactStyle, idGen, strokeClock(downTime))
+    }
 
     private fun penMoveIfMoved(x: Float, y: Float, pressure: Float, timeMs: Long) {
         val last = points.last()
@@ -485,6 +577,18 @@ class InkController(
             changed = true
         }
         if (changed) emit(InkEvent.PageChanged)
+    }
+
+    /** Empieza a mover o escalar la selección si (x, y) cae sobre ella o su tirador. */
+    private fun grabSelection(x: Float, y: Float): Boolean {
+        val sb = selectionBounds ?: return false
+        dragStartX = x; dragStartY = y; dragged = false
+        when {
+            handleBounds(sb).contains(x, y) -> startDrag(Mode.SCALE_SELECTION, sb)
+            sb.inflate(8f / pxPerUnit).contains(x, y) -> startDrag(Mode.MOVE_SELECTION, sb)
+            else -> return false
+        }
+        return true
     }
 
     private fun startDrag(m: Mode, bounds: Bounds) {
@@ -519,11 +623,21 @@ class InkController(
         lassoPoints.clear()
         dragOriginals = emptyList()
         dragBounds = null
+        contactTool = null
+        dismissedSelection = false
     }
 
     private fun normalizePressure(p: Float, kind: PointerKind): Float = when {
         kind == PointerKind.FINGER || kind == PointerKind.MOUSE -> 0.7f
         p.isNaN() || p <= 0f -> 0.5f
         else -> p.coerceIn(0.05f, 1f)
+    }
+
+    private companion object {
+        /** Lado mínimo (px) para que el arrastre de la herramienta de formas cree una forma. */
+        const val MIN_SHAPE_PX = 6f
+        /** Un contacto más corto que esto es un toque. */
+        const val TAP_MS = 300L
+        val PREVIEW_IDS = IdGenerator { "preview" }
     }
 }

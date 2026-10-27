@@ -13,7 +13,10 @@ object DefaultPatterns {
     const val ROOT = "raiz"
     const val FRACTION = "fraccion"
 
-    fun all(): List<InkPattern> = listOf(integral(), root(), fraction())
+    /** Los tres patrones de partida (integral, raíz, barra). */
+    fun core(): List<InkPattern> = listOf(integral(), root(), fraction())
+
+    fun all(): List<InkPattern> = core()
 
     fun integral() = InkPattern(
         id = INTEGRAL,
@@ -28,6 +31,7 @@ object DefaultPatterns {
         sizing = OutputSizing.MATCH_HEIGHT,
         outputScale = 1.1f,
         builtIn = true,
+        category = PatternCategory.CALCULUS,
     )
 
     fun root() = InkPattern(
@@ -51,6 +55,7 @@ object DefaultPatterns {
         sizing = OutputSizing.MATCH_HEIGHT,
         outputScale = 1.15f,
         builtIn = true,
+        category = PatternCategory.CALCULUS,
     )
 
     fun fraction() = InkPattern(
@@ -61,6 +66,7 @@ object DefaultPatterns {
         sizing = OutputSizing.MATCH_WIDTH,
         outputScale = 1.15f,
         builtIn = true,
+        category = PatternCategory.OPERATORS,
     )
 
     // ------------------------------------------------------------- utilidades de construcción

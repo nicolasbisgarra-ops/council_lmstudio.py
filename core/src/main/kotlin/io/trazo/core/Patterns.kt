@@ -37,6 +37,8 @@ data class InkPattern(
     val enabled: Boolean = true,
     val builtIn: Boolean = false,
     val updatedAt: Long = 0L,
+    /** Sección de la biblioteca ([PatternCategory]); null = patrones propios del usuario. */
+    val category: String? = null,
 ) {
     init {
         require(gestureExamples.isNotEmpty() && gestureExamples.all { it.isNotEmpty() }) { "Pattern needs a gesture" }
@@ -47,6 +49,23 @@ data class InkPattern(
         const val DEFAULT_MIN_SCORE = 0.80f
         const val MAX_EXAMPLES = 8
     }
+}
+
+/** Secciones de la biblioteca de patrones, en el orden en que se muestran. */
+object PatternCategory {
+    const val NUMBERS = "Números"
+    const val OPERATORS = "Operadores"
+    const val GROUPING = "Paréntesis"
+    const val CALCULUS = "Cálculo"
+    const val GREEK = "Letras griegas"
+    const val SETS = "Conjuntos y lógica"
+    const val ARROWS = "Flechas y geometría"
+    const val LETTERS = "Letras y funciones"
+    const val MINE = "Mis patrones"
+
+    val ORDER = listOf(MINE, NUMBERS, OPERATORS, GROUPING, CALCULUS, GREEK, SETS, ARROWS, LETTERS)
+
+    fun of(p: InkPattern): String = p.category ?: MINE
 }
 
 /** Agrega el gesto (normalizado) como ejemplo. Si se supera [maxExamples], conserva siempre el primero (el enseñado originalmente) y los más recientes. */
@@ -83,6 +102,9 @@ object GestureExamples {
 object InkReplacement {
     /**
      * @param anchor rectángulo del gesto; la salida se centra en él.
+     * @param style estilo con que se escribió el gesto: los trazos de salida con el color por defecto
+     *  adoptan su color, su grosor (proporcional) y su punta; los que se enseñaron con otro color lo
+     *  conservan. Un estilo de resaltador no se adopta.
      * @return trazos nuevos (ids nuevos, mismo [InkStroke.groupId], [InkStroke.patternId] = patrón).
      */
     fun place(
@@ -91,6 +113,7 @@ object InkReplacement {
         ids: IdGenerator,
         startTime: Long = 0L,
         groupId: String = ids.next(),
+        style: InkStyle? = null,
     ): List<InkStroke> {
         val src = pattern.outputInk.bounds()
         val eps = 0.5f
@@ -117,13 +140,23 @@ object InkReplacement {
             .then(Affine(a = s, d = s))
             .then(Affine.translate(anchor.centerX, anchor.centerY))
         return pattern.outputInk.map { stroke ->
-            stroke.transformed(t, scaleWidth = false).copy(
+            stroke.transformed(t, scaleWidth = false).adopting(style).copy(
                 id = ids.next(),
                 startTime = startTime,
                 groupId = groupId,
                 patternId = pattern.id,
             )
         }
+    }
+
+    private fun InkStroke.adopting(style: InkStyle?): InkStroke {
+        // El resaltador no se hereda: la salida es tinta.
+        if (style == null || style.brush == Brush.HIGHLIGHTER || color != DEFAULT_INK_COLOR) return this
+        return copy(
+            color = style.color,
+            width = (width * style.width / DEFAULT_INK_WIDTH).coerceIn(0.5f, 60f),
+            brush = if (brush == Brush.PEN) style.brush else brush,
+        )
     }
 
     private fun Float.orElse(other: Float) = if (isNaN()) other else this
