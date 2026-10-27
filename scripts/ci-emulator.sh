@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Corre en el emulador de CI: instala las APK, ejecuta las pruebas instrumentadas y graba la
-# demo automatizada con screenrecord. Uso: ci-emulator.sh <dir-con-apks> <dir-salida>
+# demo automatizada con screenrecord. Uso: ci-emulator.sh <dir-con-apks> <dir-salida> [fases]
+# fases: «pruebas», «interfaz» y/o «demo» separadas por comas (por defecto, todas).
 set -uo pipefail
 APKS="${1:-output}"
 OUT="${2:-output/emulator}"
+FASES="${3:-pruebas,interfaz,demo}"
+has() { [[ ",$FASES," == *",$1,"* ]]; }
 mkdir -p "$OUT"
 RUNNER="io.trazo.test/androidx.test.runner.AndroidJUnitRunner"
 
@@ -88,14 +91,17 @@ adb install -r -t "$APKS/Trazo-debug-androidTest.apk" || exit 1
 adb shell svc wifi disable || true
 adb shell svc data disable || true
 
+if has pruebas; then
 echo "== Pruebas instrumentadas =="
 diag "antes de pruebas"
 adb shell am instrument -w -e class io.trazo.app.EditorInstrumentedTest,io.trazo.app.ExportInstrumentedTest "$RUNNER" | tee "$OUT/pruebas-instrumentadas.txt"
 diag "tras pruebas"
+fi
 
 # Capturas de la interfaz (lista, editor, paneles, biblioteca, preferencias, tema oscuro). Bloquea:
 # si un control no aparece, la interfaz cambió o se rompió y la APK no se da por validada. Va antes
 # de la demo grabada, con el emulador fresco: después de grabar el emulador llegó a cerrarse solo.
+if has interfaz; then
 echo "== Recorrido de la interfaz =="
 timeout 20 adb shell am force-stop io.trazo || true
 settle 1
@@ -115,7 +121,9 @@ fi
 for f in $(timeout 20 adb shell ls /data/local/tmp 2>/dev/null | tr -d '\r' | grep -E '^trazo-gui-.*[.]png$'); do
   timeout 30 adb pull "/data/local/tmp/$f" "$OUT/$f" || true
 done
+fi
 
+if has demo; then
 echo "== Demo grabada =="
 timeout 20 adb shell am force-stop io.trazo || true
 settle 1
@@ -138,18 +146,27 @@ if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
   echo "FALLÓ: se perdió el emulador durante la demo" | tee -a "$OUT/demo.txt"
   exit 1
 fi
-timeout 60 adb logcat -d -t 2000 > "$OUT/logcat.txt" || true
+fi
+timeout 60 adb logcat -d -t 2000 > "$OUT/logcat-$(echo "$FASES" | tr , -).txt" || true
 
 status=0
-for f in pruebas-instrumentadas.txt demo.txt interfaz.txt; do
+logs=()
+has pruebas && logs+=(pruebas-instrumentadas.txt)
+has interfaz && logs+=(interfaz.txt)
+has demo && logs+=(demo.txt)
+for f in "${logs[@]}"; do
   if grep -q "FAILURES!!!" "$OUT/$f" || ! grep -q "^OK (" "$OUT/$f"; then
     echo "FALLÓ: $f"; status=1
   fi
 done
 # Las pruebas pueden decir OK y aun así faltar la evidencia: sin las 12 capturas o sin video la
 # APK tampoco se da por validada.
-gui=$(ls "$OUT"/trazo-gui-*.png 2>/dev/null | wc -l)
-[ "$gui" -ge 12 ] || { echo "FALLÓ: hay $gui capturas de la interfaz, se esperaban 12"; status=1; }
-[ -s "$OUT/demo-real-android-emulador.mp4" ] || { echo "FALLÓ: falta el video de la demo"; status=1; }
+if has interfaz; then
+  gui=$(ls "$OUT"/trazo-gui-*.png 2>/dev/null | wc -l)
+  [ "$gui" -ge 12 ] || { echo "FALLÓ: hay $gui capturas de la interfaz, se esperaban 12"; status=1; }
+fi
+if has demo; then
+  [ -s "$OUT/demo-real-android-emulador.mp4" ] || { echo "FALLÓ: falta el video de la demo"; status=1; }
+fi
 [ $status -ne 0 ] && failure_diag
 exit $status
