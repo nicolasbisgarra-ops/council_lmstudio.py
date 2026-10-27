@@ -76,14 +76,24 @@ class GuiTourTest {
 
             // Con un toque y no manteniendo apretado un color rápido: la vibración del toque largo
             // tumbaba al emulador de CI. Es el mismo diálogo.
-            find(By.desc("Otro color")).click()
-            find(By.text("Color de la pluma"))
+            // En el teléfono queda fuera de la pantalla, al final de la fila deslizable.
+            val tools = find(By.desc("Pluma")).visibleBounds
+            var dot = find(By.desc("Otro color"))
+            repeat(4) {
+                val b = dot.visibleBounds
+                if (b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return@repeat
+                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 30)
+                SystemClock.sleep(400)
+                dot = find(By.desc("Otro color"))
+            }
+            dot.visibleBounds.let { device.click(it.centerX(), it.centerY()) }
+            find(By.text("Color de la pluma"), 15_000)
             shot("5-color")
             device.pressBack()
 
             // En el teléfono la segunda fila de la barra no entra: se desliza hasta el final.
-            val row = find(By.desc("Pluma")).visibleBounds
-            device.swipe(device.displayWidth - 40, row.centerY(), 40, row.centerY(), 40)
+            // La «Pluma» puede haber quedado fuera al buscar el color: se usa la fila medida antes.
+            device.swipe(device.displayWidth - 40, tools.centerY(), 40, tools.centerY(), 40)
             find(By.desc("Insertar patrón")).click()
             find(By.text("Integral"))
             shot("6-insertar")
