@@ -147,6 +147,9 @@ class EditorInstrumentedTest {
         pen.stroke(listOf(150f to 300f, 400f to 360f))
         pen.stroke(HandScript.integralGesture(500f, 150f, 200f), holdMs = 1300)
         val before = strokes()
+        // Sin esto la prueba pasaría vacía si se perdieran los trazos inyectados.
+        assertTrue("trazo libre", before.any { it.patternId == null })
+        assertTrue("integral convertida", before.any { it.patternId == DefaultPatterns.INTEGRAL })
         scenario.moveToState(Lifecycle.State.CREATED) // ON_STOP → guardado inmediato
         val saved = app.repository.loadNotebook(notebookId)!!.pages[0].strokes
         assertEquals(before, saved)

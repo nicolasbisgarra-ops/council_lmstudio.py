@@ -1,11 +1,13 @@
 package io.trazo.app
 
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import io.trazo.app.ink.InkCanvasView
 import io.trazo.core.fixtures.SyntheticPen
+import kotlin.concurrent.thread
 import kotlin.random.Random
 
 /**
@@ -18,11 +20,14 @@ class StylusDriver(private val view: () -> InkCanvasView) {
     private val ui = instrumentation.uiAutomation
     private val random = Random(11)
     private var downTime = 0L
+    private var dismisser: Thread? = null
 
     /** Convierte coordenadas de documento a pantalla usando la transformación actual de la vista. */
-    fun toScreen(points: List<Pair<Float, Float>>): List<Pair<Float, Float>> {
+    fun toScreen(points: List<Pair<Float, Float>>): List<Pair<Float, Float>> =
+        toScreen(view(), points) // fuera del hilo principal: puede usar ActivityScenario.onActivity
+
+    private fun toScreen(v: InkCanvasView, points: List<Pair<Float, Float>>): List<Pair<Float, Float>> {
         val out = ArrayList<Pair<Float, Float>>(points.size)
-        val v = view() // fuera del hilo principal: puede usar ActivityScenario.onActivity
         instrumentation.runOnMainSync {
             val loc = IntArray(2)
             v.getLocationOnScreen(loc)
@@ -47,7 +52,7 @@ class StylusDriver(private val view: () -> InkCanvasView) {
         tool: Int = MotionEvent.TOOL_TYPE_STYLUS,
         lift: Boolean = true,
     ) {
-        val pts = toScreen(SyntheticPen.resample(docPath, 3f))
+        val pts = toScreen(focusedView(), SyntheticPen.resample(docPath, 3f))
         inject(MotionEvent.ACTION_DOWN, pts[0].first, pts[0].second, 0.6f, tool)
         for (i in 1 until pts.size) {
             SystemClock.sleep(sampleMs)
@@ -90,8 +95,47 @@ class StylusDriver(private val view: () -> InkCanvasView) {
 
     /** Captura de pantalla con `screencap` (usuario shell) en /data/local/tmp. */
     fun screenshot(name: String) {
-        ui.executeShellCommand("screencap -p /data/local/tmp/$name.png").use { pfd ->
-            java.io.FileInputStream(pfd.fileDescriptor).use { it.readBytes() }
+        shell("screencap -p /data/local/tmp/$name.png")
+    }
+
+    /**
+     * Devuelve el lienzo cuando su ventana tiene el foco con la pantalla encendida: en un emulador
+     * de CI cargado puede quedar encima un diálogo del sistema («System UI no responde»), el panel
+     * de notificaciones o el bloqueo, que se tragan los toques inyectados aunque `injectInputEvent`
+     * devuelva true.
+     */
+    private fun focusedView(): InkCanvasView {
+        val power = checkNotNull(instrumentation.targetContext.getSystemService(PowerManager::class.java))
+        val start = SystemClock.uptimeMillis()
+        var lastDismiss = 0L
+        while (true) {
+            val v = view() // se vuelve a pedir en cada vuelta por si se recreó la actividad
+            var focused = false
+            instrumentation.runOnMainSync { focused = v.hasWindowFocus() }
+            if (focused && power.isInteractive) return v
+            val now = SystemClock.uptimeMillis()
+            check(now - start < 30_000) { "El lienzo no tiene el foco (interactivo=${power.isInteractive}): ${focusInfo()}" }
+            // Una hoja de la app que se cierra devuelve el foco enseguida: solo se interviene pasado 1 s.
+            if (now - start >= 1_000 && now - lastDismiss >= 3_000 && dismisser?.isAlive != true) {
+                lastDismiss = now
+                // Despierta, quita el bloqueo y cierra los diálogos del sistema y el panel (no los
+                // de la app). El broadcast espera a SystemUI: va en otro hilo para no colgar la prueba.
+                dismisser = thread(isDaemon = true) {
+                    runCatching {
+                        shell("input keyevent KEYCODE_WAKEUP")
+                        shell("wm dismiss-keyguard")
+                        shell("am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS")
+                    }
+                }
+            }
+            SystemClock.sleep(100)
         }
+    }
+
+    private fun focusInfo(): String = shell("dumpsys window").lines()
+        .filter { "mCurrentFocus" in it || "mFocusedApp" in it }.joinToString(" | ") { it.trim() }
+
+    private fun shell(cmd: String): String = ui.executeShellCommand(cmd).use { pfd ->
+        java.io.FileInputStream(pfd.fileDescriptor).use { String(it.readBytes()) }
     }
 }

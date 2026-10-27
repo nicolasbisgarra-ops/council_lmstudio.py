@@ -51,6 +51,11 @@ jobs:
             core/build/test-results/
             app/build/reports/tests/
             app/build/test-results/
+      # La APK queda en la rama apenas compila, sin esperar al emulador.
+      - name: Publicar APK en la rama
+        if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
+        continue-on-error: true
+        run: bash scripts/ci-publish.sh "${{ github.ref_name }}" "APK de prueba y evidencias JVM [skip ci]" output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm
 
   emulator:
     name: Pruebas instrumentadas + demo grabada (emulador)
@@ -86,14 +91,10 @@ jobs:
       - name: Publicar evidencias en la rama
         if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
         run: |
+          # Respaldo por si falló la publicación de la compilación (agregar lo mismo no choca al rebasar).
           mkdir -p output
           cp artifact/output/Trazo-debug.apk artifact/output/SHA256SUMS-apk.txt output/
           mkdir -p output/jvm && cp artifact/output/jvm/*.png artifact/output/jvm/*.txt output/jvm/ 2>/dev/null || true
           mv output/emulator/demo-real-android-emulador.mp4 output/demo-real-android.mp4 || true
-          git config user.name "trazo-ci"
-          git config user.email "trazo-ci@users.noreply.github.com"
-          for p in output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm output/emulator output/demo-real-android.mp4; do
-            if [ -e "$p" ]; then git add -f "$p"; fi
-          done
-          git commit -m "Evidencias de CI: APK, demo en emulador y reportes [skip ci]" || exit 0
-          git push origin HEAD:${{ github.ref_name }}
+          bash scripts/ci-publish.sh "${{ github.ref_name }}" "Evidencias del emulador: pruebas instrumentadas y demo grabada [skip ci]" \
+            output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm output/emulator output/demo-real-android.mp4

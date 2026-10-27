@@ -21,6 +21,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Clave debug fija (no secreta): las APK de prueba de cada compilación de CI se actualizan
+    // unas sobre otras sin desinstalar (con claves distintas Android exige borrar la app y sus datos).
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
