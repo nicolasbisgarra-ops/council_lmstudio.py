@@ -1,0 +1,21 @@
+
+io.trazo.app.GuiTourTest:
+Error in tourOfTheInterface(io.trazo.app.GuiTourTest):
+java.lang.IllegalStateException: No apareció BySelector [DESC='\QPluma\E']
+	at io.trazo.app.GuiTourTest.find(GuiTourTest.kt:115)
+	at io.trazo.app.GuiTourTest.find$default(GuiTourTest.kt:114)
+	at io.trazo.app.GuiTourTest.tourOfTheInterface(GuiTourTest.kt:61)
+
+
+Time: 18.405
+There was 1 failure:
+1) tourOfTheInterface(io.trazo.app.GuiTourTest)
+java.lang.IllegalStateException: No apareció BySelector [DESC='\QPluma\E']
+	at io.trazo.app.GuiTourTest.find(GuiTourTest.kt:115)
+	at io.trazo.app.GuiTourTest.find$default(GuiTourTest.kt:114)
+	at io.trazo.app.GuiTourTest.tourOfTheInterface(GuiTourTest.kt:61)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
