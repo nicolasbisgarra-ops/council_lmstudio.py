@@ -20,7 +20,12 @@ class StylusDriver(private val view: () -> InkCanvasView) {
     private val ui = instrumentation.uiAutomation
     private val random = Random(11)
     private var downTime = 0L
+    private var lastEventTime = 0L
     private var dismisser: Thread? = null
+
+    /** Mayor hueco entre eventos del último trazo: la app lo ve como lápiz quieto (emulador cargado). */
+    var maxGapMs = 0L
+        private set
 
     /** Convierte coordenadas de documento a pantalla usando la transformación actual de la vista. */
     fun toScreen(points: List<Pair<Float, Float>>): List<Pair<Float, Float>> =
@@ -83,7 +88,8 @@ class StylusDriver(private val view: () -> InkCanvasView) {
 
     private fun inject(action: Int, x: Float, y: Float, pressure: Float, tool: Int, strict: Boolean = true) {
         val now = SystemClock.uptimeMillis()
-        if (action == MotionEvent.ACTION_DOWN) downTime = now
+        if (action == MotionEvent.ACTION_DOWN) { downTime = now; maxGapMs = 0L } else maxGapMs = maxOf(maxGapMs, now - lastEventTime)
+        lastEventTime = now
         val props = MotionEvent.PointerProperties().apply { id = 0; toolType = tool }
         val coords = MotionEvent.PointerCoords().apply { this.x = x; this.y = y; this.pressure = pressure; size = 0.01f }
         val source = if (tool == MotionEvent.TOOL_TYPE_FINGER) InputDevice.SOURCE_TOUCHSCREEN else InputDevice.SOURCE_STYLUS
@@ -132,8 +138,14 @@ class StylusDriver(private val view: () -> InkCanvasView) {
         }
     }
 
-    private fun focusInfo(): String = shell("dumpsys window").lines()
-        .filter { "mCurrentFocus" in it || "mFocusedApp" in it }.joinToString(" | ") { it.trim() }
+    /** Foco actual, sin la sección del último ANR de `dumpsys window` (guarda el foco de entonces). */
+    private fun focusInfo(): String {
+        var lastAnr = false
+        return shell("dumpsys window").lines().filter { line ->
+            if (line.startsWith("WINDOW MANAGER ")) lastAnr = "LAST ANR" in line
+            !lastAnr && ("mCurrentFocus" in line || "mFocusedApp" in line)
+        }.joinToString(" | ") { it.trim() }
+    }
 
     private fun shell(cmd: String): String = ui.executeShellCommand(cmd).use { pfd ->
         java.io.FileInputStream(pfd.fileDescriptor).use { String(it.readBytes()) }

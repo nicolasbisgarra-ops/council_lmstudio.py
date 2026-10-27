@@ -84,6 +84,17 @@ class EditorInstrumentedTest {
 
     private fun strokes(): List<InkStroke> = onController { it.page.strokes.toList() }
 
+    /** Para los mensajes de falla: patrón (o "libre") y cantidad de muestras de cada trazo. */
+    private fun describe(s: List<InkStroke>) = s.joinToString(prefix = "[", postfix = "]") { "${it.patternId ?: "libre"}/${it.points.size}" }
+
+    /** Fija la pausa y espera a que llegue al controlador (pasa por Compose: no es inmediato). */
+    private fun useHoldMillis(ms: Long) {
+        app.settings.update { it.copy(holdMillis = ms) }
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (onController { it.holdMillis } != ms && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
+        assertEquals("pausa aplicada", ms, onController { it.holdMillis })
+    }
+
     @Test fun t01_freeDrawingCreatesAStrokeWithSamples() {
         pen.stroke(listOf(150f to 300f, 400f to 360f, 600f to 320f))
         val s = strokes().single()
@@ -100,16 +111,14 @@ class EditorInstrumentedTest {
     }
 
     @Test fun t03_liftingBeforeThePauseEndsNeverConverts() {
-        // Se levanta a mitad de una pausa de 2 s. Con la de 1 s y 800 ms quieto, el emulador de CI
-        // cargado entregó el UP tarde y la app vio, con razón, una pausa completa. El borde exacto
-        // (levantar a 900 ms con pausa de 1 s) lo prueba T03 en JVM con reloj sintético.
-        app.settings.update { it.copy(holdMillis = 2000L) }
-        val deadline = SystemClock.uptimeMillis() + 5_000
-        while (onController { it.holdMillis } != 2000L && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
-        assertEquals("pausa de 2 s aplicada", 2000L, onController { it.holdMillis })
+        // Se levanta tras 1 s quieto con una pausa de 4 s. El emulador de CI cargado llega a frenar
+        // la inyección más de un segundo y la app ve, con razón, una pausa cumplida (con pausa de
+        // 1 s y 800 ms quieto el UP llegó tarde). El borde exacto (levantar a 900 ms con pausa de
+        // 1 s) lo prueba T03 en JVM con reloj sintético.
+        useHoldMillis(4000L)
         pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 1000)
-        val s = strokes().single()
-        assertNull(s.patternId)
+        val s = strokes()
+        assertTrue("sin conversión (hueco máx. ${pen.maxGapMs} ms): ${describe(s)}", s.size == 1 && s[0].patternId == null)
     }
 
     @Test fun t10_twoStrokeRootIsReplacedAsVectors() {
@@ -168,16 +177,21 @@ class EditorInstrumentedTest {
     }
 
     @Test fun t20_recreatingDuringAGestureCancelsSafely() {
-        // Pausa larga: si la recreación tarda, un lápiz quieto 1 s convertiría con toda razón.
-        app.settings.update { it.copy(holdMillis = 2000L) }
-        instrumentation.waitForIdleSync()
-        SystemClock.sleep(300)
+        // Pausa de 10 s: con la de 2 s, el emulador de CI cargado frenó la inyección o la recreación
+        // y la hoja ya tenía trazos. Lo que se prueba es que recrear cancele el contacto en curso.
+        useHoldMillis(10_000L)
         pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 300, lift = false)
+        val gap = pen.maxGapMs
+        assertTrue(
+            "gesto en curso antes de recrear (hueco máx. $gap ms): ${describe(strokes())}",
+            onController { it.isContactActive } && strokes().isEmpty(),
+        )
         scenario.recreate()
         waitForCanvas()
+        assertFalse("recrear cancela el contacto", onController { it.isContactActive })
         pen.liftAt(150f, 150f)
-        SystemClock.sleep(2500)
-        assertTrue("sin conversión ni trazo fantasma", strokes().isEmpty())
+        instrumentation.waitForIdleSync()
+        assertTrue("sin conversión ni trazo fantasma: ${describe(strokes())}", strokes().isEmpty())
         // La hoja sigue funcionando después de recrear.
         pen.stroke(listOf(300f to 600f, 500f to 650f))
         assertEquals(1, strokes().size)

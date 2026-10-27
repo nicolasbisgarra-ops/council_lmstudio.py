@@ -17,7 +17,9 @@ adb shell settings put global hide_error_dialogs 1 || true
 adb shell locksettings set-disabled true || true
 adb shell svc power stayon true || true
 
-focus() { timeout 15 adb shell dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | tr -d '\r'; }
+# Sin la sección «LAST ANR» de dumpsys: guarda el foco del momento del último ANR (null tras uno
+# en el arranque) y `settle` esperaba en vano.
+focus() { timeout 15 adb shell dumpsys window 2>/dev/null | tr -d '\r' | awk '/^WINDOW MANAGER /{skip = /LAST ANR/} !skip && /mCurrentFocus|mFocusedApp/'; }
 anrs() { timeout 15 adb shell dumpsys dropbox 2>/dev/null | grep -E '_anr|_crash' | tail -n 20; }
 diag() {
   echo "-- $1: carga $(adb shell cat /proc/loadavg | tr -d '\r'); $(timeout 15 adb shell dumpsys power 2>/dev/null | grep -oE 'mWakefulness=[A-Za-z]+' | head -n 1)"
