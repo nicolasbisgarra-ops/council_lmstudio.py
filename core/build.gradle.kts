@@ -25,7 +25,10 @@ dependencies {
 
 tasks.test {
     // Las pruebas de evidencia escriben renders PNG del motor en build/reports/trazo-evidence.
-    systemProperty("trazo.evidenceDir", layout.buildDirectory.dir("reports/trazo-evidence").get().asFile.absolutePath)
+    // Es salida de la tarea: si la caché de Gradle evita correr las pruebas, igual restaura la evidencia.
+    val evidence = layout.buildDirectory.dir("reports/trazo-evidence")
+    outputs.dir(evidence)
+    systemProperty("trazo.evidenceDir", evidence.get().asFile.absolutePath)
     systemProperty("java.awt.headless", "true")
     systemProperty("trazo.frames", providers.gradleProperty("trazo.frames").orNull ?: "false")
     testLogging {
