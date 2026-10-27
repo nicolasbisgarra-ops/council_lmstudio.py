@@ -109,6 +109,16 @@ adb pull /sdcard/trazo-demo.mp4 "$OUT/demo-real-android-emulador.mp4" || true
 for f in trazo-demo-1-integral trazo-demo-2-integral-resuelta trazo-demo-3-final trazo-demo-4-ensenar trazo-demo-5-aprendido; do
   adb pull "/data/local/tmp/$f.png" "$OUT/$f.png" || true
 done
+
+# Capturas de la interfaz (lista, editor, paneles, biblioteca, preferencias, tema oscuro). No
+# bloquea: es evidencia visual; la lógica la cubren las pruebas de arriba.
+echo "== Recorrido de la interfaz =="
+settle 1
+timeout 420 adb shell am instrument -w -e class io.trazo.app.GuiTourTest "$RUNNER" | tee "$OUT/interfaz.txt"
+grep -q "^OK (" "$OUT/interfaz.txt" || echo "AVISO: el recorrido de la interfaz no terminó (no bloquea)"
+for f in $(adb shell ls /data/local/tmp 2>/dev/null | tr -d '\r' | grep -E '^trazo-gui-.*[.]png$'); do
+  adb pull "/data/local/tmp/$f" "$OUT/$f" || true
+done
 adb logcat -d -t 2000 > "$OUT/logcat.txt" || true
 
 status=0

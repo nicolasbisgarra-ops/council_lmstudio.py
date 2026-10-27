@@ -100,7 +100,8 @@ class EditorActions(
 /**
  * Barra superior del editor, al estilo de las apps de notas: volver, título y páginas, deshacer y
  * rehacer siempre a mano, herramientas con ícono, colores rápidos, gestos, patrones y zoom.
- * En pantallas angostas va en dos filas; la segunda se desliza si no entra.
+ * En una sola fila necesita unos 1100 dp (tablet apaisada); por debajo va en dos filas, con las
+ * herramientas centradas en la segunda, que se desliza si no entra (teléfono).
  */
 @Composable
 fun EditorTopBar(
@@ -114,7 +115,7 @@ fun EditorTopBar(
     val scheme = MaterialTheme.colorScheme
     Surface(color = scheme.surfaceContainer, shadowElevation = 3.dp) {
         BoxWithConstraints(Modifier.statusBarsPadding()) {
-            val compact = maxWidth < 600.dp
+            val compact = maxWidth < 1100.dp
             val nav: @Composable () -> Unit = { NavGroup(vm, title, actions, Modifier.widthIn(max = if (compact) 400.dp else 240.dp)) }
             val history: @Composable () -> Unit = {
                 ToolButton(TrazoIcons.Undo, "Deshacer", onClick = vm::undo, enabled = vm.canUndo)
@@ -148,6 +149,7 @@ fun EditorTopBar(
                     }
                     Row(
                         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) { tools() }
                 }
@@ -158,6 +160,7 @@ fun EditorTopBar(
                     BarDivider()
                     Row(
                         Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) { tools() }
                     EditorMenu(vm, actions)
