@@ -132,5 +132,10 @@ for f in pruebas-instrumentadas.txt demo.txt interfaz.txt; do
     echo "FALLÓ: $f"; status=1
   fi
 done
+# Las pruebas pueden decir OK y aun así faltar la evidencia: sin las 12 capturas o sin video la
+# APK tampoco se da por validada.
+gui=$(ls "$OUT"/trazo-gui-*.png 2>/dev/null | wc -l)
+[ "$gui" -ge 12 ] || { echo "FALLÓ: hay $gui capturas de la interfaz, se esperaban 12"; status=1; }
+[ -s "$OUT/demo-real-android-emulador.mp4" ] || { echo "FALLÓ: falta el video de la demo"; status=1; }
 [ $status -ne 0 ] && failure_diag
 exit $status
