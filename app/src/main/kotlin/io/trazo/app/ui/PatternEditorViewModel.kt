@@ -53,7 +53,7 @@ class PatternEditorViewModel(
     var outputScale by mutableFloatStateOf(original?.outputScale ?: 1f)
     var minScore by mutableFloatStateOf(original?.minScore ?: InkPattern.DEFAULT_MIN_SCORE)
     var customHold by mutableStateOf(original?.holdMillis != null)
-    var holdMillis by mutableFloatStateOf((original?.holdMillis ?: 1000L).coerceIn(100L, 1000L).toFloat())
+    var holdMillis by mutableFloatStateOf((original?.holdMillis ?: 500L).coerceIn(100L, 1000L).toFloat())
     var elastic by mutableStateOf(original?.stretch != null)
     /** Sección de la biblioteca; null = "Mis patrones". */
     var category by mutableStateOf(original?.category)

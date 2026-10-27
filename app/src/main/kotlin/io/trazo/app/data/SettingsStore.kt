@@ -34,7 +34,7 @@ val DEFAULT_QUICK_COLORS: List<Int> = listOf(
 
 /** Ajustes globales. Valores iniciales de diseño, no medidos con S Pen real (ver DECISIONES.md). */
 data class TrazoSettings(
-    val holdMillis: Long = 1000L,
+    val holdMillis: Long = 500L,
     val tremorRadiusDp: Float = 6f,
     val eraserRadiusDp: Float = 12f,
     val fingerDraws: Boolean = false,
@@ -66,7 +66,7 @@ class SettingsStore(context: Context) {
     val settings: StateFlow<TrazoSettings> = _settings.asStateFlow()
 
     private fun read() = TrazoSettings(
-        holdMillis = prefs.getLong("holdMillis", 1000L).coerceIn(100L, 1000L), // rango de Preferencias
+        holdMillis = prefs.getLong("holdMillis", 500L).coerceIn(100L, 1000L), // rango de Preferencias
         tremorRadiusDp = prefs.getFloat("tremorRadiusDp", 6f),
         eraserRadiusDp = prefs.getFloat("eraserRadiusDp", 12f),
         fingerDraws = prefs.getBoolean("fingerDraws", false),
