@@ -7,6 +7,8 @@ APKS="${1:-output}"
 OUT="${2:-output/emulator}"
 FASES="${3:-pruebas,interfaz,demo}"
 has() { [[ ",$FASES," == *",$1,"* ]]; }
+# Los dos trabajos del emulador publican en la misma rama: lo común lleva la fase en el nombre.
+SUF="$(echo "$FASES" | tr , -)"
 mkdir -p "$OUT"
 RUNNER="io.trazo.test/androidx.test.runner.AndroidJUnitRunner"
 
@@ -67,7 +69,7 @@ failure_diag() {
   anrs
   timeout 30 adb logcat -d -b events 2>/dev/null | grep -E 'input_focus|input_interaction|am_anr|am_crash' | tail -n 60
   timeout 30 adb logcat -d 2>/dev/null | grep -iE 'ANR in|not responding|FATAL EXCEPTION|untrusted touch|trazo' | tail -n 60
-  timeout 30 adb exec-out screencap -p > "$OUT/fallo-pantalla.png" 2>/dev/null || true
+  timeout 30 adb exec-out screencap -p > "$OUT/fallo-pantalla-$SUF.png" 2>/dev/null || true
   timeout 20 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb shell cat /sdcard/ui.xml | head -c 4000; echo
 }
 
@@ -77,7 +79,7 @@ failure_diag() {
   echo "Android: $(adb shell getprop ro.build.version.release | tr -d '\r') (API $(adb shell getprop ro.build.version.sdk | tr -d '\r'))"
   echo "Pantalla: $(adb shell wm size | tr -d '\r') / $(adb shell wm density | tr -d '\r')"
   echo "Tipo: EMULADOR (eventos de lápiz sintetizados; no es S Pen físico)"
-} | tee "$OUT/dispositivo.txt"
+} | tee "$OUT/dispositivo-$SUF.txt"
 
 echo "== Estado del sistema =="
 anrs
@@ -147,7 +149,7 @@ if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
   exit 1
 fi
 fi
-timeout 60 adb logcat -d -t 2000 > "$OUT/logcat-$(echo "$FASES" | tr , -).txt" || true
+timeout 60 adb logcat -d -t 2000 > "$OUT/logcat-$SUF.txt" || true
 
 status=0
 logs=()
