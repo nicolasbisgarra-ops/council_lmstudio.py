@@ -56,7 +56,7 @@ Evidencia del motor (rotulada "SIMULACIÓN JVM"): `output/jvm/exercise-final.png
 |---|---|---|
 | T01 | `t01_freeDrawingCreatesAStrokeWithSamples` | ✅ |
 | T02 | `t02_integralHeldOneSecondBecomesHandwrittenOutput` | ✅ |
-| T03 | `t03_liftingAt900msNeverConverts` | ✅ |
+| T03 | `t03_liftingBeforeThePauseEndsNeverConverts` (levanta a mitad de una pausa de 2 s; el borde de 900 ms con pausa de 1 s lo prueba T03 en JVM) | ✅ |
 | T10 | `t10_twoStrokeRootIsReplacedAsVectors` | ✅ |
 | T11 | `t11_fractionLineBecomesHandwrittenBar` | ✅ |
 | T12 | `t12_outputCanBeWrittenOverAndPartiallyErased` | ✅ |
@@ -76,6 +76,8 @@ Evidencia del motor (rotulada "SIMULACIÓN JVM"): `output/jvm/exercise-final.png
 - Corrida #3: compilación de las nuevas capacidades ✅ (aprender de correcciones, páginas, selección, PDF/PNG, patrones, tablet); el emulador se canceló al llegar la corrida #4.
 - Corrida #4: 15/16 instrumentadas ✅ (T18 ya pasa; exportación y deshacer con dos dedos nuevos ✅) y **demo 2/2 ✅**; T20 seguía fallando porque la prueba esperaba inactividad con el lápiz apoyado (ese tiempo quieto contaba como pausa) → prueba corregida.
 - Corrida #6 (`c4491c7`): **todo verde** — compilación, JVM, 16/16 instrumentadas y demo 2/2 (video de 10 MB y 5 capturas).
+- Corrida #7 (`381d5a2`, mismo código de la app): compilación ✅; emulador ❌ por el entorno: una ventana del sistema quedó encima de la app y se tragó los toques inyectados, aunque la inyección "funcionaba" (10 de 16 instrumentadas fallaron, todas las que dibujan con el lápiz por el sistema; la demo, 0/2). Corregido: `ci-emulator.sh` oculta los diálogos de error del sistema, desactiva el bloqueo, deja la pantalla encendida y espera un foco estable; `StylusDriver` espera a que el lienzo tenga el foco antes de apoyar el lápiz; T17 ahora verifica que haya trazos antes de comparar (si no, pasaba vacía).
+- Corrida #8 (`8e2afd0`): compilación ✅ y **APK publicada en la rama** al terminar de compilar (clave debug fija); emulador: 15/16 ✅ y demo 2/2 ✅ (video de 9,7 MB y 5 capturas). Falló T03: con pausa de 1 s y 800 ms quieto, el emulador muy cargado (carga 21) entregó tarde el UP y la app vio, con razón, una pausa completa → la prueba ahora levanta a mitad de una pausa de 2 s.
 
 ## 5. Demo grabada (T22 en la app nativa)
 

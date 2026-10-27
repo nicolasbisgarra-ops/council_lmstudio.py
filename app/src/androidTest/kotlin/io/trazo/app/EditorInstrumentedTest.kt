@@ -99,8 +99,15 @@ class EditorInstrumentedTest {
         assertTrue(s.all { it.patternId == DefaultPatterns.INTEGRAL && it.points.size > 10 })
     }
 
-    @Test fun t03_liftingAt900msNeverConverts() {
-        pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 800)
+    @Test fun t03_liftingBeforeThePauseEndsNeverConverts() {
+        // Se levanta a mitad de una pausa de 2 s. Con la de 1 s y 800 ms quieto, el emulador de CI
+        // cargado entregó el UP tarde y la app vio, con razón, una pausa completa. El borde exacto
+        // (levantar a 900 ms con pausa de 1 s) lo prueba T03 en JVM con reloj sintético.
+        app.settings.update { it.copy(holdMillis = 2000L) }
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (onController { it.holdMillis } != 2000L && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
+        assertEquals("pausa de 2 s aplicada", 2000L, onController { it.holdMillis })
+        pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 1000)
         val s = strokes().single()
         assertNull(s.patternId)
     }
