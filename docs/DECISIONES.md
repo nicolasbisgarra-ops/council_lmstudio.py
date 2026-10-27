@@ -20,3 +20,4 @@
 18. **Eliminar página no se deshace** (el historial es por página); por eso pide confirmación. Duplicar y mover sí son inmediatos.
 19. **Exportar PDF/PNG** solo para compartir. El PDF conserva los trazos como trayectos vectoriales; el formato editable sigue siendo `.trazo`.
 20. **Palma por tamaño**: además de ignorar el dedo mientras el lápiz está apoyado o cerca, un contacto de más de 20 mm de ancho (`touchMajor`) se trata como palma.
+21. **Clave debug fija en el repositorio** (`app/debug.keystore`, contraseña `android`). No es secreta y solo firma APK de prueba: sin ella cada máquina de CI firmaba con una clave debug distinta y Android rechazaba instalar una versión nueva encima de la anterior (había que desinstalar y se perdían los cuadernos). Para una tienda se usa otra clave, privada y fuera del repositorio.

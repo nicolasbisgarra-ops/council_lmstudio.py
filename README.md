@@ -26,8 +26,13 @@ app/    App Android: InkCanvasView (MotionEvent/S Pen), Compose UI, almacenamien
         src/androidTest→ pruebas instrumentadas + demo automatizada del ejercicio completo
 docs/   ARCHITECTURE.md · DECISIONES.md · test-results.md · handoff/ (especificación original)
 scripts/ci-emulator.sh  pruebas y grabación en emulador (CI)
+scripts/ci-publish.sh   publica la APK y las evidencias en la rama (CI)
 .github/workflows/android.yml  compila APK, corre pruebas y graba la demo
 ```
+
+## Instalar la APK de prueba
+
+[`output/Trazo-debug.apk`](output/Trazo-debug.apk) (Android 8.0 o superior; suma SHA-256 en `output/SHA256SUMS-apk.txt`). Copiala al teléfono o tablet, permití "instalar apps desconocidas" a la app con que la abrís y, si Play Protect avisa, elegí "Instalar de todas formas". Está firmada con una clave debug fija del repositorio: cada versión nueva se instala encima de la anterior sin desinstalar ni perder cuadernos.
 
 ## Compilar e instalar
 
@@ -42,7 +47,7 @@ Pruebas instrumentadas (emulador o dispositivo): `./gradlew :app:connectedDebugA
 
 Solo el motor, sin Android SDK: `./gradlew -Ptrazo.coreOnly=true :core:test`.
 
-La APK también la genera GitHub Actions (artefacto `trazo-build`); el job `emulator` corre las pruebas instrumentadas y graba la demo (artefacto `trazo-emulator`).
+La APK también la genera GitHub Actions (artefacto `trazo-build`); el job `emulator` corre las pruebas instrumentadas y graba la demo (artefacto `trazo-emulator`). Si el mensaje del commit lleva `[publicar]`, CI sube la APK a la rama apenas compila y, si el emulador pasa, también la demo, las capturas y los resultados (`scripts/ci-publish.sh`).
 
 ## Uso rápido
 
