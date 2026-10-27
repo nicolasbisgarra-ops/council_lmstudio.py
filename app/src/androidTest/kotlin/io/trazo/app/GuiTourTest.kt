@@ -1,7 +1,9 @@
 package io.trazo.app
 
 import android.content.Intent
+import android.graphics.Rect
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -75,28 +77,14 @@ class GuiTourTest {
             find(By.desc("Pluma")).click()
 
             // La paleta de colores queda al final de la fila deslizable: se desliza hasta verla.
-            val tools = find(By.desc("Pluma")).visibleBounds
-            var dot = find(By.desc("Otro color"))
-            repeat(4) {
-                val b = dot.visibleBounds
-                if (b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return@repeat
-                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 12)
-                SystemClock.sleep(400)
-                dot = find(By.desc("Otro color"))
-            }
+            val toolsY = find(By.desc("Pluma")).visibleBounds.centerY()
+            scrollToolbarTo("Otro color", toolsY)
             // Solo la paleta de la barra: al abrir el selector de color el emulador de CI se cae
             // (con swiftshader y con render en el invitado), así que el recorrido no lo abre.
             shot("5-color")
 
-            // Sigue en la misma fila. Lejos de los bordes: desde el borde el gesto es «atrás».
-            var insert = device.findObject(By.desc("Insertar patrón"))
-            repeat(4) {
-                val b = insert?.visibleBounds
-                if (b != null && b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return@repeat
-                device.swipe(device.displayWidth * 3 / 4, tools.centerY(), device.displayWidth / 4, tools.centerY(), 12)
-                SystemClock.sleep(400)
-                insert = device.findObject(By.desc("Insertar patrón"))
-            }
+            // Sigue en la misma fila.
+            scrollToolbarTo("Insertar patrón", toolsY)
             find(By.desc("Insertar patrón")).click()
             find(By.text("Integral"))
             shot("6-insertar")
@@ -135,6 +123,32 @@ class GuiTourTest {
         val xml = java.io.ByteArrayOutputStream().also { device.dumpWindowHierarchy(it) }.toString()
         return Regex("""(text|content-desc)="([^"]+)"[^>]*?bounds="([^"]+)"""").findAll(xml)
             .joinToString(" | ") { "${it.groupValues[2]} ${it.groupValues[3]}" }
+    }
+
+    /**
+     * Desliza la barra hasta que [desc] se vea entero. Por accesibilidad y no con un gesto: en el
+     * emulador de CI el deslizamiento con el dedo no movía la fila.
+     */
+    private fun scrollToolbarTo(desc: String, y: Int) {
+        repeat(8) {
+            val b = find(By.desc(desc)).visibleBounds
+            if (b.width() >= b.height() - 2 && b.right < device.displayWidth - 4) return
+            val row = scrollableAt(instrumentation.uiAutomation.rootInActiveWindow, y)
+                ?: error("No hay fila deslizable en y=$y. En pantalla: ${onScreen()}")
+            row.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            SystemClock.sleep(400)
+        }
+        error("$desc no quedó a la vista. En pantalla: ${onScreen()}")
+    }
+
+    /** El nodo deslizable más bajo que cruza la altura [y]. */
+    private fun scrollableAt(node: AccessibilityNodeInfo?, y: Int): AccessibilityNodeInfo? {
+        node ?: return null
+        val r = Rect().also { node.getBoundsInScreen(it) }
+        val own = node.takeIf { it.isScrollable && y in r.top..r.bottom }
+        val child = (0 until node.childCount).mapNotNull { scrollableAt(node.getChild(it), y) }
+            .minByOrNull { Rect().also { c -> it.getBoundsInScreen(c) }.height() }
+        return child ?: own
     }
 
     /** Abre «Más opciones» del editor y elige [item]. */
