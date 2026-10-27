@@ -47,7 +47,7 @@ object PageExporter {
         canvas.save()
         canvas.scale(scale, scale)
         PaperPainter.draw(canvas, paper)
-        page.strokes.forEach { StrokePainter.draw(canvas, it) }
+        StrokePainter.drawAll(canvas, page.strokes)
         canvas.restore()
     }
 }

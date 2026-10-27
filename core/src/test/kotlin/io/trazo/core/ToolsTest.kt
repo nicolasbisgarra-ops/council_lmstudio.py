@@ -267,6 +267,16 @@ class ToolsTest {
         assertNull(controller.contactTool)
     }
 
+    @Test fun `panning keeps the selection`() {
+        pen.stroke(listOf(100f to 100f, 300f to 100f))
+        controller.selectAll()
+        controller.tool = Tool.PAN
+        controller.penDown(600f, 600f, 0.7f, pen.nowMs, PointerKind.STYLUS)
+        moveAlong(600f to 600f, 700f to 650f)
+        controller.penUp(700f, 650f, 0.7f, pen.nowMs)
+        assertEquals(1, controller.selection.size)
+    }
+
     @Test fun `pressing the side button while panning starts erasing`() {
         pen.stroke(listOf(100f to 100f, 300f to 100f))
         controller.tool = Tool.PAN

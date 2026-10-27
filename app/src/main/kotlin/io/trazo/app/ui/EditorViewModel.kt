@@ -9,10 +9,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.trazo.app.data.EraserMode
 import io.trazo.app.data.PageExporter
+import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.TrazoSettings
 import io.trazo.app.ink.Viewport
 import io.trazo.app.trazo
+import io.trazo.core.Brush
 import io.trazo.core.History
 import io.trazo.core.IdGenerator
 import io.trazo.core.InkController
@@ -33,6 +36,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Herramienta de la barra. El resaltador es la pluma con su propia punta, color y grosor. */
+enum class EditorTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, PAN }
+
 /**
  * Estado de un cuaderno abierto. El [controller] sobrevive a rotaciones; cada página tiene su
  * propio historial. Autoguardado atómico con espera corta tras cada cambio y al salir.
@@ -51,8 +57,10 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     /** Cambia con cada edición para refrescar botones de deshacer/rehacer. */
     var revision by mutableIntStateOf(0)
         private set
-    var tool by mutableStateOf(Tool.PEN)
+    var editorTool by mutableStateOf(EditorTool.PEN)
         private set
+    /** Zoom relativo a la hoja encajada al ancho (100 %); lo actualiza la vista. */
+    var zoomPercent by mutableIntStateOf(100)
     var ambiguous by mutableStateOf<InkEvent.Ambiguous?>(null)
     var lastConversion by mutableStateOf<InkEvent.Converted?>(null)
     /** Pausa sin coincidencia: se ofrece enseñar el gesto (aviso discreto). */
@@ -66,6 +74,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         private set
 
     val viewport = Viewport()
+    private var lastSettings = settings.settings.value
     private val pages = HashMap<String, Pair<PageState, History>>()
     private var saveJob: Job? = null
     /** Versión de los cambios y última versión confirmada en disco (abrir o mirar no modifica). */
@@ -100,17 +109,51 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     val paper: Paper get() = notebook?.paper ?: Paper.LINES
 
     fun applySettings(s: TrazoSettings, density: Float) {
+        lastSettings = s
         controller.holdMillis = s.holdMillis
         controller.tremorRadiusPx = s.tremorRadiusDp * density
         controller.eraserRadiusPx = s.eraserRadiusDp * density
         controller.minInkLengthPx = 12f * density
         controller.handleRadiusPx = 24f * density
         controller.recognitionEnabled = s.gesturesEnabled
-        controller.color = s.penColor
-        controller.width = s.penWidth
+        controller.shape = s.shape
+        // El extremo goma del lápiz borra como la goma elegida; el botón lateral hace lo que se configuró.
+        controller.hardwareEraserTool = eraserTool(s)
+        controller.sideButtonTool = when (s.sideButton) {
+            SideButtonAction.ERASER -> eraserTool(s)
+            SideButtonAction.LASSO -> Tool.LASSO
+            SideButtonAction.NONE -> null
+        }
+        if (editorTool == EditorTool.ERASER) controller.tool = eraserTool(s)
+        applyToolStyle(s)
     }
 
-    fun selectTool(t: Tool) { tool = t; controller.tool = t }
+    private fun eraserTool(s: TrazoSettings) = if (s.eraserMode == EraserMode.STROKE) Tool.STROKE_ERASER else Tool.ERASER
+
+    /** Punta, color y grosor de la herramienta de escritura elegida. */
+    private fun applyToolStyle(s: TrazoSettings) {
+        if (editorTool == EditorTool.HIGHLIGHTER) {
+            controller.brush = Brush.HIGHLIGHTER
+            controller.color = s.highlighterColor
+            controller.width = s.highlighterWidth
+        } else {
+            controller.brush = s.brush
+            controller.color = s.penColor
+            controller.width = s.penWidth
+        }
+    }
+
+    fun selectTool(t: EditorTool) {
+        editorTool = t
+        controller.tool = when (t) {
+            EditorTool.PEN, EditorTool.HIGHLIGHTER -> Tool.PEN
+            EditorTool.ERASER -> eraserTool(lastSettings)
+            EditorTool.LASSO -> Tool.LASSO
+            EditorTool.SHAPE -> Tool.SHAPE
+            EditorTool.PAN -> Tool.PAN
+        }
+        applyToolStyle(lastSettings)
+    }
 
     fun undo() { controller.undo() }
     fun redo() { controller.redo() }
@@ -184,9 +227,17 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     fun duplicateSelection() { controller.duplicateSelection() }
     fun recolorSelection(color: Int) { controller.recolorSelection(color) }
     fun selectAll() {
-        selectTool(Tool.LASSO)
+        selectTool(EditorTool.LASSO)
         controller.selectAll()
     }
+
+    /** Borra toda la página de una vez (se puede deshacer). */
+    fun clearPage() {
+        controller.selectAll()
+        controller.deleteSelection()
+    }
+
+    val pageIsEmpty: Boolean get() { revision; return controller.page.strokes.isEmpty() }
 
     fun duplicatePage() {
         val n = syncNotebook() ?: return

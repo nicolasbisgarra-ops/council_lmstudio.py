@@ -23,9 +23,11 @@ import io.trazo.core.InkEvent
 import io.trazo.core.Notebook
 import io.trazo.core.Paper
 import io.trazo.core.PointerKind
+import io.trazo.core.Tool
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /** Zoom/desplazamiento de la hoja; vive en el ViewModel para sobrevivir a rotaciones. */
 class Viewport {
@@ -38,10 +40,13 @@ class Viewport {
 /**
  * Superficie de tinta nativa (sin WebView). Traduce `MotionEvent` al [InkController]:
  *
- *  - Lápiz (`TOOL_TYPE_STYLUS`) escribe; su extremo goma (`TOOL_TYPE_ERASER`) o el botón borra.
+ *  - Lápiz (`TOOL_TYPE_STYLUS`) escribe; su extremo goma (`TOOL_TYPE_ERASER`) borra y el botón
+ *    lateral usa la herramienta que se configuró (goma por defecto), también a mitad de un trazo.
+ *    Los Galaxy antiguos mandan el botón como acciones propias (211–213), que se traducen igual.
  *  - Se consumen las muestras históricas de cada MOVE (S Pen reporta más rápido que el refresco).
  *  - Dedo: desplaza y hace zoom (dos dedos). Mientras el lápiz está apoyado o cerca, el dedo/palma
  *    se ignora. `ACTION_CANCEL` y `FLAG_CANCELED` descartan el trazo y nunca convierten.
+ *  - Con la herramienta mano ([Tool.PAN]) el lápiz y el ratón también desplazan la hoja.
  *  - La pausa de 1 s se comprueba con ticks en cada frame (`postOnAnimation`), nunca con sleep.
  *  - Tinta seca en un bitmap caché; tinta húmeda e indicador encima.
  */
@@ -81,8 +86,26 @@ class InkCanvasView @JvmOverloads constructor(
     var hapticsEnabled = true
     /** Toque rápido con dos dedos (sin desplazar ni hacer zoom): por defecto, deshacer. */
     var onTwoFingerTap: (() -> Unit)? = null
-    var darkPaper = false
-        set(value) { if (field != value) { field = value; invalidateContent() } }
+    /** Colores de la hoja y del escritorio; en hoja oscura las tintas oscuras se ven claras. */
+    var paperColors: PaperColors = PaperColors.LIGHT
+        set(value) {
+            if (field != value) {
+                field = value
+                shadowPaint.color = value.shadow
+                invalidateContent()
+            }
+        }
+    /** Color de acento del tema: anillo de pausa, lazo y selección. */
+    var accentColor: Int = DEFAULT_ACCENT
+        set(value) {
+            if (field != value) {
+                field = value
+                applyAccent()
+                invalidate()
+            }
+        }
+    /** Cambió el zoom o el desplazamiento (para mostrar el porcentaje). */
+    var onViewportChanged: (() -> Unit)? = null
 
     var pageWidth = Notebook.PAGE_WIDTH
         set(value) { field = value; fitIfNeeded(force = true) }
@@ -95,6 +118,13 @@ class InkCanvasView @JvmOverloads constructor(
     /** Px de pantalla por unidad de documento (zoom actual). */
     val pxPerUnit: Float get() = viewport.scale.takeIf { it > 0f } ?: 1f
 
+    /** Zoom respecto de la hoja encajada al ancho (100 %). */
+    val zoomPercent: Int
+        get() {
+            val fit = fitScale()
+            return if (fit <= 0f || !viewport.isSet) 100 else (viewport.scale / fit * 100f).roundToInt()
+        }
+
     private val docToScreen = Matrix()
     private val screenToDoc = Matrix()
     private val tmp = FloatArray(2)
@@ -102,7 +132,14 @@ class InkCanvasView @JvmOverloads constructor(
     // Estado de entrada
     private var drawingPointerId = INVALID
     private var drawingKind = PointerKind.STYLUS
+    /** El contacto en curso desplaza la hoja (herramienta mano). */
+    private var panLastX = 0f
+    private var panLastY = 0f
     private var stylusNearUntil = 0L
+    /** Lápiz cerca de la hoja con una herramienta de borrar: se muestra el contorno de la goma. */
+    private var hoverEraser = false
+    private var hoverX = 0f
+    private var hoverY = 0f
     private var navigating = false
     private var lastFocusX = 0f
     private var lastFocusY = 0f
@@ -125,20 +162,27 @@ class InkCanvasView @JvmOverloads constructor(
     private var cacheVersion = -1L
     private val cacheMatrixValues = FloatArray(9)
     private val currentMatrixValues = FloatArray(9)
-    private val deskColor get() = if (darkPaper) Color.rgb(0x14, 0x16, 0x15) else Color.rgb(0xE6, 0xE3, 0xDA)
-    private val accent = Color.rgb(0x3F, 0x7D, 0x6B)
+    private val deskColor get() = paperColors.desk
     private val holdPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeWidth = 3f * density; color = accent
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeWidth = 3f * density
     }
     private val holdTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = 3f * density; color = Color.argb(60, 0x3F, 0x7D, 0x6B)
+        style = Paint.Style.STROKE; strokeWidth = 3f * density
     }
     private val lassoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = 1.5f * density; color = accent
+        style = Paint.Style.STROKE; strokeWidth = 1.5f * density
         pathEffect = DashPathEffect(floatArrayOf(8f * density, 6f * density), 0f)
     }
-    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = accent }
-    private val shadowPaint = Paint().apply { color = Color.argb(40, 0, 0, 0) }
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val selectionFill = Paint().apply { style = Paint.Style.FILL }
+    /** Contorno de la goma: claro y oscuro a la vez para verse sobre cualquier tinta. */
+    private val eraserOuter = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 2.5f * density; color = Color.argb(150, 255, 255, 255)
+    }
+    private val eraserInner = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.2f * density; color = Color.argb(200, 60, 60, 60)
+    }
+    private val shadowPaint = Paint().apply { color = PaperColors.LIGHT.shadow }
     private val lassoPath = Path()
     private val arcRect = RectF()
 
@@ -174,7 +218,18 @@ class InkCanvasView @JvmOverloads constructor(
         isFocusable = true
         tag = TAG
         contentDescription = "Hoja de tinta"
+        applyAccent()
     }
+
+    private fun applyAccent() {
+        holdPaint.color = accentColor
+        holdTrackPaint.color = withAlpha(accentColor, 60)
+        lassoPaint.color = accentColor
+        handlePaint.color = accentColor
+        selectionFill.color = withAlpha(accentColor, 24)
+    }
+
+    private fun withAlpha(color: Int, alpha: Int) = (color and 0xFFFFFF) or (alpha shl 24)
 
     fun invalidateContent() {
         cacheValid = false
@@ -216,6 +271,14 @@ class InkCanvasView @JvmOverloads constructor(
         docToScreen.postTranslate(viewport.tx, viewport.ty)
         docToScreen.invert(screenToDoc)
         invalidate()
+        onViewportChanged?.invoke()
+    }
+
+    /** Acerca o aleja desde el centro de la vista (botones de zoom). */
+    fun zoomStep(factor: Float) {
+        if (width == 0 || height == 0) return
+        if (!viewport.isSet) fitIfNeeded(force = true)
+        zoomBy(factor, width / 2f, height / 2f)
     }
 
     private fun zoomBy(factor: Float, fx: Float, fy: Float) {
@@ -294,21 +357,39 @@ class InkCanvasView @JvmOverloads constructor(
     // ------------------------------------------------------------------ entrada
 
     override fun onHoverEvent(event: MotionEvent): Boolean {
-        if (isStylus(event.getToolType(0))) stylusNearUntil = SystemClock.uptimeMillis() + PALM_WINDOW_MS
+        if (isStylus(event.getToolType(0))) {
+            stylusNearUntil = SystemClock.uptimeMillis() + PALM_WINDOW_MS
+            val c = controller
+            val erasing = c != null && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT &&
+                c.toolFor(kindOf(event, 0)).let { it == Tool.ERASER || it == Tool.STROKE_ERASER }
+            if (erasing || hoverEraser) {
+                hoverEraser = erasing
+                hoverX = event.x; hoverY = event.y
+                invalidate()
+            }
+        }
         return super.onHoverEvent(event)
     }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val c = controller ?: return false
-        val action = event.actionMasked
+        // Galaxy antiguos: el botón lateral apretado llega como acciones propias de Samsung.
+        val spenButton = event.actionMasked in SPEN_ACTION_DOWN..SPEN_ACTION_MOVE
+        val action = when (event.actionMasked) {
+            SPEN_ACTION_DOWN -> MotionEvent.ACTION_DOWN
+            SPEN_ACTION_UP -> MotionEvent.ACTION_UP
+            SPEN_ACTION_MOVE -> MotionEvent.ACTION_MOVE
+            else -> event.actionMasked
+        }
         val index = event.actionIndex
+        if (hoverEraser) { hoverEraser = false; invalidate() }
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 // Un DOWN inicia siempre un gesto nuevo: se descarta cualquier contacto que quedó colgado.
                 if (action == MotionEvent.ACTION_DOWN) { cancelContact(); navigating = false }
                 val tool = event.getToolType(index)
-                val kind = kindOf(event, index)
+                val kind = kindOf(event, index, spenButton)
                 val canDraw = isStylus(tool) || tool == MotionEvent.TOOL_TYPE_MOUSE ||
                     (tool == MotionEvent.TOOL_TYPE_FINGER && (fingerDraws || mode == Mode.PAD))
                 if (isStylus(tool)) {
@@ -326,6 +407,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     drawingPointerId = event.getPointerId(index)
                     drawingKind = kind
+                    panLastX = event.getX(index); panLastY = event.getY(index)
                     val (x, y) = screenToDocument(event.getX(index), event.getY(index))
                     c.penDown(x, y, event.getPressure(index), event.eventTime, kind, pxPerUnit)
                     parent?.requestDisallowInterceptTouchEvent(true)
@@ -339,7 +421,20 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 if (drawingPointerId != INVALID) {
                     val i = event.findPointerIndex(drawingPointerId)
-                    if (i >= 0) {
+                    if (i >= 0 && drawingKind != PointerKind.FINGER) {
+                        // Botón lateral apretado o soltado sin levantar el lápiz.
+                        val kind = kindOf(event, i, spenButton)
+                        if (kind != drawingKind) {
+                            val (x, y) = screenToDocument(event.getX(i), event.getY(i))
+                            c.changeKind(kind, x, y, event.getPressure(i), event.eventTime)
+                            drawingKind = kind
+                        }
+                    }
+                    if (i >= 0 && c.contactTool == Tool.PAN) {
+                        panBy(event.getX(i) - panLastX, event.getY(i) - panLastY)
+                        panLastX = event.getX(i); panLastY = event.getY(i)
+                        if (drawingKind != PointerKind.FINGER) stylusNearUntil = event.eventTime + PALM_WINDOW_MS
+                    } else if (i >= 0) {
                         for (h in 0 until event.historySize) {
                             val (x, y) = screenToDocument(event.getHistoricalX(i, h), event.getHistoricalY(i, h))
                             c.penMove(x, y, event.getHistoricalPressure(i, h), event.getHistoricalEventTime(h))
@@ -406,10 +501,10 @@ class InkCanvasView @JvmOverloads constructor(
         lastFocusX = fx; lastFocusY = fy
     }
 
-    private fun kindOf(event: MotionEvent, index: Int): PointerKind = when (event.getToolType(index)) {
+    private fun kindOf(event: MotionEvent, index: Int, spenButton: Boolean = false): PointerKind = when (event.getToolType(index)) {
         MotionEvent.TOOL_TYPE_ERASER -> PointerKind.STYLUS_ERASER
         MotionEvent.TOOL_TYPE_STYLUS ->
-            if ((event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0) PointerKind.STYLUS_ERASER else PointerKind.STYLUS
+            if (spenButton || (event.buttonState and STYLUS_BUTTONS) != 0) PointerKind.STYLUS_BUTTON else PointerKind.STYLUS
         MotionEvent.TOOL_TYPE_MOUSE -> PointerKind.MOUSE
         else -> PointerKind.FINGER
     }
@@ -430,7 +525,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         canvas.save()
         canvas.concat(docToScreen)
-        c.inProgress?.let { StrokePainter.draw(canvas, it) }
+        c.wetInk.forEach { StrokePainter.draw(canvas, it, paperColors.dark) }
         val lasso = c.lassoPath
         if (lasso.size > 1) {
             lassoPath.rewind()
@@ -441,10 +536,19 @@ class InkCanvasView @JvmOverloads constructor(
         }
         c.selectionBounds?.let { b ->
             lassoPaint.strokeWidth = 1.5f * density / pxPerUnit
+            canvas.drawRect(b.left - 6f, b.top - 6f, b.right + 6f, b.bottom + 6f, selectionFill)
             canvas.drawRect(b.left - 6f, b.top - 6f, b.right + 6f, b.bottom + 6f, lassoPaint)
             canvas.drawCircle(b.right, b.bottom, 9f * density / pxPerUnit, handlePaint)
         }
         canvas.restore()
+
+        // Contorno de la goma: mientras borra y mientras el lápiz se acerca con una herramienta de borrar.
+        val eraser = c.eraserPosition?.let { documentToScreen(it.x, it.y) } ?: if (hoverEraser) hoverX to hoverY else null
+        if (eraser != null) {
+            val r = c.eraserRadiusPx
+            canvas.drawCircle(eraser.first, eraser.second, r, eraserOuter)
+            canvas.drawCircle(eraser.first, eraser.second, r, eraserInner)
+        }
 
         val anchor = c.holdAnchor
         val progress = c.dwellProgress(SystemClock.uptimeMillis())
@@ -475,12 +579,9 @@ class InkCanvasView @JvmOverloads constructor(
             cc.drawColor(deskColor)
             cc.save()
             cc.concat(docToScreen)
-            if (mode == Mode.NOTEBOOK) cc.drawRect(4f, 6f, pageWidth + 4f, pageHeight + 6f, shadowPaint)
-            PaperPainter.draw(cc, paper, pageWidth, pageHeight, darkPaper)
-            val inkOverride = if (darkPaper) Color.rgb(0xE8, 0xEE, 0xEA) else null
-            c?.page?.strokes?.forEach { s ->
-                StrokePainter.draw(cc, s, if (inkOverride != null && s.color == io.trazo.core.DEFAULT_INK_COLOR) inkOverride else null)
-            }
+            if (mode == Mode.NOTEBOOK && paperColors.shadow != 0) cc.drawRect(4f, 6f, pageWidth + 4f, pageHeight + 6f, shadowPaint)
+            PaperPainter.draw(cc, paper, pageWidth, pageHeight, paperColors)
+            c?.page?.strokes?.let { StrokePainter.drawAll(cc, it, paperColors.dark) }
             cc.restore()
             System.arraycopy(currentMatrixValues, 0, cacheMatrixValues, 0, 9)
             cacheVersion = version
@@ -495,5 +596,13 @@ class InkCanvasView @JvmOverloads constructor(
         private const val PALM_WINDOW_MS = 500L
         private const val FLAG_CANCELED = 0x20
         private const val TWO_FINGER_TAP_MS = 300L
+        /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
+        private const val SPEN_ACTION_DOWN = 211
+        private const val SPEN_ACTION_UP = 212
+        private const val SPEN_ACTION_MOVE = 213
+        /** Botón lateral: según el fabricante llega como primario, secundario o botón secundario del ratón. */
+        private const val STYLUS_BUTTONS =
+            MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY or MotionEvent.BUTTON_SECONDARY
+        private const val DEFAULT_ACCENT = 0xFF9A7C42.toInt()
     }
 }

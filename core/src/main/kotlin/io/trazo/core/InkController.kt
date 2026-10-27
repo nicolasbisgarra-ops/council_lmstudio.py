@@ -185,8 +185,8 @@ class InkController(
         contactTool = effective
         dismissedSelection = false
         // Una selección hecha (lazo del botón lateral, patrón recién insertado) también se arrastra
-        // con la pluma o las formas; tocar fuera de ella la quita.
-        if (selection.isNotEmpty() && effective != Tool.LASSO) {
+        // con la pluma o las formas; tocar fuera de ella la quita. Desplazar la hoja no la toca.
+        if (selection.isNotEmpty() && effective != Tool.LASSO && effective != Tool.PAN) {
             if (effective == Tool.PEN || effective == Tool.SHAPE) {
                 if (grabSelection(x, y)) return
                 dismissedSelection = true
