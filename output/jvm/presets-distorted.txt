@@ -1,8 +1,12 @@
-Gestos deformados (8 por ejemplo): 1240 intentos
-  RIGHT: 1239 (1.00)
-  AMBIGUOUS: 1 (0.00)
+Gestos deformados (8 por ejemplo): 1368 intentos
+  RIGHT: 1356 (0.99)
+  AMBIGUOUS: 12 (0.01)
   MISSED: 0 (0.00)
   WRONG: 0 (0.00)
 
 Por patrón (bien / ambiguo / nada / MAL):
+  0 (preset-0): 23 / 1 / 0 / 0  → ambiguo preset-0 0.87 / trazo-geo-v1-circulo 0.83
   7 (preset-7): 15 / 1 / 0 / 0  → ambiguo preset-7 0.86 / preset-1 0.82
+  Círculo (trazo-geo-v1-circulo): 6 / 2 / 0 / 0  → ambiguo trazo-geo-v1-circulo 0.90 / trazo-geo-v1-elipse-h 0.86; → ambiguo trazo-geo-v1-circulo 0.90 / preset-0 0.85
+  Cuadrado (trazo-geo-v1-cuadrado): 2 / 6 / 0 / 0  → ambiguo trazo-geo-v1-cuadrado 0.91 / trazo-geo-v1-rectangulo-v 0.87; → ambiguo trazo-geo-v1-cuadrado 0.84 / trazo-geo-v1-rectangulo-h 0.81; → ambiguo trazo-geo-v1-cuadrado 0.90 / trazo-geo-v1-rectangulo-v 0.87; → ambiguo trazo-geo-v1-cuadrado 0.91 / trazo-geo-v1-rectangulo-h 0.86
+  Rectángulo redondeado vertical (trazo-geo-v1-redondeado-v): 6 / 2 / 0 / 0  → ambiguo trazo-geo-v1-redondeado-v 0.89 / preset-0 0.86

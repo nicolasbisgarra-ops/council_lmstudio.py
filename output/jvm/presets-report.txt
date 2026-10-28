@@ -1,4 +1,4 @@
-Biblioteca de partida: 104 patrones, 89 activos
+Biblioteca de partida: 126 patrones, 105 activos
 
 Signos que cedieron ante un patrón anterior (umbral 0.84):
   2 (preset-2): DESACTIVADO por 2 (mismo nombre)
@@ -13,6 +13,13 @@ Signos que cedieron ante un patrón anterior (umbral 0.84):
 Desactivados de fábrica: Menos, Por, Barra, Valor absoluto, Perpendicular, Paralelo, Grado
 
 Pares activos más parecidos:
+  0.84  0 (preset-0) ~ Rectángulo redondeado vertical (trazo-geo-v1-redondeado-v)
+  0.83  Cuadrado (trazo-geo-v1-cuadrado) ~ Rectángulo horizontal (trazo-geo-v1-rectangulo-h)
+  0.83  Círculo (trazo-geo-v1-circulo) ~ Pentágono (trazo-geo-v1-pentagono)
+  0.83  Cuadrado (trazo-geo-v1-cuadrado) ~ Rectángulo vertical (trazo-geo-v1-rectangulo-v)
+  0.82  0 (preset-0) ~ Rombo (trazo-geo-v1-rombo)
+  0.81  0 (preset-0) ~ Rectángulo vertical (trazo-geo-v1-rectangulo-v)
+  0.81  Elipse horizontal (trazo-geo-v1-elipse-h) ~ Pentágono (trazo-geo-v1-pentagono)
   0.81  beta (preset-beta) ~ rho (preset-rho)
   0.81  1 (preset-1) ~ Cierra corchete (preset-corchete-cierra)
   0.80  Cierra corchete (preset-corchete-cierra) ~ Cierra llave (preset-llave-cierra)
@@ -20,26 +27,19 @@ Pares activos más parecidos:
   0.80  Cierra paréntesis (preset-parentesis-cierra) ~ Cierra llave (preset-llave-cierra)
   0.80  Abre paréntesis (preset-parentesis-abre) ~ Abre llave (preset-llave-abre)
   0.80  Factorial (preset-factorial) ~ Flecha hacia abajo (preset-flecha-abajo)
+  0.80  Círculo (trazo-geo-v1-circulo) ~ Elipse horizontal (trazo-geo-v1-elipse-h)
   0.79  theta (preset-theta) ~ Para todo (preset-para-todo)
   0.79  Productoria (preset-productoria) ~ pi (preset-pi)
   0.78  Distinto (preset-distinto) ~ Implica (preset-implica)
   0.78  x (7f7a24fd-b560-41e8-93fd-3936a89b928c) ~ lambda (preset-lambda)
   0.78  épsilon (preset-epsilon) ~ Subconjunto (preset-subconjunto)
   0.77  3 (eb5f38e5-f13a-426e-be0a-976436e380df) ~ Cierra corchete (preset-corchete-cierra)
+  0.77  Unión (preset-union) ~ Círculo (trazo-geo-v1-circulo)
   0.77  Omega (preset-Omega) ~ Intersección (preset-interseccion)
+  0.77  0 (preset-0) ~ Círculo (trazo-geo-v1-circulo)
+  0.77  Rombo (trazo-geo-v1-rombo) ~ Pentágono (trazo-geo-v1-pentagono)
+  0.77  omega (preset-omega) ~ Círculo (trazo-geo-v1-circulo)
+  0.76  Círculo (trazo-geo-v1-circulo) ~ Rectángulo redondeado vertical (trazo-geo-v1-redondeado-v)
   0.76  1 (preset-1) ~ 7 (preset-7)
   0.76  Más o menos (preset-masmenos) ~ Distinto (preset-distinto)
-  0.76  Abre paréntesis (preset-parentesis-abre) ~ Abre corchete (preset-corchete-abre)
-  0.76  Cierra paréntesis (preset-parentesis-cierra) ~ Cierra corchete (preset-corchete-cierra)
-  0.76  2 (e021ae57-0d65-4f8d-abcd-3870822ba1db) ~ 8 (preset-8)
-  0.75  Sumatoria (preset-sumatoria) ~ épsilon (preset-epsilon)
-  0.75  0 (preset-0) ~ 6 (preset-6)
-  0.74  7 (preset-7) ~ Existe (preset-existe)
-  0.74  Integral de línea (preset-integral-linea) ~ fi (preset-fi)
-  0.74  Raíz (raiz) ~ Fracción (fraccion)
-  0.73  omega (preset-omega) ~ Unión (preset-union)
-  0.73  0 (preset-0) ~ Derivada parcial (preset-parcial)
-  0.73  b (a99a137f-9291-45bf-96de-5b4be4b42b4d) ~ 3 (eb5f38e5-f13a-426e-be0a-976436e380df)
-  0.72  0 (preset-0) ~ Unión (preset-union)
-  0.72  Intersección (preset-interseccion) ~ Y lógico (preset-y)
-  0.72  Unión (preset-union) ~ O lógico (preset-o)
+  0.76  0 (preset-0) ~ Pentágono (trazo-geo-v1-pentagono)
