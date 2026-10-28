@@ -46,6 +46,7 @@ Reglas por agente para pegar en cada proyecto: `docs/REGLAS_AGENTES.md`.
 | Claude | El recorrido de la interfaz ahora hace fallar la CI (aviso de ChatGPT) | `scripts/ci-emulator.sh` |
 | Claude | Orquestación, revisión y merge de ramas de agentes | `docs/COORDINACION.md`, `docs/DECISIONES.md` |
 | Agente 1 | Rediseñar octágono, trapecio y arco para que no choquen (umbral 0.84) | `GeoPatterns.kt`, `Geo*Test.kt` |
+| Claude | Math Notes P1: AST, parser, evaluador exacto y grafo de variables (decisión 32) | `core/src/main/kotlin/io/trazo/core/math/*`, `core/src/test/kotlin/io/trazo/core/math/*` |
 
 ## Pedidos
 (vacío)
