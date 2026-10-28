@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -210,21 +211,27 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
             loaded && shown.isEmpty() -> Box(Modifier.padding(padding).fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                 Text("Ningún cuaderno se llama así.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(168.dp),
-                modifier = Modifier.padding(padding).fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 96.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-            ) {
-                items(shown, key = { it.id }) { nb ->
-                    NotebookCard(
-                        nb, colors,
-                        onOpen = { onOpen(nb.id) },
-                        onRename = { renaming = nb },
-                        onExport = { exportId = nb.id; exportLauncher.launch("${nb.name}.trazo") },
-                        onDelete = { deleting = nb },
-                    )
+            else -> BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
+                // En pantallas bajas (teléfono horizontal) la tapa a 168 dp de ancho ocupa toda la
+                // altura y el nombre queda fuera de la vista: se angosta la columna para que entren
+                // la tapa y su nombre.
+                val fitWidth = (maxHeight * 0.6f) * (Notebook.PAGE_WIDTH / Notebook.PAGE_HEIGHT)
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minOf(168.dp, maxOf(112.dp, fitWidth))),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 96.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                ) {
+                    items(shown, key = { it.id }) { nb ->
+                        NotebookCard(
+                            nb, colors,
+                            onOpen = { onOpen(nb.id) },
+                            onRename = { renaming = nb },
+                            onExport = { exportId = nb.id; exportLauncher.launch("${nb.name}.trazo") },
+                            onDelete = { deleting = nb },
+                        )
+                    }
                 }
             }
         }
@@ -275,7 +282,7 @@ private fun NotebookCard(
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
             // El nombre también abre el cuaderno, no solo la miniatura.
             Column(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpen).padding(start = 2.dp)) {
-                Text(nb.name, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(nb.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
                     (if (nb.pageCount == 1) "1 pág." else "${nb.pageCount} págs.") + " · " + whenText(nb.updatedAt),
                     style = MaterialTheme.typography.labelSmall,
