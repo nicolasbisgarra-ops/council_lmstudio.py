@@ -130,6 +130,28 @@ class GuiTourTest {
         }
     }
 
+    /**
+     * Lista y editor en el formato de pantalla que fija el script con `wm size`/`wm density`
+     * (teléfono, tableta, PC): `-e formato <nombre>` da el prefijo de las capturas.
+     */
+    @Test fun formFactor() {
+        val name = InstrumentationRegistry.getArguments().getString("formato") ?: "actual"
+        app.repository.restoreDefaultPatterns()
+        app.settings.update { TrazoSettings() }
+        seedNotebooks()
+        ActivityScenario.launch<MainActivity>(Intent(app, MainActivity::class.java)).use {
+            find(By.text("Cálculo I"))
+            capture("trazo-formato-$name-1-cuadernos")
+            find(By.text("Cálculo I")).click()
+            find(By.desc("Pluma"))
+            capture("trazo-formato-$name-2-editor")
+            find(By.desc("Pluma")).click()
+            find(By.text("Grosor"))
+            capture("trazo-formato-$name-3-pluma")
+            device.pressBack()
+        }
+    }
+
     private fun find(selector: BySelector, timeoutMs: Long = 10_000): UiObject2 =
         device.wait(Until.findObject(selector), timeoutMs) ?: error("No apareció $selector. En pantalla: ${onScreen()}")
 
@@ -191,10 +213,12 @@ class GuiTourTest {
     }
 
     /** Captura con `screencap` (usuario shell) después de que la interfaz se asiente. */
-    private fun shot(name: String) {
+    private fun shot(name: String) = capture("trazo-gui-$name")
+
+    private fun capture(file: String) {
         instrumentation.waitForIdleSync()
         SystemClock.sleep(900)
-        instrumentation.uiAutomation.executeShellCommand("screencap -p /data/local/tmp/trazo-gui-$name.png").use { pfd ->
+        instrumentation.uiAutomation.executeShellCommand("screencap -p /data/local/tmp/$file.png").use { pfd ->
             java.io.FileInputStream(pfd.fileDescriptor).use { it.readBytes() }
         }
     }

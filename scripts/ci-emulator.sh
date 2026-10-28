@@ -140,6 +140,25 @@ if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
   exit 1
 fi
 timeout 30 adb pull /data/local/tmp/trazo-gui-13-selector-color.png "$OUT/trazo-gui-13-selector-color.png" || true
+
+# Formatos de pantalla: el mismo emulador con otra resolución y densidad. No bloquea (la APK ya se
+# validó arriba); deja las capturas para revisar teléfono, tableta y PC.
+echo "== Formatos de pantalla =="
+for spec in telefono:1080x2400:420 telefono-horizontal:2400x1080:420 tableta:1600x2560:320 tableta-horizontal:2560x1600:320 pc:1920x1080:160; do
+  IFS=: read -r ff size dens <<< "$spec"
+  timeout 20 adb shell am force-stop io.trazo || true
+  timeout 20 adb shell wm size "$size" || true
+  timeout 20 adb shell wm density "$dens" || true
+  settle 1
+  echo "-- $ff: $size @ $dens dpi" | tee -a "$OUT/formatos.txt"
+  timeout 180 adb shell am instrument -w -e formato "$ff" -e class io.trazo.app.GuiTourTest#formFactor "$RUNNER" | tee -a "$OUT/formatos.txt"
+  [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ] && { echo "AVISO: se perdió el emulador en $ff" | tee -a "$OUT/formatos.txt"; break; }
+  for n in 1-cuadernos 2-editor 3-pluma; do
+    timeout 30 adb pull "/data/local/tmp/trazo-formato-$ff-$n.png" "$OUT/trazo-formato-$ff-$n.png" || true
+  done
+done
+timeout 20 adb shell wm size reset || true
+timeout 20 adb shell wm density reset || true
 fi
 
 if has demo; then
