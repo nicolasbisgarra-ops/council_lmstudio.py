@@ -2,7 +2,7 @@
 
 io.trazo.app.GuiTourTest:.
 
-Time: 13.486
+Time: 12.155
 
 OK (1 test)
 
@@ -11,16 +11,16 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:
 Error in formFactor(io.trazo.app.GuiTourTest):
-java.lang.IllegalStateException: No apareció BySelector [TEXT='\QCálculo I\E']. En pantalla: Cuadernos [43,89][316,163] | 10 cuadernos [43,163][250,205] | Buscar [2211,116][2274,179] | Más opciones [2316,116][2379,179] | 5:50  [50,1][136,62] | Android System notification: Wi‑Fi will turn on automatically [136,1][194,62] | Android System notification:  [194,1][252,62] | Phone signal full. [2251,3][2290,61] | Battery charging, 100 percent. [2306,1][2326,62]
+java.lang.IllegalStateException: No apareció BySelector [TEXT='\QCálculo I\E']. En pantalla: Cuadernos [43,89][316,163] | 10 cuadernos [43,163][250,205] | Buscar [2211,116][2274,179] | Más opciones [2316,116][2379,179] | 6:02  [50,1][136,62] | Android System notification: Wi‑Fi will turn on automatically [136,1][194,62] | Android System notification:  [194,1][252,62] | Phone signal full. [2251,3][2290,61] | Battery charging, 100 percent. [2306,1][2326,62]
 	at io.trazo.app.GuiTourTest.find(GuiTourTest.kt:156)
 	at io.trazo.app.GuiTourTest.find$default(GuiTourTest.kt:155)
 	at io.trazo.app.GuiTourTest.formFactor(GuiTourTest.kt:143)
 
 
-Time: 15.79
+Time: 14.881
 There was 1 failure:
 1) formFactor(io.trazo.app.GuiTourTest)
-java.lang.IllegalStateException: No apareció BySelector [TEXT='\QCálculo I\E']. En pantalla: Cuadernos [43,89][316,163] | 10 cuadernos [43,163][250,205] | Buscar [2211,116][2274,179] | Más opciones [2316,116][2379,179] | 5:50  [50,1][136,62] | Android System notification: Wi‑Fi will turn on automatically [136,1][194,62] | Android System notification:  [194,1][252,62] | Phone signal full. [2251,3][2290,61] | Battery charging, 100 percent. [2306,1][2326,62]
+java.lang.IllegalStateException: No apareció BySelector [TEXT='\QCálculo I\E']. En pantalla: Cuadernos [43,89][316,163] | 10 cuadernos [43,163][250,205] | Buscar [2211,116][2274,179] | Más opciones [2316,116][2379,179] | 6:02  [50,1][136,62] | Android System notification: Wi‑Fi will turn on automatically [136,1][194,62] | Android System notification:  [194,1][252,62] | Phone signal full. [2251,3][2290,61] | Battery charging, 100 percent. [2306,1][2326,62]
 	at io.trazo.app.GuiTourTest.find(GuiTourTest.kt:156)
 	at io.trazo.app.GuiTourTest.find$default(GuiTourTest.kt:155)
 	at io.trazo.app.GuiTourTest.formFactor(GuiTourTest.kt:143)
@@ -33,7 +33,7 @@ Tests run: 1,  Failures: 1
 
 io.trazo.app.GuiTourTest:.
 
-Time: 13.789
+Time: 12.365
 
 OK (1 test)
 
@@ -42,7 +42,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 14.125
+Time: 12.102
 
 OK (1 test)
 
@@ -51,7 +51,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 14.194
+Time: 12.617
 
 OK (1 test)
 
