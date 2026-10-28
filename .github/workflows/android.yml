@@ -28,10 +28,29 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
-      - name: Pruebas JVM del motor + pruebas unitarias de la app + APK
+      # Las pruebas JVM se ejecutan siempre de nuevo (--rerun): sin eso Gradle restauraba sus
+      # resultados de la caché y el run no demostraba haberlas corrido.
+      - name: Pruebas JVM del motor + pruebas unitarias de la app (ejecución fresca)
+        run: |
+          mkdir -p output
+          set -o pipefail
+          started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ./gradlew --console=plain --stacktrace \
+            :core:test --rerun :app:testDebugUnitTest --rerun 2>&1 | tee jvm-tests.log
+          {
+            echo "source_sha=$GITHUB_SHA"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "tests_started_at=$started"
+            echo "tests_finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            grep -E '^> Task :(core:test|app:testDebugUnitTest)' jvm-tests.log | sed 's/^> Task /task /'
+          } | tee output/jvm-provenance.txt
+          if grep -qE '^> Task :(core:test|app:testDebugUnitTest) (FROM-CACHE|UP-TO-DATE)' jvm-tests.log; then
+            echo "Las pruebas JVM no se ejecutaron en este run" >&2; exit 1
+          fi
+      - name: APK
         run: >
           ./gradlew --console=plain --stacktrace
-          :core:test :app:testDebugUnitTest
           :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Evidencias del motor (render JVM rotulado)
         if: always()
@@ -67,7 +86,7 @@ jobs:
       - name: Publicar APK en la rama
         if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
         continue-on-error: true
-        run: bash scripts/ci-publish.sh "${{ github.ref_name }}" "APK de prueba y evidencias JVM [skip ci]" output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/build-provenance.txt output/jvm
+        run: bash scripts/ci-publish.sh "${{ github.ref_name }}" "APK de prueba y evidencias JVM [skip ci]" output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/build-provenance.txt output/jvm-provenance.txt output/jvm
 
   emulator:
     name: Emulador (${{ matrix.fase }})

@@ -162,7 +162,8 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
                         IconButton(onClick = { searching = true }) { Icon(Icons.Filled.Search, "Buscar") }
                     }
                     Box {
-                        IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Más opciones") }
+                        // Compacto y pegado al título para que no empuje el texto ni quede debajo.
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Filled.MoreVert, "Más opciones") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp)) {
                             NotebookSort.entries.forEach { o ->
                                 DropdownMenuItem(
@@ -276,7 +277,7 @@ private fun NotebookCard(
             Column(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpen).padding(start = 2.dp)) {
                 Text(nb.name, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
-                    (if (nb.pageCount == 1) "1 página" else "${nb.pageCount} páginas") + " · " + whenText(nb.updatedAt),
+                    (if (nb.pageCount == 1) "1 pág." else "${nb.pageCount} págs.") + " · " + whenText(nb.updatedAt),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -284,7 +285,8 @@ private fun NotebookCard(
                 )
             }
             Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Opciones de ${nb.name}") }
+                // Compacto y pegado al título para que no empuje el texto ni quede debajo.
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Filled.MoreVert, "Opciones de ${nb.name}") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp)) {
                     DropdownMenuItem(text = { Text("Renombrar") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onRename() })
                     DropdownMenuItem(text = { Text("Exportar…") }, leadingIcon = { Icon(TrazoIcons.Export, null) }, onClick = { menu = false; onExport() })
@@ -295,11 +297,11 @@ private fun NotebookCard(
     }
 }
 
-/** "hace un momento", "hace 5 min", "ayer"… en castellano, como el resto de la interfaz. */
+/** "ahora", "hace 5 min", "ayer"… en castellano, como el resto de la interfaz. */
 private fun whenText(time: Long): String {
     val ago = System.currentTimeMillis() - time
     return when {
-        ago < DateUtils.MINUTE_IN_MILLIS -> "hace un momento"
+        ago < DateUtils.MINUTE_IN_MILLIS -> "ahora"
         ago < DateUtils.HOUR_IN_MILLIS -> "hace ${ago / DateUtils.MINUTE_IN_MILLIS} min"
         ago < DateUtils.DAY_IN_MILLIS -> "hace ${ago / DateUtils.HOUR_IN_MILLIS} h"
         ago < 2 * DateUtils.DAY_IN_MILLIS -> "ayer"

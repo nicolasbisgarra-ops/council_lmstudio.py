@@ -122,25 +122,25 @@ fun EditorTopBar(
                 ToolButton(TrazoIcons.Undo, "Deshacer", onClick = vm::undo, enabled = vm.canUndo)
                 ToolButton(TrazoIcons.Redo, "Rehacer", onClick = vm::redo, enabled = vm.canRedo)
             }
-            val tools: @Composable () -> Unit = {
+            // Grupos de la barra: en el teléfono cada grupo baja de renglón entero, sin partirse.
+            val drawGroup: @Composable () -> Unit = {
                 ToolsGroup(vm, settings, update, actions, panel) { panel = it }
-                BarDivider()
-                ColorStrip(vm, settings, actions)
-                BarDivider()
                 ToolButton(
                     TrazoIcons.Wand, if (settings.gesturesEnabled) "Gestos activados" else "Gestos desactivados",
                     onClick = { update { it.copy(gesturesEnabled = !it.gesturesEnabled) } },
                     selected = settings.gesturesEnabled,
                 )
                 ToolButton(TrazoIcons.Patterns, "Insertar patrón", onClick = actions.onInsert)
-                BarDivider()
+            }
+            val colorGroup: @Composable () -> Unit = { ColorStrip(vm, settings, actions) }
+            val viewGroup: @Composable () -> Unit = {
                 ZoomGroup(vm, actions)
-                BarDivider()
                 Box {
                     ToolButton(TrazoIcons.Paper, "Hoja", onClick = { panel = BarPanel.PAPER }, selected = panel == BarPanel.PAPER)
                     PanelMenu(panel == BarPanel.PAPER, { panel = null }) { PaperPanel(vm, settings, update) }
                 }
             }
+            val groups = listOf(drawGroup, colorGroup, viewGroup)
             if (compact) {
                 Column {
                     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -148,11 +148,15 @@ fun EditorTopBar(
                         history()
                         EditorMenu(vm, actions)
                     }
-                    // En el teléfono las herramientas bajan de renglón en vez de quedar ocultas a la derecha.
                     FlowRow(
-                        Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.Center,
-                    ) { tools() }
+                        Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        groups.forEach { group ->
+                            Row(Modifier.heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) { group() }
+                        }
+                    }
                 }
             } else {
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -163,7 +167,12 @@ fun EditorTopBar(
                         Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
-                    ) { tools() }
+                    ) {
+                        groups.forEachIndexed { i, group ->
+                            if (i > 0) BarDivider()
+                            group()
+                        }
+                    }
                     EditorMenu(vm, actions)
                 }
             }
