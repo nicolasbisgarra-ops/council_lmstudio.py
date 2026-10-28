@@ -2,7 +2,7 @@
 
 io.trazo.app.GuiTourTest:.
 
-Time: 13.38
+Time: 11.793
 
 OK (1 test)
 
@@ -11,7 +11,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 14.198
+Time: 11.687
 
 OK (1 test)
 
@@ -20,7 +20,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 15.034
+Time: 11.498
 
 OK (1 test)
 
@@ -29,7 +29,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 14.792
+Time: 11.681
 
 OK (1 test)
 
@@ -38,7 +38,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 14.404
+Time: 11.705
 
 OK (1 test)
 
