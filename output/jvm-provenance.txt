@@ -1,10 +1,7 @@
-source_sha=6e96e625d5092eb36802e6330cb3f7ac51988c0d
-run_id=40740803386
+source_sha=fcacbbfc457784f6a1fd57d1e794bef86ebb50e2
+run_id=40752744495
 run_attempt=1
-tests_started_at=2026-10-28T18:07:50Z
-tests_finished_at=2026-10-28T18:08:48Z
-task :core:testFixturesClasses UP-TO-DATE
-task :core:testFixturesJar
-task :core:testClasses UP-TO-DATE
+tests_started_at=2026-10-28T19:16:25Z
+tests_finished_at=2026-10-28T19:17:20Z
 task :core:test
 task :app:testDebugUnitTest
