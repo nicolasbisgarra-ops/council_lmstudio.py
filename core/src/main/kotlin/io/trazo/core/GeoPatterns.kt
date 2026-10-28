@@ -5,8 +5,10 @@ package io.trazo.core
  * no pega tinta fija: crea una [ParametricShape] editable del tipo de [ParametricTemplates.recommendedKindFor],
  * ajustada a la caja del gesto.
  *
- * El ejemplo de gesto es el contorno de la forma (guiones como línea continua, sin rótulos), así se
- * reconoce dibujada a mano con los mismos trazos; el usuario puede enseñar más ejemplos en el editor.
+ * El ejemplo de gesto suele ser el contorno de la forma (sin rótulos). Para octágono,
+ * trapecio y arco se aceptan dos trazos consecutivos que recorren cada mitad del contorno.
+ * El dibujo paramétrico resultante sigue siendo continuo y editable. El usuario puede
+ * enseñar ejemplos adicionales en el editor.
  */
 object GeoPatterns {
     const val PREFIX = "trazo-geo-v1-"
@@ -61,11 +63,38 @@ object GeoPatterns {
             InkPattern(
                 id = id,
                 name = s.name,
-                gestureExamples = listOf(GestureExamples.normalize(outline(shape))),
+                gestureExamples = listOf(GestureExamples.normalize(gestureOutline(shape))),
                 outputInk = shape.render(),
                 sizing = OutputSizing.FIT_GESTURE,
                 builtIn = true,
                 category = PatternCategory.SHAPES,
+            )
+        }
+    }
+
+    /**
+     * Los tres contornos que colisionaban como un único trazo usan DOS medias vueltas contiguas.
+     * Es un gesto humano válido: levantar el lápiz una vez y terminar desde el mismo vértice.
+     * El comparador exige igual cantidad de trazos, así el círculo, el rectángulo y la raíz de
+     * un solo trazo ya no los desplazan. No se modifican las plantillas ni los trazos del usuario.
+     *
+     * Se separa en puntos del contorno original (vértices del polígono / mitad del arco), sin
+     * duplicar geometría ni insertar marcadores artificiales. Cada segmento guarda su propio tiempo.
+     */
+    private fun gestureOutline(shape: ParametricShape): List<InkStroke> {
+        val contour = outline(shape)
+        if (shape.kind !in setOf(GeoKind.OCTAGON, GeoKind.TRAPEZOID, GeoKind.ARC)) return contour
+        if (contour.size != 1) return contour
+        val points = contour.single().points
+        val last = points.lastIndex
+        if (last < 4) return contour
+        return (0..1).map { part ->
+            val from = part * last / 2
+            val to = (part + 1) * last / 2
+            InkStroke(
+                id = "geo-half-${part + 1}",
+                points = points.subList(from, to + 1).mapIndexed { k, p -> p.copy(timeMs = k * 8L) },
+                startTime = part * 400L,
             )
         }
     }

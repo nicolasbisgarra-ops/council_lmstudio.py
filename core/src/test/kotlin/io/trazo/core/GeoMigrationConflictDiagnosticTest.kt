@@ -5,16 +5,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pasar de la biblioteca v3 a la v4: las seis formas nuevas llegan como en una biblioteca nueva y nunca le ganan a un patrón del usuario. */
+/** v3 → v5 conserva las seis formas v4 sin colisiones ni pérdida de prioridad del usuario. */
 class GeoMigrationConflictDiagnosticTest {
     private val v4 = GeoPatterns.all().filter { it.id in GeoPatterns.V4_IDS }
 
-    /**
-     * Las que el comparador todavía confunde con una forma o patrón activo (con CONFLICT_SCORE 0.84):
-     * octágono ≈ círculo (0.91), trapecio ≈ rectángulo horizontal (0.85), arco ≈ raíz (0.84).
-     * Llegan desactivadas pero enteras; si el comparador aprende a separarlas, sacarlas de acá.
-     */
-    private val ambiguous = setOf("octagono", "trapecio", "arco").mapTo(HashSet()) { GeoPatterns.PREFIX + it }
+    /** Cualquier nueva colisión debe fallar este test en vez de desactivar formas silenciosamente. */
+    private val ambiguous = emptySet<String>()
 
     @Test fun `a v3 library gets the six new shapes exactly as a new library does`() {
         assertEquals(6, v4.size)

@@ -23,8 +23,8 @@ import kotlin.math.sin
  * usuario manda y así nunca compiten.
  */
 object PresetPatterns {
-    /** Versión de biblioteca: 1 = núcleo; 2 = signos; 3 = geometría original; 4 = seis formas nuevas. */
-    const val VERSION = 4
+    /** Versión: 5 = gestos divididos para formas v4; los ids nuevos conservan since=4. */
+    const val VERSION = 5
     const val PREFIX = "preset-"
 
     /** Puntaje entre ejemplos desde el que dos patrones se consideran confundibles. */
