@@ -70,6 +70,8 @@ import io.trazo.core.Paper
 private sealed interface PrefColor {
     data object Accent : PrefColor
     data class Quick(val slot: Int) : PrefColor
+    /** Uno de los dos colores que alternan dos clics del botón del lápiz. */
+    data class Swap(val slot: Int) : PrefColor
 }
 
 /** Preferencias agrupadas como en las apps de notas: apariencia, lápiz y gestos, S Pen y cuadernos. */
@@ -135,6 +137,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Text("Botón lateral (mantener apretado)", style = MaterialTheme.typography.bodyMedium)
                     ChoiceRow(SideButtonAction.entries, s.sideButton, { it.label }, { a -> update { it.copy(sideButton = a) } })
                     Hint("Con «Goma», mientras tengas apretado el botón del S Pen borrás; al soltarlo seguís con la herramienta de antes.")
+                    Text("Botón en el aire (sin tocar la pantalla)", style = MaterialTheme.typography.bodyMedium)
+                    Hint(
+                        "1 clic abre la ruleta de herramientas y colores; 2 clics alternan entre estos dos colores; " +
+                            "3 clics prenden o apagan el modo formas. En Galaxy, si se abre Air command, desactivá " +
+                            "«Abrir Air command con el botón del lápiz» en los ajustes del S Pen.",
+                    )
+                    Row5(s.swapColors, onPick = { i -> picking = PrefColor.Swap(i) }, label = "Cambiar el color del doble clic")
                     Text("Goma", style = MaterialTheme.typography.bodyMedium)
                     ChoiceRow(EraserMode.entries, s.eraserMode, { it.label }, { m -> update { it.copy(eraserMode = m) } })
                     LabeledSlider(
@@ -180,14 +189,20 @@ fun SettingsScreen(onBack: () -> Unit) {
             initial = when (target) {
                 PrefColor.Accent -> s.accent
                 is PrefColor.Quick -> s.quickColors.getOrElse(target.slot) { s.penColor }
+                is PrefColor.Swap -> s.swapColors.getOrElse(target.slot) { s.penColor }
             },
-            title = if (target == PrefColor.Accent) "Color de acento" else "Color rápido",
+            title = when (target) {
+                PrefColor.Accent -> "Color de acento"
+                is PrefColor.Quick -> "Color rápido"
+                is PrefColor.Swap -> "Color del doble clic ${target.slot + 1}"
+            },
             onDismiss = { picking = null },
             onPick = { c ->
                 picking = null
                 when (target) {
                     PrefColor.Accent -> update { it.copy(accent = c) }
                     is PrefColor.Quick -> update { st -> st.copy(quickColors = st.quickColors.mapIndexed { i, q -> if (i == target.slot) c else q }) }
+                    is PrefColor.Swap -> update { st -> st.copy(swapColors = st.swapColors.mapIndexed { i, q -> if (i == target.slot) c else q }) }
                 }
             },
             suggestions = if (target == PrefColor.Accent) AccentPresets.map { it.accent } else PenPalette,
@@ -264,10 +279,10 @@ private fun AccentGrid(s: TrazoSettings, onPick: (AccentPreset) -> Unit, onCusto
 /** Los colores rápidos, cada uno se cambia con un toque. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Row5(colors: List<Int>, onPick: (Int) -> Unit) {
+private fun Row5(colors: List<Int>, onPick: (Int) -> Unit, label: String = "Cambiar el color rápido") {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         colors.forEachIndexed { i, c ->
-            ColorDot(c, selected = false, onClick = { onPick(i) }, size = 32.dp, description = "Cambiar el color rápido ${i + 1}")
+            ColorDot(c, selected = false, onClick = { onPick(i) }, size = 32.dp, description = "$label ${i + 1}")
         }
     }
     Spacer(Modifier.height(2.dp))

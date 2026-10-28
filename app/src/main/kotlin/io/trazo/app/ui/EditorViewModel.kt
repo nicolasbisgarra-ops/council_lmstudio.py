@@ -148,7 +148,18 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         }
     }
 
+    /** Herramienta a la que vuelve el modo formas al apagarse. */
+    private var toolBeforeShapes = EditorTool.PEN
+
+    /** Tres clics del botón en el aire: entra al modo formas o vuelve a la herramienta de antes. */
+    fun toggleShapeTool(): Boolean {
+        val on = editorTool != EditorTool.SHAPE
+        selectTool(if (on) EditorTool.SHAPE else toolBeforeShapes)
+        return on
+    }
+
     fun selectTool(t: EditorTool) {
+        if (t == EditorTool.SHAPE && editorTool != EditorTool.SHAPE) toolBeforeShapes = editorTool
         editorTool = t
         controller.tool = when (t) {
             EditorTool.PEN, EditorTool.HIGHLIGHTER -> Tool.PEN

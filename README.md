@@ -20,6 +20,7 @@ App **nativa de Android** (Kotlin, Jetpack Compose + una `View` de tinta propia 
 - **Persistencia local offline** (JSON versionado, escritura atómica), autoguardado, **exportar/importar** `.trazo` (ZIP editable con cuaderno + patrones usados) y la **biblioteca de patrones** (JSON). Sin permisos de red.
 - **Compartir** el cuaderno como **PDF vectorial** o una página como **PNG** (solo exportación; el formato fuente sigue siendo de trazos).
 - En **tablet** los patrones quedan en un panel lateral; en teléfono, en una hoja inferior. Vibración breve al convertir, rechazo de palma también por tamaño de contacto, **toque con dos dedos = deshacer**, **toque con tres dedos = prender o apagar la detección automática de signos y letras**.
+- **Botón del S Pen en el aire** (sin tocar la pantalla): 1 clic abre la **ruleta de herramientas** con colores al centro, 2 clics alternan entre dos colores elegidos en Preferencias, 3 clics prenden o apagan el modo formas. En Samsung, apagar "Abrir Air command con el botón del lápiz" en los ajustes del S Pen. Las herramientas muestran su nombre al pasar por encima, y la hoja puede ser **negra OLED** con un contorno blanco.
 
 ## Estructura
 

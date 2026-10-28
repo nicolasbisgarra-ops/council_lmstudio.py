@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class ThemeMode(val label: String) { SYSTEM("Sistema"), DARK("Oscuro"), LIGHT("Claro"), OLED("OLED") }
 
 /** Color de la hoja: el que corresponde al tema de la interfaz, o siempre clara u oscura. */
-enum class PaperTone(val label: String) { THEME("Tema"), LIGHT("Clara"), DARK("Oscura") }
+enum class PaperTone(val label: String) { THEME("Tema"), LIGHT("Clara"), DARK("Oscura"), OLED("Negra OLED") }
 
 /** Goma de área (borra lo que toca y parte los trazos) o de trazo (borra trazos enteros). */
 enum class EraserMode(val label: String) { AREA("Área"), STROKE("Trazo") }
@@ -31,6 +31,9 @@ const val DEFAULT_HIGHLIGHTER: Int = 0xFFFFE066.toInt()
 val DEFAULT_QUICK_COLORS: List<Int> = listOf(
     DEFAULT_INK_COLOR, 0xFF1E4FA0.toInt(), 0xFFB3261E.toInt(), 0xFF2E7D32.toInt(), 0xFF6A3FA0.toInt(),
 )
+
+/** Los dos colores que alternan dos clics del botón del lápiz en el aire: tinta y azul. */
+val DEFAULT_SWAP_COLORS: List<Int> = listOf(DEFAULT_INK_COLOR, 0xFF1E4FA0.toInt())
 
 /** Ajustes globales. Valores iniciales de diseño, no medidos con S Pen real (ver DECISIONES.md). */
 data class TrazoSettings(
@@ -58,6 +61,7 @@ data class TrazoSettings(
     val sideButton: SideButtonAction = SideButtonAction.ERASER,
     val quickColors: List<Int> = DEFAULT_QUICK_COLORS,
     val paperTone: PaperTone = PaperTone.THEME,
+    val swapColors: List<Int> = DEFAULT_SWAP_COLORS,
 )
 
 class SettingsStore(context: Context) {
@@ -89,6 +93,7 @@ class SettingsStore(context: Context) {
         quickColors = prefs.getString("quickColors", null)?.let(::parseColors)?.takeIf { it.size == DEFAULT_QUICK_COLORS.size }
             ?: DEFAULT_QUICK_COLORS,
         paperTone = prefs.enum("paperTone", PaperTone.THEME),
+        swapColors = prefs.getString("swapColors", null)?.let(::parseColors)?.takeIf { it.size == 2 } ?: DEFAULT_SWAP_COLORS,
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
@@ -116,6 +121,7 @@ class SettingsStore(context: Context) {
             .putString("sideButton", s.sideButton.name)
             .putString("quickColors", s.quickColors.joinToString(",") { Integer.toHexString(it) })
             .putString("paperTone", s.paperTone.name)
+            .putString("swapColors", s.swapColors.joinToString(",") { Integer.toHexString(it) })
             .apply()
         _settings.value = s
     }

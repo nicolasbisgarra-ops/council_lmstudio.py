@@ -37,6 +37,17 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -97,9 +108,16 @@ fun ToolButton(
     val scheme = MaterialTheme.colorScheme
     val bg = if (selected) scheme.primary else Color.Transparent
     val fg = if (selected) scheme.onPrimary else scheme.onSurface
+    var hovered by remember { mutableStateOf(false) }
+    var showHint by remember { mutableStateOf(false) }
+    LaunchedEffect(hovered) {
+        showHint = false
+        if (hovered) { delay(HINT_DELAY_MS); showHint = true }
+    }
     Box(
         modifier
             .size(size)
+            .hoverTracking { hovered = it }
             .clip(CircleShape)
             .background(bg)
             .combinedClickable(enabled = enabled, onClick = onClick, onLongClick = onLongClick, role = Role.Button)
@@ -111,6 +129,47 @@ fun ToolButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(22.dp))
+        if (showHint) HoverHint(description)
+    }
+}
+
+/** Espera con el lápiz (o el mouse) quieto sobre un botón antes de mostrar qué hace. */
+private const val HINT_DELAY_MS = 450L
+
+/** Avisa al entrar y salir del puntero en el aire; tocar también cuenta como salir. */
+private fun Modifier.hoverTracking(onHover: (Boolean) -> Unit): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            when (awaitPointerEvent(PointerEventPass.Initial).type) {
+                PointerEventType.Enter -> onHover(true)
+                PointerEventType.Exit, PointerEventType.Press -> onHover(false)
+            }
+        }
+    }
+}
+
+/** Cartelito con la descripción del botón, debajo de él (o encima si no entra). */
+@Composable
+private fun HoverHint(text: String) {
+    val gap = with(LocalDensity.current) { 6.dp.roundToPx() }
+    Popup(popupPositionProvider = remember(gap) { HintPosition(gap) }, properties = PopupProperties(focusable = false)) {
+        Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.inverseSurface, shadowElevation = 2.dp) {
+            Text(
+                text,
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+private class HintPosition(private val gap: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        val x = (anchorBounds.center.x - popupContentSize.width / 2).coerceIn(0, max(0, windowSize.width - popupContentSize.width))
+        val below = anchorBounds.bottom + gap
+        val y = if (below + popupContentSize.height <= windowSize.height) below else anchorBounds.top - gap - popupContentSize.height
+        return IntOffset(x, y)
     }
 }
 

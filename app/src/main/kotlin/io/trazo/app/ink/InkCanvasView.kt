@@ -89,6 +89,11 @@ class InkCanvasView @JvmOverloads constructor(
     var onTwoFingerTap: (() -> Unit)? = null
     /** Toque rápido con tres dedos: prende o apaga la detección automática de signos y letras. */
     var onThreeFingerTap: (() -> Unit)? = null
+    /**
+     * Clics del botón lateral con el lápiz en el aire: cuántos seguidos (1 a 3) y dónde, en
+     * coordenadas de la vista. Se avisa [PEN_CLICK_WAIT_MS] después del último, para distinguir 1, 2 y 3.
+     */
+    var onPenButtonClicks: ((count: Int, x: Float, y: Float) -> Unit)? = null
     /** Colores de la hoja y del escritorio; en hoja oscura las tintas oscuras se ven claras. */
     var paperColors: PaperColors = PaperColors.LIGHT
         set(value) {
@@ -147,6 +152,17 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastFocusX = 0f
     private var lastFocusY = 0f
     private var tapStartTime = 0L
+    /** Botón lateral visto apretado, y si se apretó con el lápiz en el aire (no al borrar apoyado). */
+    private var penButtonDown = false
+    private var penButtonInAir = false
+    private var penClicks = 0
+    private var penClickX = 0f
+    private var penClickY = 0f
+    private val penClickDone = Runnable {
+        val n = penClicks
+        penClicks = 0
+        if (n > 0) onPenButtonClicks?.invoke(minOf(n, 3), penClickX, penClickY)
+    }
     private var tapMaxPointers = 0
     private var tapTravel = 0f
     private var tapScaled = false
@@ -186,6 +202,7 @@ class InkCanvasView @JvmOverloads constructor(
         style = Paint.Style.STROKE; strokeWidth = 1.2f * density; color = Color.argb(200, 60, 60, 60)
     }
     private val shadowPaint = Paint().apply { color = PaperColors.LIGHT.shadow }
+    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val lassoPath = Path()
     private val arcRect = RectF()
 
@@ -329,6 +346,8 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         // Rotación / cierre a mitad de un trazo: cancelar, nunca convertir.
         cancelContact()
+        removeCallbacks(penClickDone)
+        penClicks = 0
         controller?.removeListener(listener)
         cache?.recycle(); cache = null
         super.onDetachedFromWindow()
@@ -362,6 +381,7 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onHoverEvent(event: MotionEvent): Boolean {
         if (isStylus(event.getToolType(0))) {
             stylusNearUntil = SystemClock.uptimeMillis() + PALM_WINDOW_MS
+            trackPenButton(event)
             val c = controller
             val erasing = c != null && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT &&
                 c.toolFor(kindOf(event, 0)).let { it == Tool.ERASER || it == Tool.STROKE_ERASER }
@@ -372,6 +392,33 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         return super.onHoverEvent(event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        // Algunos equipos mandan el botón en el aire como BUTTON_PRESS/RELEASE y no en el HOVER_MOVE.
+        if (isStylus(event.getToolType(0)) && event.actionMasked in BUTTON_ACTIONS) {
+            trackPenButton(event)
+            return true
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    /** Cuenta un clic cuando el botón se suelta con el lápiz en el aire y se había apretado en el aire. */
+    private fun trackPenButton(event: MotionEvent) {
+        val pressed = (event.buttonState and STYLUS_BUTTONS) != 0
+        if (pressed && !penButtonDown) {
+            penButtonDown = true
+            penButtonInAir = drawingPointerId == INVALID
+        } else if (!pressed && penButtonDown) {
+            penButtonDown = false
+            if (penButtonInAir && drawingPointerId == INVALID && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) {
+                penClicks++
+                penClickX = event.x
+                penClickY = event.y
+                removeCallbacks(penClickDone)
+                postDelayed(penClickDone, PEN_CLICK_WAIT_MS)
+            }
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -397,6 +444,10 @@ class InkCanvasView @JvmOverloads constructor(
                     (tool == MotionEvent.TOOL_TYPE_FINGER && (fingerDraws || mode == Mode.PAD))
                 if (isStylus(tool)) {
                     stylusNearUntil = event.eventTime + PALM_WINDOW_MS
+                    // Apoyar el lápiz corta la cuenta de clics: el botón pasa a ser la goma.
+                    penButtonInAir = false
+                    penClicks = 0
+                    removeCallbacks(penClickDone)
                     if (navigating) navigating = false
                 }
                 // Palma: dedo mientras el lápiz está apoyado o cerca, o un contacto demasiado ancho.
@@ -596,6 +647,11 @@ class InkCanvasView @JvmOverloads constructor(
             cc.concat(docToScreen)
             if (mode == Mode.NOTEBOOK && paperColors.shadow != 0) cc.drawRect(4f, 6f, pageWidth + 4f, pageHeight + 6f, shadowPaint)
             PaperPainter.draw(cc, paper, pageWidth, pageHeight, paperColors)
+            if (mode == Mode.NOTEBOOK && paperColors.border != 0) {
+                borderPaint.color = paperColors.border
+                borderPaint.strokeWidth = 1.5f * density / pxPerUnit
+                cc.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), borderPaint)
+            }
             c?.page?.allInk?.let { StrokePainter.drawAll(cc, it, paperColors.dark) }
             cc.restore()
             System.arraycopy(currentMatrixValues, 0, cacheMatrixValues, 0, 9)
@@ -611,6 +667,9 @@ class InkCanvasView @JvmOverloads constructor(
         private const val PALM_WINDOW_MS = 500L
         private const val FLAG_CANCELED = 0x20
         private const val MULTI_FINGER_TAP_MS = 300L
+        /** Espera tras soltar el botón en el aire antes de decidir si fueron 1, 2 o 3 clics. */
+        const val PEN_CLICK_WAIT_MS = 350L
+        private val BUTTON_ACTIONS = setOf(MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE)
         /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
         private const val SPEN_ACTION_DOWN = 211
         private const val SPEN_ACTION_UP = 212

@@ -77,6 +77,7 @@ fun paperColors(tone: PaperTone): PaperColors {
     val dark = LocalDarkTheme.current
     val oled = LocalOledTheme.current
     return when {
+        tone == PaperTone.OLED -> PaperColors.BLACK
         tone == PaperTone.LIGHT || tone == PaperTone.THEME && !dark -> PaperColors.LIGHT
         oled -> PaperColors.BLACK
         else -> PaperColors.DARK

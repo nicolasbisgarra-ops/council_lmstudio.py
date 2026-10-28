@@ -12,6 +12,8 @@ data class PaperColors(
     val margin: Int,
     val shadow: Int,
     val dark: Boolean,
+    /** Contorno de la hoja (0 = sin contorno): en negro puro marca dónde termina la hoja. */
+    val border: Int = 0,
 ) {
     companion object {
         val LIGHT = PaperColors(
@@ -22,10 +24,10 @@ data class PaperColors(
             desk = 0xFF0E0F12.toInt(), sheet = 0xFF1A1B20.toInt(), line = 0xFF2E3138.toInt(),
             margin = 0xFF4E3036.toInt(), shadow = 0x50000000, dark = true,
         )
-        /** Tema OLED: hoja casi negra sobre negro puro. */
+        /** OLED: hoja negra pura sobre negro puro, con contorno blanco para ver el borde. */
         val BLACK = PaperColors(
-            desk = 0xFF000000.toInt(), sheet = 0xFF0B0B0D.toInt(), line = 0xFF24262B.toInt(),
-            margin = 0xFF40262C.toInt(), shadow = 0, dark = true,
+            desk = 0xFF000000.toInt(), sheet = 0xFF000000.toInt(), line = 0xFF24262B.toInt(),
+            margin = 0xFF40262C.toInt(), shadow = 0, dark = true, border = 0xE6FFFFFF.toInt(),
         )
     }
 }
