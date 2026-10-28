@@ -9,8 +9,8 @@ Separados por **nivel de evidencia**, como pide `05_PRUEBAS_ACEPTACION.md`. Una 
 | 1. JVM — motor `:core` | ✅ **140/140** | local (OpenJDK 21) y GitHub Actions (JDK 17) |
 | 2. JVM — app (`SourcePolicyTest`: sin WebView/LaTeX/texto en la hoja) | ✅ 5/5 | GitHub Actions |
 | 3. Compilación `assembleDebug` + `assembleDebugAndroidTest` | ✅ | GitHub Actions, AGP 8.7.3, compileSdk 35 |
-| 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ✅ **16/16** (corrida #10, commit `2c5f848`) | GitHub Actions, emulador API 34 Pixel 6, sin red |
-| 5. Demo grabada en la app nativa (emulador, automatizada) | ✅ **2/2** (ejercicio completo + enseñar un gesto), video de 10,8 MB | `output/demo-real-android.mp4` |
+| 4. Instrumentadas en emulador (MotionEvent de lápiz sintetizado) | ✅ **16/16** (corrida `40624994789`, commit `c02323c`) | GitHub Actions, emulador API 34 Pixel 6, sin red |
+| 5. Demo grabada en la app nativa (emulador, automatizada) | ✅ **2/2** (ejercicio completo + enseñar un gesto), video de 9,3 MB | `output/demo-real-android.mp4` |
 | 6. Físicas con S Pen (S24 Ultra / Tab S11) | ❌ **no realizadas** | no hubo hardware disponible |
 
 La pausa por defecto es de **500 ms** y el usuario la elige entre 100 y 1000 ms en Preferencias. Las pruebas que dicen «1000 ms» fijan esa pausa a propósito: el emulador de CI, muy cargado, entrega eventos con huecos que una pausa corta confundiría con quietud.
@@ -93,6 +93,8 @@ Calibración con los patrones del usuario (`PresetAnalysisTest`; reportes en `ou
 - Corrida #9 (`17d0c83`): compilación ✅ (APK publicada); T03 ✅ y demo 2/2 ✅ (video de 9,1 MB). Falló T20: la hoja ya tenía trazos al levantar el lápiz tras recrear. La app cancela al recrear (al pausar y al soltar la vista), así que el trazo se cerró antes: lo más probable es que el emulador cargado frenara la inyección o la recreación más que la pausa de 2 s, o que esa pausa aún no hubiera llegado al controlador (la prueba no la esperaba). El mensaje no decía qué trazos había. → T20 fija una pausa de 10 s, espera a que llegue al controlador y verifica que el gesto siga en curso antes de recrear y que recrear cancele el contacto; T03 usa una pausa de 4 s. Los mensajes de falla ahora muestran los trazos y el mayor hueco entre eventos inyectados. Además, `settle` perdía ~3,5 min: leía el foco guardado en la sección «LAST ANR» de `dumpsys window` (null tras un ANR del arranque) → se ignora esa sección.
 - Corrida #10 (`2c5f848`): **todo verde** — compilación, JVM, 16/16 instrumentadas y demo 2/2 (video de 10,8 MB y 5 capturas, publicados en la rama).
 - Corrida `40602643660` (`e0dd469`): compilación ✅; **recorrido de la interfaz** (`GuiTourTest`) ✅ con 12 capturas `output/emulator/trazo-gui-*.png` (cuadernos, editor, pluma, goma, color, insertar, biblioteca, patrón, preferencias y modo oscuro); 16/16 instrumentadas y demo 2/2 ✅, pero falló la publicación: los dos trabajos del emulador escribían `dispositivo.txt` y chocaban al rebasar → ahora cada fase usa su propio nombre (`dispositivo-<fase>.txt`).
+- Corrida `40622888726`: compilación e interfaz ✅ (13 capturas, con el selector de color en su propia corrida); demo 2/2 ✅; falló T20: con la pausa en 10 s la integral igual se convirtió antes de recrear la actividad (hueco máximo de 110 ms, sin causa en el logcat) → la prueba verifica que el gesto siga en curso, si no lo deshace, registra el estado y lo repite una vez.
+- Corrida `40624994789` (`c02323c`): **todo verde** — compilación, JVM, 16/16 instrumentadas, demo 2/2 (video de 9,3 MB), recorrido de la interfaz y selector de color con **13 capturas**. La procedencia (`output/emulator/build-provenance-<fase>.txt`) liga cada evidencia al commit fuente y al SHA-256 de la APK publicada (`ace9dd46…50ad`).
 
 ## 5. Demo grabada (T22 en la app nativa)
 
