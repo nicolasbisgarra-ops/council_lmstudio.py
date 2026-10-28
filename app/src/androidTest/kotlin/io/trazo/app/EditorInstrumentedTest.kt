@@ -14,6 +14,7 @@ import io.trazo.app.data.TrazoSettings
 import io.trazo.app.ink.InkCanvasView
 import io.trazo.core.DefaultPatterns
 import io.trazo.core.InkController
+import io.trazo.core.InkEvent
 import io.trazo.core.InkStroke
 import io.trazo.core.Tool
 import io.trazo.core.fixtures.HandScript
@@ -182,36 +183,58 @@ class EditorInstrumentedTest {
         assertTrue(app.repository.patterns.value.any { it.id == DefaultPatterns.INTEGRAL })
     }
 
+    /** Termina un contacto pendiente: el UP inyectado puede llegar tarde y cerrar el trazo después. */
+    private fun settleContact() {
+        instrumentation.waitForIdleSync()
+        val deadline = SystemClock.uptimeMillis() + 3_000
+        while (onController { it.isContactActive } && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
+        if (onController { it.isContactActive }) onController { it.cancel() }
+        instrumentation.waitForIdleSync()
+    }
+
     @Test fun t20_recreatingDuringAGestureCancelsSafely() {
         // Pausa de 10 s: con la de 2 s, el emulador de CI cargado frenó la inyección o la recreación
         // y la hoja ya tenía trazos. Lo que se prueba es que recrear cancele el contacto en curso.
         useHoldMillis(10_000L)
         // Precondición, no lo que se prueba: el gesto tiene que seguir en curso. Si el emulador lo
-        // cerró o convirtió igual (pasó una vez, sin hueco largo), se deshace, se informa y se repite.
+        // cerró o convirtió igual (pasó en CI, sin hueco largo), se limpia la hoja, se informa con los
+        // eventos del controlador y se repite.
         var problem: String? = null
-        for (attempt in 1..2) {
+        val problems = mutableListOf<String>()
+        for (attempt in 1..3) {
+            // Hoja vacía y sin contacto antes de cada intento. clearPage y no deshacer: deshacer no
+            // limpia trazos que no estén en el historial y dejaba restos para el intento siguiente.
+            settleContact()
+            val leftover = describe(strokes())
+            onController { it.clearPage() }
+            instrumentation.waitForIdleSync()
             val hold = onController { it.holdMillis }
+            val events = java.util.Collections.synchronizedList(mutableListOf<String>())
             val t0 = SystemClock.uptimeMillis()
+            val listener: (InkEvent) -> Unit = { e ->
+                val dt = SystemClock.uptimeMillis() - t0
+                when (e) {
+                    is InkEvent.Converted -> events += "Converted(${e.pattern.id}, ${"%.2f".format(e.score)}) a los $dt ms"
+                    is InkEvent.Ambiguous -> events += "Ambiguous a los $dt ms"
+                    is InkEvent.NotRecognized -> events += "NotRecognized a los $dt ms"
+                    else -> Unit
+                }
+            }
+            onController { it.addListener(listener) }
             pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 300, lift = false)
             val took = SystemClock.uptimeMillis() - t0
+            onController { it.removeListener(listener) }
             if (onController { it.isContactActive } && strokes().isEmpty()) { problem = null; break }
             val patternHolds = app.repository.patterns.value.filter { it.enabled && it.holdMillis != null }
                 .joinToString { "${it.id}=${it.holdMillis}" }
             problem = "intento $attempt: contacto=${onController { it.isContactActive }}, pausa=$hold→" +
                 "${onController { it.holdMillis }} ms, pausas propias=[$patternHolds], trazo $took ms, " +
-                "hueco máx. ${pen.maxGapMs} ms: ${describe(strokes())}"
+                "hueco máx. ${pen.maxGapMs} ms, hoja previa $leftover, eventos=$events: ${describe(strokes())}"
+            problems += problem
             android.util.Log.w("TrazoTest", "t20 $problem")
             pen.liftAt(150f, 150f)
-            instrumentation.waitForIdleSync()
-            // El UP inyectado puede llegar después de la espera y cerrar el trazo más tarde: se espera
-            // a que termine el contacto antes de deshacer, para no arrastrar ese trazo al intento siguiente.
-            val liftDeadline = SystemClock.uptimeMillis() + 3_000
-            while (onController { it.isContactActive } && SystemClock.uptimeMillis() < liftDeadline) SystemClock.sleep(50)
-            SystemClock.sleep(300)
-            instrumentation.waitForIdleSync()
-            while (strokes().isNotEmpty() && onController { it.undo() }) Unit
         }
-        assertNull("gesto en curso antes de recrear", problem)
+        assertNull("gesto en curso antes de recrear (${problems.joinToString(" | ")})", problem)
         scenario.recreate()
         waitForCanvas()
         assertFalse("recrear cancela el contacto", onController { it.isContactActive })
