@@ -80,6 +80,42 @@ class StylusDriver(private val view: () -> InkCanvasView) {
         }
     }
 
+    /**
+     * Trazo libre (sin pausa final) que se rehace si el host frenó la inyección: un hueco de
+     * [maxStallMs] o más es, para la app, el lápiz quieto en medio del trazo, y puede convertirlo
+     * con razón en un patrón o descartarlo como gesto sin coincidencia. Se deshace lo que haya
+     * quedado de ese intento (sin tocar lo anterior) y se vuelve a dibujar.
+     * @return la cantidad de intentos con hueco que se descartaron.
+     */
+    fun freeStroke(docPath: List<Pair<Float, Float>>, sampleMs: Long = 8L, maxStallMs: Long = 700L, attempts: Int = 3): Int {
+        var stalls = 0
+        repeat(attempts) { attempt ->
+            val before = pageIds()
+            stroke(docPath, sampleMs = sampleMs)
+            if (maxGapMs < maxStallMs || attempt == attempts - 1) return stalls
+            stalls++
+            // Conversión: una entrada de historial (a veces dos, con la tinta cruda): se deshace hasta
+            // volver a la hoja de antes, sin pasarse.
+            var undos = 0
+            while (pageIds() != before && undos++ < 3) {
+                val v = view()
+                var undone = false
+                instrumentation.runOnMainSync { undone = v.controller!!.undo() }
+                if (!undone) break
+            }
+            check(pageIds() == before) { "No se pudo deshacer el intento frenado (hueco de $maxGapMs ms)" }
+            SystemClock.sleep(300)
+        }
+        return stalls
+    }
+
+    private fun pageIds(): List<String> {
+        var ids = emptyList<String>()
+        val v = view()
+        instrumentation.runOnMainSync { ids = v.controller!!.page.strokes.map { it.id } }
+        return ids
+    }
+
     fun liftAt(docX: Float, docY: Float) {
         val (x, y) = toScreen(listOf(docX to docY)).single()
         // Tras recrear la ventana, el sistema puede descartar un UP sin DOWN: no es un error.

@@ -151,7 +151,7 @@ private class DemoSession(private val app: TrazoApp, title: String) : AutoClosea
     /** Escribe con la mano simulada (recorridos de HandScript, solo en pruebas). */
     fun write(text: String, x: Float, y: Float, size: Float): Float {
         val (paths, end) = HandScript.write(text, x, y, size, seed = text.hashCode())
-        for (p in paths) { pen.stroke(p, sampleMs = 6); SystemClock.sleep(90) }
+        for (p in paths) { pen.freeStroke(p, sampleMs = 6); SystemClock.sleep(90) }
         return end
     }
 

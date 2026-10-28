@@ -100,8 +100,10 @@ class EditorInstrumentedTest {
     }
 
     @Test fun t01_freeDrawingCreatesAStrokeWithSamples() {
-        pen.stroke(listOf(150f to 300f, 400f to 360f, 600f to 320f))
-        val s = strokes().single()
+        val stalls = pen.freeStroke(listOf(150f to 300f, 400f to 360f, 600f to 320f))
+        val all = strokes()
+        assertEquals("un trazo libre: ${describe(all)}, hueco ${pen.maxGapMs} ms, intentos frenados $stalls", 1, all.size)
+        val s = all.single()
         assertTrue(s.points.size > 20)
         assertNull(s.patternId)
         assertTrue(s.points.zipWithNext().all { (a, b) -> b.timeMs >= a.timeMs })
