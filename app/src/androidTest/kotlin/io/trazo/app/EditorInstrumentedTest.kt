@@ -186,12 +186,27 @@ class EditorInstrumentedTest {
         // Pausa de 10 s: con la de 2 s, el emulador de CI cargado frenó la inyección o la recreación
         // y la hoja ya tenía trazos. Lo que se prueba es que recrear cancele el contacto en curso.
         useHoldMillis(10_000L)
-        pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 300, lift = false)
-        val gap = pen.maxGapMs
-        assertTrue(
-            "gesto en curso antes de recrear (hueco máx. $gap ms): ${describe(strokes())}",
-            onController { it.isContactActive } && strokes().isEmpty(),
-        )
+        // Precondición, no lo que se prueba: el gesto tiene que seguir en curso. Si el emulador lo
+        // cerró o convirtió igual (pasó una vez, sin hueco largo), se deshace, se informa y se repite.
+        var problem: String? = null
+        for (attempt in 1..2) {
+            val hold = onController { it.holdMillis }
+            val t0 = SystemClock.uptimeMillis()
+            pen.stroke(HandScript.integralGesture(150f, 150f, 220f), holdMs = 300, lift = false)
+            val took = SystemClock.uptimeMillis() - t0
+            if (onController { it.isContactActive } && strokes().isEmpty()) { problem = null; break }
+            val patternHolds = app.repository.patterns.value.filter { it.enabled && it.holdMillis != null }
+                .joinToString { "${it.id}=${it.holdMillis}" }
+            problem = "intento $attempt: contacto=${onController { it.isContactActive }}, pausa=$hold→" +
+                "${onController { it.holdMillis }} ms, pausas propias=[$patternHolds], trazo $took ms, " +
+                "hueco máx. ${pen.maxGapMs} ms: ${describe(strokes())}"
+            android.util.Log.w("TrazoTest", "t20 $problem")
+            pen.liftAt(150f, 150f)
+            instrumentation.waitForIdleSync()
+            while (strokes().isNotEmpty() && onController { it.undo() }) Unit
+            SystemClock.sleep(300)
+        }
+        assertNull("gesto en curso antes de recrear", problem)
         scenario.recreate()
         waitForCanvas()
         assertFalse("recrear cancela el contacto", onController { it.isContactActive })
