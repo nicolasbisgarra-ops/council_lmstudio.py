@@ -2,38 +2,25 @@
 
 io.trazo.app.GuiTourTest:.
 
-Time: 12.155
+Time: 10.639
 
 OK (1 test)
 
 
 -- telefono-horizontal: 2400x1080 @ 420 dpi
 
-io.trazo.app.GuiTourTest:
-Error in formFactor(io.trazo.app.GuiTourTest):
-java.lang.IllegalStateException: No apareció BySelector [TEXT='\QCálculo I\E']. En pantalla: Cuadernos [43,89][316,163] | 10 cuadernos [43,163][250,205] | Buscar [2211,116][2274,179] | Más opciones [2316,116][2379,179] | 6:02  [50,1][136,62] | Android System notification: Wi‑Fi will turn on automatically [136,1][194,62] | Android System notification:  [194,1][252,62] | Phone signal full. [2251,3][2290,61] | Battery charging, 100 percent. [2306,1][2326,62]
-	at io.trazo.app.GuiTourTest.find(GuiTourTest.kt:156)
-	at io.trazo.app.GuiTourTest.find$default(GuiTourTest.kt:155)
-	at io.trazo.app.GuiTourTest.formFactor(GuiTourTest.kt:143)
+io.trazo.app.GuiTourTest:.
 
+Time: 11.115
 
-Time: 14.881
-There was 1 failure:
-1) formFactor(io.trazo.app.GuiTourTest)
-java.lang.IllegalStateException: No apareció BySelector [TEXT='\QCálculo I\E']. En pantalla: Cuadernos [43,89][316,163] | 10 cuadernos [43,163][250,205] | Buscar [2211,116][2274,179] | Más opciones [2316,116][2379,179] | 6:02  [50,1][136,62] | Android System notification: Wi‑Fi will turn on automatically [136,1][194,62] | Android System notification:  [194,1][252,62] | Phone signal full. [2251,3][2290,61] | Battery charging, 100 percent. [2306,1][2326,62]
-	at io.trazo.app.GuiTourTest.find(GuiTourTest.kt:156)
-	at io.trazo.app.GuiTourTest.find$default(GuiTourTest.kt:155)
-	at io.trazo.app.GuiTourTest.formFactor(GuiTourTest.kt:143)
-
-FAILURES!!!
-Tests run: 1,  Failures: 1
+OK (1 test)
 
 
 -- tableta: 1600x2560 @ 320 dpi
 
 io.trazo.app.GuiTourTest:.
 
-Time: 12.365
+Time: 11.252
 
 OK (1 test)
 
@@ -42,7 +29,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 12.102
+Time: 10.09
 
 OK (1 test)
 
@@ -51,7 +38,7 @@ OK (1 test)
 
 io.trazo.app.GuiTourTest:.
 
-Time: 12.617
+Time: 11.01
 
 OK (1 test)
 
