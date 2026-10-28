@@ -51,7 +51,10 @@ class InkController(
 
     var tool: Tool = Tool.PEN
         set(value) {
-            if (field != value) { field = value; if (value != Tool.LASSO && value != Tool.PAN) clearSelection() }
+            if (field != value) {
+                field = value
+                if (value != Tool.LASSO && value != Tool.PAN) { clearSelection(); clearShapeSelection() }
+            }
         }
     var color: Int = DEFAULT_INK_COLOR
     var width: Float = DEFAULT_INK_WIDTH
@@ -86,7 +89,7 @@ class InkController(
     fun removeListener(l: (InkEvent) -> Unit) { listeners -= l }
     private fun emit(e: InkEvent) = listeners.toList().forEach { it(e) }
 
-    private enum class Mode { NONE, DRAW, CONSUMED, ERASE, STROKE_ERASE, LASSO_PATH, MOVE_SELECTION, SCALE_SELECTION, SHAPE }
+    private enum class Mode { NONE, DRAW, CONSUMED, ERASE, STROKE_ERASE, LASSO_PATH, MOVE_SELECTION, SCALE_SELECTION, SHAPE, SHAPE_HANDLE }
 
     private var mode = Mode.NONE
     private var kind = PointerKind.STYLUS
@@ -112,6 +115,8 @@ class InkController(
     private var eraseAdded = LinkedHashMap<String, InkStroke>()
     private var erasePositions = HashMap<String, Int>()
     private var eraseOriginalIndex: Map<String, Int> = emptyMap()
+    private var eraseRemovedShapes = LinkedHashMap<String, ParametricShape>()
+    private var eraseShapeIndex: Map<String, Int> = emptyMap()
     private var lastEraseX = 0f
     private var lastEraseY = 0f
 
@@ -124,6 +129,20 @@ class InkController(
     private var dragStartX = 0f
     private var dragStartY = 0f
     private var dragged = false
+
+    // Forma dinámica (paramétrica) seleccionada; excluye a [selection].
+    var selectedShapeId: String? = null
+        private set
+    val selectedShape: ParametricShape? get() = selectedShapeId?.let { page.findShape(it) }
+    /** Tiradores de la forma seleccionada, en documento. */
+    val shapeHandles: List<GeoHandle>
+        get() = selectedShape?.let { ParametricGeometry.draw(it).handles } ?: emptyList()
+    private var shapeOriginal: ParametricShape? = null
+    private var shapeHandleId = ""
+    private var shapeGrabOffset = GeoPoint(0f, 0f)
+    private var shapeDragged = false
+    /** Forma antes de una edición del inspector aún sin confirmar (sliders arrastrándose). */
+    private var pendingEditOriginal: ParametricShape? = null
 
     // Formas.
     private var shapeX0 = 0f
@@ -160,6 +179,8 @@ class InkController(
     fun attach(page: PageState, history: History) {
         cancel()
         clearSelection()
+        commitShapeEdit()
+        clearShapeSelection()
         this.page = page
         this.history = history
         emit(InkEvent.PageChanged)
@@ -184,6 +205,16 @@ class InkController(
         val effective = toolFor(kind)
         contactTool = effective
         dismissedSelection = false
+        commitShapeEdit()
+        // La forma dinámica seleccionada se arrastra por sus tiradores o su cuerpo; tocar fuera la suelta.
+        selectedShape?.let { s ->
+            if (effective == Tool.PAN) return@let
+            if (effective == Tool.PEN || effective == Tool.SHAPE || effective == Tool.LASSO) {
+                if (grabShape(s, x, y)) return
+                if (effective != Tool.LASSO) dismissedSelection = true
+            }
+            clearShapeSelection()
+        }
         // Una selección hecha (lazo del botón lateral, patrón recién insertado) también se arrastra
         // con la pluma o las formas; tocar fuera de ella la quita. Desplazar la hoja no la toca.
         if (selection.isNotEmpty() && effective != Tool.LASSO && effective != Tool.PAN) {
@@ -210,6 +241,8 @@ class InkController(
                 mode = if (effective == Tool.ERASER) Mode.ERASE else Mode.STROKE_ERASE
                 eraseRemoved = LinkedHashMap(); eraseAdded = LinkedHashMap(); erasePositions = HashMap()
                 eraseOriginalIndex = page.strokes.withIndex().associate { it.value.id to it.index }
+                eraseRemovedShapes = LinkedHashMap()
+                eraseShapeIndex = page.shapes.withIndex().associate { it.value.id to it.index }
                 lastEraseX = x; lastEraseY = y
                 eraseAt(x, y)
             }
@@ -260,6 +293,7 @@ class InkController(
             Mode.LASSO_PATH -> lassoPoints += InkPoint(x, y)
             Mode.MOVE_SELECTION, Mode.SCALE_SELECTION -> dragTo(x, y)
             Mode.SHAPE -> { shapeX1 = x; shapeY1 = y }
+            Mode.SHAPE_HANDLE -> dragShapeTo(x, y)
             Mode.CONSUMED, Mode.NONE -> Unit // tras convertir no se crea un trazo fantasma
         }
     }
@@ -281,13 +315,13 @@ class InkController(
             }
             Mode.ERASE, Mode.STROKE_ERASE -> {
                 penMove(x, y, pressure, timeMs)
-                val edit = StrokeEdit(eraseRemoved.values.toList(), eraseAdded.values.toList(), StrokeEdit.Kind.ERASE)
-                history.record(edit, erasePositions)
+                history.record(eraseEdit(), erasePositions)
                 resetContact()
             }
             Mode.LASSO_PATH -> {
                 lassoPoints += InkPoint(x, y)
                 selection = Lasso.select(page.strokes, lassoPoints).map { it.id }
+                if (selection.isEmpty()) lassoShape()?.let { selectedShapeId = it.id }
                 resetContact()
                 emit(InkEvent.SelectionChanged)
             }
@@ -310,6 +344,17 @@ class InkController(
                 }
                 resetContact()
             }
+            Mode.SHAPE_HANDLE -> {
+                dragShapeTo(x, y)
+                val orig = shapeOriginal
+                val final = orig?.let { page.findShape(it.id) }
+                if (shapeDragged && orig != null && final != null && final != orig) {
+                    history.record(shapeEdit(orig, final), emptyMap())
+                    emit(InkEvent.PageChanged)
+                }
+                resetContact()
+                emit(InkEvent.SelectionChanged)
+            }
             Mode.CONSUMED -> resetContact()
             Mode.NONE -> resetContact()
         }
@@ -320,12 +365,19 @@ class InkController(
         when (mode) {
             Mode.ERASE, Mode.STROKE_ERASE -> {
                 // Revierte el borrado parcial de este contacto.
-                val edit = StrokeEdit(eraseRemoved.values.toList(), eraseAdded.values.toList(), StrokeEdit.Kind.ERASE)
+                val edit = eraseEdit()
                 if (!edit.isEmpty) { page.revert(edit, erasePositions); emit(InkEvent.PageChanged) }
             }
             Mode.MOVE_SELECTION, Mode.SCALE_SELECTION -> if (dragged) {
                 page.apply(StrokeEdit(dragOriginals, dragOriginals, StrokeEdit.Kind.TRANSFORM))
                 emit(InkEvent.PageChanged)
+            }
+            Mode.SHAPE_HANDLE -> {
+                val orig = shapeOriginal
+                if (shapeDragged && orig != null) {
+                    page.apply(shapeEdit(orig, orig))
+                    emit(InkEvent.PageChanged)
+                }
             }
             else -> Unit
         }
@@ -382,12 +434,14 @@ class InkController(
     fun undo(): Boolean {
         if (mode != Mode.NONE) return false
         clearSelection()
+        clearShapeSelection()
         return (history.undo(page) != null).also { if (it) emit(InkEvent.PageChanged) }
     }
 
     fun redo(): Boolean {
         if (mode != Mode.NONE) return false
         clearSelection()
+        clearShapeSelection()
         return (history.redo(page) != null).also { if (it) emit(InkEvent.PageChanged) }
     }
 
@@ -431,6 +485,7 @@ class InkController(
     }
 
     fun select(ids: List<String>) {
+        if (ids.isNotEmpty()) clearShapeSelection()
         selection = ids.filter { page.contains(it) }
         emit(InkEvent.SelectionChanged)
     }
@@ -455,6 +510,7 @@ class InkController(
     /** Cambia el color de la selección en un solo paso deshacible (mismos ids, Kind.TRANSFORM). */
     fun recolorSelection(color: Int) {
         if (mode != Mode.NONE) return
+        selectedShape?.let { s -> if (s.color != color) editShape { it.copy(color = color) }; return }
         val strokes = selection.mapNotNull { page.find(it) }.filter { it.color != color }
         if (strokes.isEmpty()) return
         history.perform(page, StrokeEdit(strokes, strokes.map { it.copy(color = color) }, StrokeEdit.Kind.TRANSFORM))
@@ -466,6 +522,17 @@ class InkController(
         if (strokes.isEmpty()) return
         history.perform(page, StrokeEdit(strokes, emptyList(), StrokeEdit.Kind.DELETE))
         selection = emptyList()
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+    }
+
+    /** Vacía la página entera (trazos y formas) en un solo paso deshacible. */
+    fun clearPage() {
+        if (mode != Mode.NONE) return
+        commitShapeEdit()
+        val edit = StrokeEdit(page.strokes.toList(), emptyList(), StrokeEdit.Kind.CLEAR, removedShapes = page.shapes.toList())
+        if (edit.isEmpty) return
+        history.perform(page, edit)
+        selection = emptyList(); clearShapeSelection()
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
     }
 
@@ -498,7 +565,150 @@ class InkController(
         return Bounds(selection.right - r, selection.bottom - r, selection.right + r, selection.bottom + r)
     }
 
+    // ---------------------------------------------------------------- formas dinámicas
+
+    fun selectShape(id: String) {
+        if (mode != Mode.NONE || page.findShape(id) == null) return
+        commitShapeEdit()
+        clearSelection()
+        selectedShapeId = id
+        emit(InkEvent.SelectionChanged)
+    }
+
+    /** Suelta la forma seleccionada (confirmando antes una edición pendiente del inspector). */
+    fun clearShapeSelection() {
+        commitShapeEdit()
+        if (selectedShapeId != null) { selectedShapeId = null; emit(InkEvent.SelectionChanged) }
+    }
+
+    /** Inserta una forma dinámica centrada en (cx, cy) con el estilo actual y la deja seleccionada. */
+    fun insertParametric(kind: GeoKind, cx: Float, cy: Float, size: Float = 160f): ParametricShape? =
+        insertShape(ParametricTemplates.create(ids.next(), kind, GeoPoint(cx, cy), size, style))
+
+    /** Como [insertParametric], a partir de un patrón (geometría nativa si la hay; si no, FREEFORM escalable). */
+    fun insertParametricFrom(pattern: InkPattern, cx: Float, cy: Float, size: Float = 160f): ParametricShape? =
+        insertShape(ParametricTemplates.fromPattern(pattern, ids.next(), GeoPoint(cx, cy), size, style = style))
+
+    private fun insertShape(s: ParametricShape): ParametricShape? {
+        if (mode != Mode.NONE) return null
+        clearSelection()
+        clearShapeSelection()
+        history.perform(page, StrokeEdit(emptyList(), emptyList(), StrokeEdit.Kind.INSERT, addedShapes = listOf(s)))
+        selectedShapeId = s.id
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+        return s
+    }
+
+    /**
+     * Edita la forma seleccionada. Con [commit] = false se muestra en vivo sin historial (slider
+     * arrastrándose); el primer [commit] = true (o [commitShapeEdit]) registra todo como un solo paso.
+     */
+    fun editShape(commit: Boolean = true, f: (ParametricShape) -> ParametricShape): Boolean {
+        if (mode != Mode.NONE) return false
+        val cur = selectedShape ?: return false
+        val orig = pendingEditOriginal ?: cur
+        val next = f(cur)
+        if (next != cur) page.apply(shapeEdit(cur, next))
+        pendingEditOriginal = orig
+        if (commit) commitShapeEdit()
+        if (next != cur) emit(InkEvent.PageChanged)
+        return true
+    }
+
+    fun commitShapeEdit() {
+        val orig = pendingEditOriginal ?: return
+        pendingEditOriginal = null
+        val cur = page.findShape(orig.id) ?: return
+        if (cur != orig) { history.record(shapeEdit(orig, cur), emptyMap()); emit(InkEvent.PageChanged) }
+    }
+
+    /** Eje "x"/"w", "y"/"d", "z"/"h" o "r" (radio de esquina). */
+    fun setShapeDimension(axis: String, value: Float, commit: Boolean = true) =
+        editShape(commit) { ParametricGeometry.setDimension(it, axis, value) }
+
+    fun setShapeRotation(degrees: Float, commit: Boolean = true) =
+        editShape(commit) { ParametricGeometry.setRotation(it, degrees) }
+
+    fun deleteShape() {
+        if (mode != Mode.NONE) return
+        commitShapeEdit()
+        val s = selectedShape ?: return
+        history.perform(page, StrokeEdit(emptyList(), emptyList(), StrokeEdit.Kind.DELETE, removedShapes = listOf(s)))
+        selectedShapeId = null
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+    }
+
+    fun duplicateShape(dx: Float = 24f, dy: Float = 24f): ParametricShape? {
+        if (mode != Mode.NONE) return null
+        commitShapeEdit()
+        val s = selectedShape ?: return null
+        return insertShape(s.copy(id = ids.next(), origin = s.origin + GeoPoint(dx, dy)))
+    }
+
+    /** Fija la forma como tinta común (deja de ser editable por parámetros) en un solo paso; la tinta queda seleccionada. */
+    fun convertShapeToInk(): List<InkStroke> {
+        if (mode != Mode.NONE) return emptyList()
+        commitShapeEdit()
+        val s = selectedShape ?: return emptyList()
+        val ink = s.render(strokeClock(0L)).copiedWithNewIds(ids).map { it.copy(patternId = null) }
+        history.perform(page, StrokeEdit(emptyList(), ink, StrokeEdit.Kind.CONVERT, removedShapes = listOf(s)))
+        selectedShapeId = null
+        selection = ink.map { it.id }
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+        return ink
+    }
+
     // ---------------------------------------------------------------- interno
+
+    private fun shapeEdit(from: ParametricShape, to: ParametricShape) =
+        StrokeEdit(emptyList(), emptyList(), StrokeEdit.Kind.TRANSFORM, removedShapes = listOf(from), addedShapes = listOf(to))
+
+    private fun eraseEdit() = StrokeEdit(
+        eraseRemoved.values.toList(), eraseAdded.values.toList(), StrokeEdit.Kind.ERASE,
+        removedShapes = eraseRemovedShapes.values.toList(),
+    )
+
+    /** Toma la forma por un tirador o por su cuerpo. */
+    private fun grabShape(s: ParametricShape, x: Float, y: Float): Boolean {
+        val p = GeoPoint(x, y)
+        val h = ParametricGeometry.nearestHandle(s, p, handleRadiusPx / pxPerUnit)
+        shapeHandleId = when {
+            h != null -> h.id
+            ParametricGeometry.distanceTo(s, p) <= 12f / pxPerUnit || s.bounds.contains(x, y) -> "move"
+            else -> return false
+        }
+        mode = Mode.SHAPE_HANDLE
+        shapeOriginal = s
+        shapeGrabOffset = p - s.origin
+        shapeDragged = false
+        dragStartX = x; dragStartY = y
+        return true
+    }
+
+    private fun dragShapeTo(x: Float, y: Float) {
+        val orig = shapeOriginal ?: return
+        if (!shapeDragged && hypot(x - dragStartX, y - dragStartY) * pxPerUnit < 3f) return
+        val cur = page.findShape(orig.id) ?: return
+        shapeDragged = true
+        val p = GeoPoint(x, y)
+        // Siempre desde el original: los tiradores relativos (rotar) no acumulan error.
+        val edited = ParametricGeometry.editHandle(orig, shapeHandleId, if (shapeHandleId == "move") p - shapeGrabOffset else p)
+        if (edited == cur) return
+        page.apply(shapeEdit(cur, edited))
+        emit(InkEvent.PageChanged)
+    }
+
+    /** Forma que elige un lazo sin trazos: un toque sobre ella, o la de encima cuyo centro quedó dentro. */
+    private fun lassoShape(): ParametricShape? {
+        if (lassoPoints.isEmpty()) return null
+        val lb = Bounds.of(lassoPoints)
+        return if (lb.maxSide * pxPerUnit < 12f) {
+            val p = GeoPoint(lb.centerX, lb.centerY)
+            page.shapes.lastOrNull { ParametricGeometry.distanceTo(it, p) <= 12f / pxPerUnit || it.bounds.contains(p.x, p.y) }
+        } else {
+            page.shapes.lastOrNull { val b = it.bounds; Lasso.contains(lassoPoints, b.centerX, b.centerY) }
+        }
+    }
 
     private fun recognize(pats: List<InkPattern>): Recognition {
         val full = currentStroke()
@@ -576,6 +786,14 @@ class InkController(
             pieces.forEach { eraseAdded[it.id] = it }
             changed = true
         }
+        // Las formas dinámicas se borran enteras (siguen siendo un objeto).
+        page.shapes.filter { ParametricGeometry.distanceTo(it, GeoPoint(x, y)) <= r + it.inkWidth / 2f }.forEach { sh ->
+            page.apply(StrokeEdit(emptyList(), emptyList(), StrokeEdit.Kind.ERASE, removedShapes = listOf(sh)))
+            eraseRemovedShapes[sh.id] = sh
+            eraseShapeIndex[sh.id]?.let { erasePositions[PageState.SHAPE_KEY + sh.id] = it }
+            if (selectedShapeId == sh.id) { selectedShapeId = null; emit(InkEvent.SelectionChanged) }
+            changed = true
+        }
         if (changed) emit(InkEvent.PageChanged)
     }
 
@@ -625,6 +843,8 @@ class InkController(
         dragBounds = null
         contactTool = null
         dismissedSelection = false
+        shapeOriginal = null
+        shapeDragged = false
     }
 
     private fun normalizePressure(p: Float, kind: PointerKind): Float = when {

@@ -16,6 +16,7 @@ import io.trazo.app.data.TrazoSettings
 import io.trazo.app.ink.Viewport
 import io.trazo.app.trazo
 import io.trazo.core.Brush
+import io.trazo.core.GeoKind
 import io.trazo.core.History
 import io.trazo.core.IdGenerator
 import io.trazo.core.InkController
@@ -25,6 +26,7 @@ import io.trazo.core.Notebook
 import io.trazo.core.Page
 import io.trazo.core.PageState
 import io.trazo.core.Paper
+import io.trazo.core.ParametricShape
 import io.trazo.core.Tool
 import io.trazo.core.withGestureExample
 import io.trazo.core.withPageDuplicated
@@ -69,6 +71,9 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     var teaching by mutableStateOf<InkEvent.NotRecognized?>(null)
     var hasSelection by mutableStateOf(false)
         private set
+    /** Id de la forma dinámica elegida (null si no hay); dispara el inspector. */
+    var shapeSelected by mutableStateOf<String?>(null)
+        private set
     /** Cambia cuando se pide volver a encajar la hoja; la vista lo observa. */
     var fitRequest by mutableIntStateOf(0)
         private set
@@ -88,7 +93,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         addListener { e ->
             when (e) {
                 InkEvent.PageChanged -> { revision++; if (!attaching) markDirty() }
-                InkEvent.SelectionChanged -> hasSelection = selection.isNotEmpty()
+                InkEvent.SelectionChanged -> { hasSelection = selection.isNotEmpty(); shapeSelected = selectedShapeId }
                 is InkEvent.Converted -> lastConversion = e
                 is InkEvent.Ambiguous -> ambiguous = e
                 is InkEvent.NotRecognized -> teachOffer = e
@@ -165,7 +170,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private fun attachPage(index: Int) {
         val n = notebook ?: return
         val page = n.pages[index]
-        val (state, history) = pages.getOrPut(page.id) { PageState(page.strokes) to History() }
+        val (state, history) = pages.getOrPut(page.id) { PageState(page.strokes, page.parametricShapes) to History() }
         pageIndex = index
         attaching = true
         try {
@@ -234,12 +239,9 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     }
 
     /** Borra toda la página de una vez (se puede deshacer). */
-    fun clearPage() {
-        controller.selectAll()
-        controller.deleteSelection()
-    }
+    fun clearPage() { controller.clearPage() }
 
-    val pageIsEmpty: Boolean get() { revision; return controller.page.strokes.isEmpty() }
+    val pageIsEmpty: Boolean get() { revision; return controller.page.strokes.isEmpty() && controller.page.shapes.isEmpty() }
 
     fun duplicatePage() {
         val n = syncNotebook() ?: return
@@ -278,6 +280,29 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         controller.insertPattern(pattern, cx, cy, 140f, android.os.SystemClock.uptimeMillis())
     }
 
+    // ---------------------------------------------------------------- formas dinámicas
+
+    val selectedShape: ParametricShape? get() { revision; shapeSelected; return controller.selectedShape }
+
+    /** Tamaño en px del lienzo; lo informa la pantalla para centrar lo que se inserta. */
+    var viewSize = 0 to 0
+
+    /** Inserta una forma dinámica en el centro de la zona visible, ya seleccionada para editar. */
+    fun insertParametric(kind: GeoKind, viewWidth: Int = viewSize.first, viewHeight: Int = viewSize.second) {
+        val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
+        val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(100f, Notebook.PAGE_WIDTH - 100f)
+        val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(100f, Notebook.PAGE_HEIGHT - 100f)
+        controller.insertParametric(kind, cx, cy, 160f)
+    }
+
+    fun setShapeDimension(axis: String, value: Float, commit: Boolean = false) { controller.setShapeDimension(axis, value, commit) }
+    fun setShapeRotation(degrees: Float, commit: Boolean = false) { controller.setShapeRotation(degrees, commit) }
+    fun commitShapeEdit() = controller.commitShapeEdit()
+    fun deleteShape() = controller.deleteShape()
+    fun duplicateShape() { controller.duplicateShape() }
+    fun convertShapeToInk() { controller.convertShapeToInk() }
+    fun clearShapeSelection() = controller.clearShapeSelection()
+
     fun fitToPage() {
         viewport.scale = 0f
         fitRequest++
@@ -305,7 +330,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private fun syncNotebook(): Notebook? {
         val n = notebook ?: return null
         val updated = n.copy(
-            pages = n.pages.map { p -> pages[p.id]?.let { p.copy(strokes = it.first.strokes.toList()) } ?: p },
+            pages = n.pages.map { p -> pages[p.id]?.let { p.copy(strokes = it.first.strokes.toList(), parametricShapes = it.first.shapes.toList()) } ?: p },
             updatedAt = System.currentTimeMillis(),
         )
         notebook = updated

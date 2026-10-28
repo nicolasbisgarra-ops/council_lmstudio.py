@@ -540,6 +540,17 @@ class InkCanvasView @JvmOverloads constructor(
             canvas.drawRect(b.left - 6f, b.top - 6f, b.right + 6f, b.bottom + 6f, lassoPaint)
             canvas.drawCircle(b.right, b.bottom, 9f * density / pxPerUnit, handlePaint)
         }
+        // Forma dinámica elegida: marco punteado y un tirador por medida editable.
+        c.selectedShape?.let { s ->
+            val b = s.bounds
+            lassoPaint.strokeWidth = 1.5f * density / pxPerUnit
+            canvas.drawRect(b.left - 6f, b.top - 6f, b.right + 6f, b.bottom + 6f, lassoPaint)
+            val r = 7f * density / pxPerUnit
+            c.shapeHandles.forEach { h ->
+                canvas.drawCircle(h.at.x, h.at.y, r, handlePaint)
+                canvas.drawCircle(h.at.x, h.at.y, r, lassoPaint)
+            }
+        }
         canvas.restore()
 
         // Contorno de la goma: mientras borra y mientras el lápiz se acerca con una herramienta de borrar.
@@ -581,7 +592,7 @@ class InkCanvasView @JvmOverloads constructor(
             cc.concat(docToScreen)
             if (mode == Mode.NOTEBOOK && paperColors.shadow != 0) cc.drawRect(4f, 6f, pageWidth + 4f, pageHeight + 6f, shadowPaint)
             PaperPainter.draw(cc, paper, pageWidth, pageHeight, paperColors)
-            c?.page?.strokes?.let { StrokePainter.drawAll(cc, it, paperColors.dark) }
+            c?.page?.allInk?.let { StrokePainter.drawAll(cc, it, paperColors.dark) }
             cc.restore()
             System.arraycopy(currentMatrixValues, 0, cacheMatrixValues, 0, 9)
             cacheVersion = version

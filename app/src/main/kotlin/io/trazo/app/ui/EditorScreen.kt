@@ -215,7 +215,7 @@ fun EditorScreen(
             // En tablet los patrones quedan en un panel lateral; en teléfono, en la hoja inferior.
             val wide = maxWidth >= 840.dp
             Row(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { canvasSize = it.width to it.height }) {
+                Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
                     AndroidView(
                         factory = { ctx ->
                             InkCanvasView(ctx).apply {
@@ -241,6 +241,9 @@ fun EditorScreen(
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
+                    vm.selectedShape?.let { shape ->
+                        ShapeInspector(vm, shape, Modifier.align(Alignment.BottomCenter).padding(16.dp))
+                    }
                     if (vm.hasSelection) {
                         SelectionPill(
                             vm,

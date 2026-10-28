@@ -277,7 +277,7 @@ private fun NotebookCard(
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.fillMaxWidth().aspectRatio(Notebook.PAGE_WIDTH / Notebook.PAGE_HEIGHT).shadow(4.dp, RoundedCornerShape(10.dp)),
         ) {
-            PageThumbnail(nb.firstPage.strokes, nb.paper, colors, Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
+            PageThumbnail(nb.firstPage.allInk, nb.paper, colors, Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
         }
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
             // El nombre también abre el cuaderno, no solo la miniatura.

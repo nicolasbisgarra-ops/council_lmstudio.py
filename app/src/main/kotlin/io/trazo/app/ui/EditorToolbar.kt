@@ -1,5 +1,10 @@
 package io.trazo.app.ui
 
+import androidx.compose.foundation.verticalScroll
+import io.trazo.core.GeoKind
+import io.trazo.core.ParametricGeometry
+import io.trazo.core.ParametricShape
+import kotlin.math.roundToInt
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -244,7 +249,7 @@ private fun ToolsGroup(
                         BarPanel.HIGHLIGHTER -> HighlighterPanel(settings, update, actions)
                         BarPanel.ERASER -> EraserPanel(settings, update, onClear = { setPanel(null); actions.onClearPage() })
                         BarPanel.LASSO -> LassoPanel(onSelectAll = { setPanel(null); vm.selectAll() })
-                        BarPanel.SHAPE -> ShapePanel(settings, update)
+                        BarPanel.SHAPE -> ShapePanel(settings, update, onInsert = { k -> setPanel(null); vm.insertParametric(k) })
                         BarPanel.PAPER -> Unit
                     }
                 }
@@ -394,8 +399,13 @@ private val ShapeOptions = listOf(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ShapePanel(settings: TrazoSettings, update: ((TrazoSettings) -> TrazoSettings) -> Unit) {
+private fun ShapePanel(
+    settings: TrazoSettings,
+    update: ((TrazoSettings) -> TrazoSettings) -> Unit,
+    onInsert: (GeoKind) -> Unit,
+) {
     ToolPanel("Formas") {
+        SectionLabel("Trazar a mano")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             ShapeOptions.forEach { (kind, icon, label) ->
                 ChoiceChip(
@@ -405,6 +415,77 @@ private fun ShapePanel(settings: TrazoSettings, update: ((TrazoSettings) -> Traz
             }
         }
         Hint("Arrastrá desde un extremo hasta el otro. Usan el color y el grosor de la pluma.")
+        SectionLabel("Dinámicas (medidas editables)")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            GeoKind.entries.filter { it != GeoKind.FREEFORM }.forEach { kind ->
+                ChoiceChip(geoKindName(kind), false, onClick = { onInsert(kind) })
+            }
+        }
+        Hint("Se insertan en el centro. Tocá una para cambiar ancho, alto, profundidad o giro; el lazo también las elige.")
+    }
+}
+
+fun geoKindName(kind: GeoKind): String = when (kind) {
+    GeoKind.CIRCLE -> "Círculo"
+    GeoKind.ELLIPSE -> "Elipse"
+    GeoKind.RECTANGLE -> "Rectángulo"
+    GeoKind.SQUARE -> "Cuadrado"
+    GeoKind.ROUNDED_RECTANGLE -> "Rect. redondeado"
+    GeoKind.CAPSULE -> "Cápsula"
+    GeoKind.TRIANGLE -> "Triángulo"
+    GeoKind.DIAMOND -> "Rombo"
+    GeoKind.HEXAGON -> "Hexágono"
+    GeoKind.PENTAGON -> "Pentágono"
+    GeoKind.PARALLELOGRAM -> "Paralelogramo"
+    GeoKind.AXES_R2 -> "Ejes R²"
+    GeoKind.AXES_R3 -> "Ejes R³"
+    GeoKind.CUBOID -> "Cubo"
+    GeoKind.CYLINDER -> "Cilindro"
+    GeoKind.CONE -> "Cono"
+    GeoKind.SPHERE -> "Esfera"
+    GeoKind.VECTOR -> "Vector"
+    GeoKind.FREEFORM -> "Forma libre"
+}
+
+/** Tarjeta para editar la forma dinámica elegida: cada medida por separado, en vivo y deshacible en un paso. */
+@Composable
+fun ShapeInspector(vm: EditorViewModel, shape: ParametricShape, modifier: Modifier = Modifier) {
+    val uniform = shape.kind == GeoKind.CIRCLE || shape.kind == GeoKind.SQUARE || shape.kind == GeoKind.SPHERE
+    val hasDepth = shape.kind == GeoKind.CUBOID || shape.kind == GeoKind.AXES_R3
+    val range = ParametricGeometry.MIN_SIZE..600f
+    val done = { vm.commitShapeEdit() }
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 6.dp,
+        modifier = modifier.widthIn(max = 420.dp),
+    ) {
+        Column(Modifier.verticalScroll(rememberScrollState()).heightIn(max = 360.dp).padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(shape.displayName ?: geoKindName(shape.kind), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                ToolButton(TrazoIcons.Duplicate, "Duplicar", onClick = vm::duplicateShape)
+                ToolButton(Icons.Filled.Delete, "Eliminar", onClick = vm::deleteShape)
+                ToolButton(Icons.Filled.Close, "Listo", onClick = vm::clearShapeSelection)
+            }
+            fun units(v: Float) = "${v.roundToInt()}"
+            if (uniform) {
+                LabeledSlider("Tamaño", units(shape.width), shape.width, range, { vm.setShapeDimension("x", it) }, onChangeFinished = done)
+            } else {
+                LabeledSlider("Ancho (X)", units(shape.width), shape.width, range, { vm.setShapeDimension("x", it) }, onChangeFinished = done)
+                LabeledSlider("Alto (Z)", units(shape.height), shape.height, range, { vm.setShapeDimension("z", it) }, onChangeFinished = done)
+            }
+            if (hasDepth) {
+                LabeledSlider("Profundidad (Y)", units(shape.depth), shape.depth, range, { vm.setShapeDimension("y", it) }, onChangeFinished = done)
+            }
+            if (shape.kind == GeoKind.ROUNDED_RECTANGLE) {
+                val maxR = (minOf(shape.width, shape.height) / 2f).coerceAtLeast(1f)
+                LabeledSlider("Radio de esquina", units(shape.cornerRadius), shape.cornerRadius, 0f..maxR, { vm.setShapeDimension("r", it) }, onChangeFinished = done)
+            }
+            if (!shape.kind.isProjected) {
+                LabeledSlider("Giro", "${shape.rotationDegrees.roundToInt()}°", shape.rotationDegrees, -180f..180f, { vm.setShapeRotation(it) }, onChangeFinished = done)
+            }
+            TextButton(onClick = vm::convertShapeToInk) { Text("Convertir en tinta") }
+        }
     }
 }
 

@@ -17,7 +17,16 @@ import java.util.zip.ZipOutputStream
 enum class Paper { PLAIN, LINES, GRID, DOTS }
 
 @Serializable
-data class Page(val id: String, val strokes: List<InkStroke> = emptyList())
+data class Page(
+    val id: String,
+    val strokes: List<InkStroke> = emptyList(),
+    /** Formas paramétricas editables; su tinta se deriva al dibujar ([allInk]). */
+    val parametricShapes: List<ParametricShape> = emptyList(),
+) {
+    /** Trazos más la tinta de las formas, en orden de dibujo. */
+    val allInk: List<InkStroke>
+        get() = if (parametricShapes.isEmpty()) strokes else strokes + parametricShapes.flatMap { it.render() }
+}
 
 /** Cuaderno: la fuente de verdad son los trazos; nunca se guarda solo como imagen. */
 @Serializable
@@ -50,7 +59,7 @@ fun Notebook.withPageRemoved(index: Int): Notebook {
 fun Notebook.withPageDuplicated(index: Int, ids: IdGenerator = IdGenerator.RANDOM): Notebook {
     require(index in pages.indices) { "No page $index" }
     val src = pages[index]
-    val copy = Page(ids.next(), src.strokes.copiedWithNewIds(ids))
+    val copy = Page(ids.next(), src.strokes.copiedWithNewIds(ids), src.parametricShapes.map { it.copy(id = ids.next()) })
     return copy(pages = pages.toMutableList().apply { add(index + 1, copy) })
 }
 

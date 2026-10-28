@@ -239,6 +239,7 @@ fun LabeledSlider(
     onChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
     steps: Int = 0,
+    onChangeFinished: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier) {
@@ -249,6 +250,7 @@ fun LabeledSlider(
         Slider(
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = onChange,
+            onValueChangeFinished = onChangeFinished,
             valueRange = range,
             steps = steps,
             colors = SliderDefaults.colors(inactiveTrackColor = scheme.primaryContainer),
