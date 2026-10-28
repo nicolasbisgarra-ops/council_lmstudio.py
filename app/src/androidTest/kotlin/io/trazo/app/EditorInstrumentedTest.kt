@@ -193,9 +193,10 @@ class EditorInstrumentedTest {
     }
 
     @Test fun t20_recreatingDuringAGestureCancelsSafely() {
-        // Pausa de 10 s: con la de 2 s, el emulador de CI cargado frenó la inyección o la recreación
-        // y la hoja ya tenía trazos. Lo que se prueba es que recrear cancele el contacto en curso.
-        useHoldMillis(10_000L)
+        // Pausa de 60 s: con 2 s y con 10 s, el emulador de CI cargado frenó el hilo principal lo
+        // suficiente para que la pausa se cumpliera antes de que llegara la recreación (run 50).
+        // Lo que se prueba es que recrear cancele el contacto en curso, no cuánto tarda el emulador.
+        useHoldMillis(60_000L)
         // Precondición, no lo que se prueba: el gesto tiene que seguir en curso. Si el emulador lo
         // cerró o convirtió igual (pasó en CI, sin hueco largo), se limpia la hoja, se informa con los
         // eventos del controlador y se repite.
@@ -235,12 +236,24 @@ class EditorInstrumentedTest {
             pen.liftAt(150f, 150f)
         }
         assertNull("gesto en curso antes de recrear (${problems.joinToString(" | ")})", problem)
+        // Eventos del controlador durante la recreación, para saber cuándo apareció un trazo si falla.
+        val t0 = SystemClock.uptimeMillis()
+        val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val listener: (InkEvent) -> Unit = { e ->
+            if (e is InkEvent.Converted) events += "Converted(${e.pattern.id}) a los ${SystemClock.uptimeMillis() - t0} ms"
+        }
+        onController { it.addListener(listener) }
         scenario.recreate()
+        val recreated = SystemClock.uptimeMillis() - t0
         waitForCanvas()
         assertFalse("recrear cancela el contacto", onController { it.isContactActive })
         pen.liftAt(150f, 150f)
         instrumentation.waitForIdleSync()
-        assertTrue("sin conversión ni trazo fantasma: ${describe(strokes())}", strokes().isEmpty())
+        onController { it.removeListener(listener) }
+        assertTrue(
+            "sin conversión ni trazo fantasma: ${describe(strokes())}, recreado a los $recreated ms, eventos=$events",
+            strokes().isEmpty(),
+        )
         // La hoja sigue funcionando después de recrear.
         pen.stroke(listOf(300f to 600f, 500f to 650f))
         assertEquals(1, strokes().size)
