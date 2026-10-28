@@ -23,8 +23,8 @@ import kotlin.math.sin
  * usuario manda y así nunca compiten.
  */
 object PresetPatterns {
-    /** Versión de la biblioteca de partida: 1 = núcleo; 2 = signos y patrones del usuario. */
-    const val VERSION = 2
+    /** Versión de la biblioteca de partida: 1 = núcleo; 2 = signos y patrones del usuario; 3 = formas ([GeoPatterns]). */
+    const val VERSION = 3
     const val PREFIX = "preset-"
 
     /** Puntaje entre ejemplos desde el que dos patrones se consideran confundibles. */
@@ -60,7 +60,8 @@ object PresetPatterns {
         return out
     }
 
-    fun isSign(p: InkPattern): Boolean = p.builtIn && p.id.startsWith(PREFIX)
+    /** Signos y formas de la biblioteca: ceden ante los patrones activos con los que chocan. */
+    fun isSign(p: InkPattern): Boolean = p.builtIn && (p.id.startsWith(PREFIX) || GeoPatterns.isGeo(p))
 
     /**
      * Restaura el núcleo tal como viene (al principio) y vuelve a agregar los signos que falten.
@@ -71,7 +72,7 @@ object PresetPatterns {
         val coreIds = core.mapTo(HashSet()) { it.id }
         val out = (core + existing.filterNot { it.id in coreIds }).toMutableList()
         val ids = out.mapTo(HashSet()) { it.id }
-        for (p in signsCache) {
+        for (p in signsCache + GeoPatterns.all()) {
             if (p.id in ids) continue
             out += yieldTo(p, out.filter { it.enabled }, matcher)
         }
@@ -131,7 +132,8 @@ object PresetPatterns {
 
     private val entries: List<Entry> by lazy {
         // Los patrones del usuario solo se instalan en una biblioteca nueva: si ya los tiene (o los borró) no vuelven.
-        coreWithUserExamples.map { Entry(it, 1) } + bundledUser.map { Entry(it, 1) } + signsCache.map { Entry(it, VERSION) }
+        coreWithUserExamples.map { Entry(it, 1) } + bundledUser.map { Entry(it, 1) } + signsCache.map { Entry(it, 2) } +
+            GeoPatterns.all().map { Entry(it, 3) }
     }
 
     /**

@@ -70,13 +70,13 @@ class PresetPatternsTest {
         assertEquals(lib.size, lib.map { it.id }.toSet().size)
     }
 
-    @Test fun `upgrading an existing library only adds the signs and keeps everything else as it was`() {
+    @Test fun `upgrading an existing library only adds the signs and shapes and keeps everything else as it was`() {
         val mine = bundled.first().copy(id = "mio", name = "Mío")
         val oldRoot = DefaultPatterns.root().copy(enabled = false)
         val existing = listOf(DefaultPatterns.integral(), mine, oldRoot)
         val lib = PresetPatterns.install(existing, 1)
         assertEquals(existing, lib.take(existing.size))
-        assertEquals(signs.map { it.id }, lib.drop(existing.size).map { it.id })
+        assertEquals(signs.map { it.id } + GeoPatterns.all().map { it.id }, lib.drop(existing.size).map { it.id })
         // La fracción que el usuario borró y sus patrones incluidos no vuelven en una actualización.
         assertTrue(lib.none { it.id == DefaultPatterns.FRACTION || it.id in bundled.map { b -> b.id } })
     }
@@ -100,7 +100,8 @@ class PresetPatternsTest {
         assertEquals(lib, PresetPatterns.install(lib, PresetPatterns.VERSION))
         val withoutPi = lib.filterNot { it.id == sign("pi").id }
         assertEquals(withoutPi, PresetPatterns.install(withoutPi, PresetPatterns.VERSION))
-        assertEquals(PresetPatterns.VERSION, PresetPatterns.since(sign("pi").id))
+        assertEquals(2, PresetPatterns.since(sign("pi").id))
+        assertEquals(3, PresetPatterns.since(GeoPatterns.PREFIX + "circulo"))
         assertEquals(1, PresetPatterns.since(DefaultPatterns.ROOT))
         assertEquals(null, PresetPatterns.since("mio"))
     }

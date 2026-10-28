@@ -458,6 +458,10 @@ class InkController(
     fun convertWith(pattern: InkPattern, gestureIds: List<String>, nowMs: Long = 0L): List<InkStroke>? {
         if (mode != Mode.NONE || gestureIds.isEmpty()) return null
         val gesture = strokesById(gestureIds.distinct()) ?: return null
+        shapeFor(pattern, gesture.bounds(), gesture.last().style)?.let { shape ->
+            if (selection.any { it in gestureIds }) clearSelection()
+            return convertToShape(pattern, 1f, gesture, shape)
+        }
         val start = strokeClock(if (nowMs != 0L) nowMs else gesture.last().endTime)
         val output = InkReplacement.place(pattern, gesture.bounds(), ids, start, style = gesture.last().style)
         history.perform(page, StrokeEdit(gesture, output, StrokeEdit.Kind.CONVERT))
@@ -724,6 +728,13 @@ class InkController(
 
     private fun convert(r: Recognition.Convert) {
         val anchorGesture = r.gesture.map { if (it.id == currentId) trimHold(it) else it }
+        val shape = shapeFor(r.match.pattern, anchorGesture.bounds(), contactStyle)
+        if (shape != null) {
+            convertToShape(r.match.pattern, r.match.score, r.gesture, shape)
+            mode = Mode.CONSUMED
+            points.clear()
+            return
+        }
         val output = InkReplacement.place(r.match.pattern, anchorGesture.bounds(), ids, strokeClock(downTime), style = contactStyle)
         // Un solo comando: deshacer restaura todo el gesto (incluido el trazo en curso).
         val edit = StrokeEdit(r.gesture, output, StrokeEdit.Kind.CONVERT)
@@ -732,6 +743,44 @@ class InkController(
         points.clear()
         emit(InkEvent.Converted(r.match.pattern, r.match.score, r.gesture, output))
         emit(InkEvent.PageChanged)
+    }
+
+    /**
+     * Forma editable para un preset de geometría ([ParametricTemplates.recommendedKindFor]) ajustada a [box]:
+     * las 2D toman el ancho y el alto del gesto; las proyectadas (ejes, sólidos, vector) escalan su lado mayor.
+     * Null si [pattern] no es de geometría.
+     */
+    private fun shapeFor(pattern: InkPattern, box: Bounds, style: InkStyle): ParametricShape? {
+        val kind = ParametricTemplates.recommendedKindFor(pattern.id) ?: return null
+        if (!pattern.id.startsWith(GeoPatterns.PREFIX)) return null
+        val side = box.maxSide.coerceAtLeast(ParametricGeometry.MIN_SIZE)
+        val center = GeoPoint(box.centerX, box.centerY)
+        var shape = ParametricTemplates.fromPattern(pattern, ids.next(), center, side, style = style)
+        shape = when {
+            kind.isProjected -> {
+                val k = side / shape.bounds.maxSide.coerceAtLeast(1f)
+                ParametricTemplates.fromPattern(pattern, shape.id, center, side * k, style = style)
+            }
+            kind == GeoKind.CIRCLE || kind == GeoKind.SQUARE || kind == GeoKind.SPHERE -> shape.copy(width = side, height = side)
+            else -> shape.copy(
+                width = box.width.coerceIn(ParametricGeometry.MIN_SIZE, ParametricGeometry.MAX_SIZE),
+                height = box.height.coerceIn(ParametricGeometry.MIN_SIZE, ParametricGeometry.MAX_SIZE),
+            )
+        }
+        val b = shape.bounds
+        return ParametricGeometry.translate(shape, shape.origin + GeoPoint(box.centerX - b.centerX, box.centerY - b.centerY))
+    }
+
+    /** Gesto → forma editable en un solo paso deshacible; la forma queda seleccionada. Devuelve su tinta. */
+    private fun convertToShape(pattern: InkPattern, score: Float, gesture: List<InkStroke>, shape: ParametricShape): List<InkStroke> {
+        clearShapeSelection()
+        history.perform(page, StrokeEdit(gesture, emptyList(), StrokeEdit.Kind.CONVERT, addedShapes = listOf(shape)))
+        selectedShapeId = shape.id
+        val ink = shape.render()
+        emit(InkEvent.Converted(pattern, score, gesture, ink))
+        emit(InkEvent.PageChanged)
+        emit(InkEvent.SelectionChanged)
+        return ink
     }
 
     /** Quita las muestras registradas durante la pausa (temblor) para que no deformen el reconocimiento. */

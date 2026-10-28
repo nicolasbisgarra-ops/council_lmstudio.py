@@ -125,9 +125,10 @@ object PatternCategory {
     const val SETS = "Conjuntos y lógica"
     const val ARROWS = "Flechas y geometría"
     const val LETTERS = "Letras y funciones"
+    const val SHAPES = "Formas"
     const val MINE = "Mis patrones"
 
-    val ORDER = listOf(MINE, NUMBERS, OPERATORS, GROUPING, CALCULUS, GREEK, SETS, ARROWS, LETTERS)
+    val ORDER = listOf(MINE, NUMBERS, OPERATORS, GROUPING, CALCULUS, GREEK, SETS, ARROWS, SHAPES, LETTERS)
 
     fun of(p: InkPattern): String = p.category ?: MINE
 }
