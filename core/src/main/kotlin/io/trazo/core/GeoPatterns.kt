@@ -13,6 +13,10 @@ object GeoPatterns {
 
     private class Spec(val slug: String, val name: String, val kind: GeoKind, val w: Float, val h: Float)
 
+    // Se instalan solo al pasar de la biblioteca 3 a la 4; no se reinstalan presets borrados en v3.
+    internal val V4_IDS: Set<String> = setOf("octagono", "trapecio", "estrella-5", "semicirculo", "arco", "flecha-doble")
+        .mapTo(linkedSetOf()) { PREFIX + it }
+
     private val specs = listOf(
         Spec("circulo", "Círculo", GeoKind.CIRCLE, 160f, 160f),
         Spec("elipse-h", "Elipse horizontal", GeoKind.ELLIPSE, 200f, 120f),
@@ -29,6 +33,13 @@ object GeoPatterns {
         Spec("paralelogramo", "Paralelogramo", GeoKind.PARALLELOGRAM, 220f, 130f),
         Spec("pentagono", "Pentágono", GeoKind.PENTAGON, 170f, 160f),
         Spec("hexagono", "Hexágono", GeoKind.HEXAGON, 180f, 160f),
+        // Tanda de prioridad A sin dependencia de la especificación pendiente en Drive.
+        Spec("octagono", "Octágono", GeoKind.OCTAGON, 180f, 180f),
+        Spec("trapecio", "Trapecio", GeoKind.TRAPEZOID, 210f, 140f),
+        Spec("estrella-5", "Estrella de cinco puntas", GeoKind.STAR_5, 180f, 180f),
+        Spec("semicirculo", "Semicírculo", GeoKind.SEMICIRCLE, 190f, 110f),
+        Spec("arco", "Arco", GeoKind.ARC, 190f, 110f),
+        Spec("flecha-doble", "Flecha doble", GeoKind.DOUBLE_ARROW, 200f, 80f),
         Spec("ejes-r2", "Ejes ℝ²", GeoKind.AXES_R2, 200f, 160f),
         Spec("ejes-r3", "Ejes ℝ³", GeoKind.AXES_R3, 0f, 0f),
         Spec("cubo", "Cubo", GeoKind.CUBOID, 0f, 0f),

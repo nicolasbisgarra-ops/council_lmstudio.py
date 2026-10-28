@@ -32,7 +32,9 @@ data class GeoPoint(val x: Float, val y: Float) {
 enum class GeoKind {
     CIRCLE, ELLIPSE, RECTANGLE, SQUARE, ROUNDED_RECTANGLE, CAPSULE,
     TRIANGLE, DIAMOND, HEXAGON, PENTAGON, PARALLELOGRAM,
-    AXES_R2, AXES_R3, CUBOID, CYLINDER, CONE, SPHERE, VECTOR, FREEFORM;
+    AXES_R2, AXES_R3, CUBOID, CYLINDER, CONE, SPHERE, VECTOR, FREEFORM,
+    // Se agregan al final para conservar la representación de todos los cuadernos anteriores.
+    OCTAGON, TRAPEZOID, STAR_5, SEMICIRCLE, ARC, DOUBLE_ARROW;
 
     /** Sus tiradores x/y/z son ejes proyectados (longitud y dirección), no ancho/alto. */
     val isProjected: Boolean get() = this == AXES_R3 || this == CUBOID || this == CYLINDER || this == CONE || this == VECTOR
@@ -63,6 +65,10 @@ data class ParametricShape(
     val color: Int = DEFAULT_INK_COLOR,
     val inkWidth: Float = DEFAULT_INK_WIDTH,
     val brush: Brush = Brush.PEN,
+    // Añadidos al final, sin alterar parámetros posicionales existentes. Defaults para cuadernos v3.
+    val trapezoidTopRatio: Float = 0.60f,
+    val starInnerRatio: Float = 0.43f,
+    val arcSweepDegrees: Float = 180f,
 ) {
     init {
         require(id.isNotBlank())
@@ -121,6 +127,11 @@ object ParametricGeometry {
         (0 until n).map { i ->
             val a = -PI.toFloat() / 2 + 2 * PI.toFloat() * i / n
             GeoPoint(w / 2f * cos(a), h / 2f * sin(a))
+        }
+    private fun arc(rx: Float, ry: Float, sweep: Float): List<GeoPoint> =
+        (0..48).map { i ->
+            val a = deg(180f + sweep * i / 48f)
+            GeoPoint(rx * cos(a), ry * sin(a))
         }
 
     /** Lleva un ángulo a (-180, 180]. */
@@ -203,6 +214,22 @@ object ParametricGeometry {
                     GeoKind.TRIANGLE -> polygon(3, w, ht)
                     GeoKind.PENTAGON -> polygon(5, w, ht)
                     GeoKind.HEXAGON -> polygon(6, w, ht)
+                    GeoKind.OCTAGON -> (0 until 8).map { i ->
+                        val a = -PI.toFloat() * 5f / 8f + i * PI.toFloat() / 4f
+                        GeoPoint(w / 2f * cos(a), ht / 2f * sin(a))
+                    }
+                    GeoKind.TRAPEZOID -> {
+                        val top = w * s.trapezoidTopRatio.coerceIn(.15f, .95f) / 2f
+                        listOf(GeoPoint(-top, -ht / 2f), GeoPoint(top, -ht / 2f),
+                            GeoPoint(w / 2f, ht / 2f), GeoPoint(-w / 2f, ht / 2f))
+                    }
+                    GeoKind.STAR_5 -> (0 until 10).map { i ->
+                        val a = -PI.toFloat() / 2f + i * PI.toFloat() / 5f
+                        val ratio = if (i % 2 == 0) 1f else s.starInnerRatio.coerceIn(.15f, .85f)
+                        GeoPoint(w / 2f * ratio * cos(a), ht / 2f * ratio * sin(a))
+                    }
+                    GeoKind.SEMICIRCLE -> arc(w / 2f, ht / 2f, 180f)
+                    GeoKind.ARC -> arc(w / 2f, ht / 2f, s.arcSweepDegrees.coerceIn(15f, 345f))
                     GeoKind.DIAMOND -> listOf(GeoPoint(0f, -ht / 2f), GeoPoint(w / 2f, 0f), GeoPoint(0f, ht / 2f), GeoPoint(-w / 2f, 0f))
                     GeoKind.PARALLELOGRAM -> listOf(GeoPoint(-w * .32f, -ht / 2f), GeoPoint(w * .5f, -ht / 2f), GeoPoint(w * .32f, ht / 2f), GeoPoint(-w * .5f, ht / 2f))
                     GeoKind.ROUNDED_RECTANGLE, GeoKind.CAPSULE -> {
@@ -233,6 +260,16 @@ object ParametricGeometry {
                     } else {
                         p += loop(listOf(local(s, -w / 2f, -ht / 2f), local(s, w / 2f, -ht / 2f), local(s, w / 2f, ht / 2f), local(s, -w / 2f, ht / 2f)))
                     }
+                } else if (s.kind == GeoKind.ARC) {
+                    // Un arco es abierto. El semicírculo, en cambio, cierra con su diámetro.
+                    p += GeoPath(localPoints.map { local(s, it.x, it.y) })
+                } else if (s.kind == GeoKind.DOUBLE_ARROW) {
+                    val wing = min(w * .22f, ht * .8f)
+                    // Un recorrido manuscrito continuo: no compite con preset-flecha-doble (tres trazos).
+                    addPath(p, local(s, -w / 2f + wing, -ht / 2f), local(s, -w / 2f, 0f),
+                        local(s, -w / 2f + wing, ht / 2f), local(s, -w / 2f, 0f),
+                        local(s, w / 2f, 0f), local(s, w / 2f - wing, -ht / 2f),
+                        local(s, w / 2f, 0f), local(s, w / 2f - wing, ht / 2f))
                 } else {
                     p += loop(localPoints.map { local(s, it.x, it.y) })
                 }
@@ -248,6 +285,16 @@ object ParametricGeometry {
                 if (!square) h += GeoHandle("h", local(s, 0f, -hh))
                 h += GeoHandle("rotate", local(s, 0f, -hh - 28f))
                 if (s.kind == GeoKind.ROUNDED_RECTANGLE) h += GeoHandle("r", local(s, w / 2f - s.cornerRadius.coerceIn(0f, min(w, ht) / 2f), -ht / 2f))
+                if (s.kind == GeoKind.TRAPEZOID) h += GeoHandle("top", local(s, w * s.trapezoidTopRatio / 2f, -ht / 2f))
+                if (s.kind == GeoKind.STAR_5) {
+                    // Primer vértice interior: el tirador sigue el dibujo aun con X/Y independientes.
+                    val a = -PI.toFloat() * 3f / 10f
+                    h += GeoHandle("r", local(s, w * s.starInnerRatio * cos(a) / 2f, ht * s.starInnerRatio * sin(a) / 2f))
+                }
+                if (s.kind == GeoKind.ARC) {
+                    val a = deg(180f + s.arcSweepDegrees.coerceIn(15f, 345f))
+                    h += GeoHandle("angle", local(s, w / 2f * cos(a), ht / 2f * sin(a)))
+                }
             }
         }
         return GeoDrawing(p, h, labels)
@@ -262,7 +309,11 @@ object ParametricGeometry {
             "x", "w" -> if (square) s.copy(width = v, height = v) else s.copy(width = v)
             "y", "d" -> s.copy(depth = v)
             "z", "h" -> if (square) s.copy(width = v, height = v) else s.copy(height = v)
-            "r" -> s.copy(cornerRadius = value.coerceIn(0f, min(s.width, s.height) / 2f))
+            "r" -> if (s.kind == GeoKind.STAR_5)
+                s.copy(starInnerRatio = (value / (min(s.width, s.height) / 2f)).coerceIn(.15f, .85f))
+                else s.copy(cornerRadius = value.coerceIn(0f, min(s.width, s.height) / 2f))
+            "top" -> if (s.kind == GeoKind.TRAPEZOID) s.copy(trapezoidTopRatio = (value / s.width).coerceIn(.15f, .95f)) else s
+            "angle" -> if (s.kind == GeoKind.ARC) s.copy(arcSweepDegrees = value.coerceIn(15f, 345f)) else s
             else -> s
         }
     }
@@ -307,7 +358,19 @@ object ParametricGeometry {
         return when (handle) {
             "w" -> setDimension(s, "w", abs(relative.x) * 2f)
             "h" -> setDimension(s, "h", abs(relative.y) * 2f)
-            "r" -> setDimension(s, "r", s.width / 2f - relative.x)
+            "r" -> if (s.kind == GeoKind.STAR_5) {
+                // Cociente radial respecto de la elipse envolvente: estable con ancho != alto.
+                val rx = relative.x / (s.width / 2f)
+                val ry = relative.y / (s.height / 2f)
+                s.copy(starInnerRatio = hypot(rx, ry).coerceIn(.15f, .85f))
+            } else setDimension(s, "r", s.width / 2f - relative.x)
+            "top" -> setDimension(s, "top", abs(relative.x) * 2f)
+            "angle" -> {
+                val a = atan2(relative.y / (s.height / 2f), relative.x / (s.width / 2f)) * 180f / PI.toFloat()
+                var sweep = (a - 180f) % 360f
+                if (sweep <= 0f) sweep += 360f
+                setDimension(s, "angle", sweep)
+            }
             // [relative] ya está desrotado: el giro se suma a la rotación actual.
             "rotate" -> if (relative.length() < 1f) s else setRotation(s, s.rotationDegrees + atan2(relative.x, -relative.y) * 180f / PI.toFloat())
             "x" -> setDimension(s, "w", abs(relative.x))
@@ -438,6 +501,12 @@ object ParametricTemplates {
         "paralelogramo" -> GeoKind.PARALLELOGRAM
         "pentagono" -> GeoKind.PENTAGON
         "hexagono" -> GeoKind.HEXAGON
+        "octagono" -> GeoKind.OCTAGON
+        "trapecio" -> GeoKind.TRAPEZOID
+        "estrella-5" -> GeoKind.STAR_5
+        "semicirculo" -> GeoKind.SEMICIRCLE
+        "arco" -> GeoKind.ARC
+        "flecha-doble" -> GeoKind.DOUBLE_ARROW
         "ejes-r2" -> GeoKind.AXES_R2
         "ejes-r3" -> GeoKind.AXES_R3
         "cubo" -> GeoKind.CUBOID
@@ -458,7 +527,10 @@ object ParametricTemplates {
             GeoKind.AXES_R3 -> Triple(sz * .8f, sz * .7f, sz * .6f)
             GeoKind.CYLINDER, GeoKind.CONE -> Triple(sz * .6f, sz * .8f, sz * .6f)
             GeoKind.VECTOR -> Triple(sz, sz * .1f, sz * .1f)
-            GeoKind.TRIANGLE, GeoKind.PENTAGON, GeoKind.HEXAGON, GeoKind.DIAMOND, GeoKind.SPHERE -> Triple(sz, sz * .9f, sz * .7f)
+            GeoKind.ARC, GeoKind.SEMICIRCLE -> Triple(sz, sz * .55f, sz * .7f)
+            GeoKind.DOUBLE_ARROW -> Triple(sz, sz * .38f, sz * .7f)
+            GeoKind.TRIANGLE, GeoKind.PENTAGON, GeoKind.HEXAGON, GeoKind.OCTAGON,
+            GeoKind.TRAPEZOID, GeoKind.STAR_5, GeoKind.DIAMOND, GeoKind.SPHERE -> Triple(sz, sz * .9f, sz * .7f)
             else -> Triple(sz, sz * .65f, sz * .7f)
         }
         return ParametricShape(

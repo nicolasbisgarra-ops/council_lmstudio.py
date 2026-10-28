@@ -18,7 +18,7 @@ class GeoShapesTest {
     private fun geo(slug: String) = GeoPatterns.all().first { it.id == GeoPatterns.PREFIX + slug }
 
     @Test fun `every geo preset maps to a native kind and renders`() {
-        assertEquals(22, GeoPatterns.all().size)
+        assertEquals(28, GeoPatterns.all().size)
         GeoPatterns.all().forEach { p ->
             assertNotNull(p.id, ParametricTemplates.recommendedKindFor(p.id))
             assertTrue(p.id, p.outputInk.isNotEmpty())
@@ -62,6 +62,6 @@ class GeoShapesTest {
     @Test fun `upgrading the library adds the shapes`() {
         val old = PresetPatterns.install(emptyList(), 0).filterNot { GeoPatterns.isGeo(it) }
         val upgraded = PresetPatterns.install(old, 2)
-        assertEquals(22, upgraded.count { GeoPatterns.isGeo(it) })
+        assertEquals(28, upgraded.count { GeoPatterns.isGeo(it) })
     }
 }

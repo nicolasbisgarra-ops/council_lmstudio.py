@@ -23,8 +23,8 @@ import kotlin.math.sin
  * usuario manda y así nunca compiten.
  */
 object PresetPatterns {
-    /** Versión de la biblioteca de partida: 1 = núcleo; 2 = signos y patrones del usuario; 3 = formas ([GeoPatterns]). */
-    const val VERSION = 3
+    /** Versión de biblioteca: 1 = núcleo; 2 = signos; 3 = geometría original; 4 = seis formas nuevas. */
+    const val VERSION = 4
     const val PREFIX = "preset-"
 
     /** Puntaje entre ejemplos desde el que dos patrones se consideran confundibles. */
@@ -133,7 +133,7 @@ object PresetPatterns {
     private val entries: List<Entry> by lazy {
         // Los patrones del usuario solo se instalan en una biblioteca nueva: si ya los tiene (o los borró) no vuelven.
         coreWithUserExamples.map { Entry(it, 1) } + bundledUser.map { Entry(it, 1) } + signsCache.map { Entry(it, 2) } +
-            GeoPatterns.all().map { Entry(it, 3) }
+            GeoPatterns.all().map { Entry(it, if (it.id in GeoPatterns.V4_IDS) 4 else 3) }
     }
 
     /**

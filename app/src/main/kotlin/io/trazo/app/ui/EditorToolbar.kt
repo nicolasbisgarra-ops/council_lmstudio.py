@@ -444,6 +444,12 @@ fun geoKindName(kind: GeoKind): String = when (kind) {
     GeoKind.CONE -> "Cono"
     GeoKind.SPHERE -> "Esfera"
     GeoKind.VECTOR -> "Vector"
+    GeoKind.OCTAGON -> "Octógono"
+    GeoKind.TRAPEZOID -> "Trapecio"
+    GeoKind.STAR_5 -> "Estrella"
+    GeoKind.SEMICIRCLE -> "Semicírculo"
+    GeoKind.ARC -> "Arco"
+    GeoKind.DOUBLE_ARROW -> "Flecha doble"
     GeoKind.FREEFORM -> "Forma libre"
 }
 
