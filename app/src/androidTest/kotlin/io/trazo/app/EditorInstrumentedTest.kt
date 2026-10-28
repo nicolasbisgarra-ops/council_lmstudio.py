@@ -203,8 +203,13 @@ class EditorInstrumentedTest {
             android.util.Log.w("TrazoTest", "t20 $problem")
             pen.liftAt(150f, 150f)
             instrumentation.waitForIdleSync()
-            while (strokes().isNotEmpty() && onController { it.undo() }) Unit
+            // El UP inyectado puede llegar después de la espera y cerrar el trazo más tarde: se espera
+            // a que termine el contacto antes de deshacer, para no arrastrar ese trazo al intento siguiente.
+            val liftDeadline = SystemClock.uptimeMillis() + 3_000
+            while (onController { it.isContactActive } && SystemClock.uptimeMillis() < liftDeadline) SystemClock.sleep(50)
             SystemClock.sleep(300)
+            instrumentation.waitForIdleSync()
+            while (strokes().isNotEmpty() && onController { it.undo() }) Unit
         }
         assertNull("gesto en curso antes de recrear", problem)
         scenario.recreate()
