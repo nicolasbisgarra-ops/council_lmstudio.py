@@ -20,9 +20,10 @@ git commit -q -m "$msg"
 # Lo que quede fuera de las rutas publicadas (evidencias de otro trabajo borradas al limpiar) no se
 # publica ni debe frenar el rebase.
 git reset -q --hard HEAD
-# Otra publicación (la de la compilación o un push nuevo) pudo adelantar la rama: se rebasa encima.
+# Otra publicación (la de la compilación, otro trabajo o un run anterior) pudo adelantar la rama: se
+# rebasa encima y, si tocó las mismas evidencias (capturas binarias, registros), gana la de este run.
 for i in 1 2 3 4; do
-  if git fetch -q origin "$branch" && git rebase -q FETCH_HEAD && git push -q origin "HEAD:refs/heads/$branch"; then
+  if git fetch -q origin "$branch" && git rebase -q -X theirs FETCH_HEAD && git push -q origin "HEAD:refs/heads/$branch"; then
     echo "Publicado en $branch: $(git rev-parse --short HEAD)"; exit 0
   fi
   git rebase --abort 2>/dev/null || true
