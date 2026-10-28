@@ -1,0 +1,10 @@
+source_sha=249d6ae8b3b520868718a70079143d1ca8bd8cdc
+run_id=40735256718
+run_attempt=1
+tests_started_at=2026-10-28T17:23:46Z
+tests_finished_at=2026-10-28T17:24:37Z
+task :core:testFixturesClasses UP-TO-DATE
+task :core:testFixturesJar
+task :core:testClasses UP-TO-DATE
+task :core:test
+task :app:testDebugUnitTest
