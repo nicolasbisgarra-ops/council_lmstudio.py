@@ -319,29 +319,30 @@ private fun PenPanel(settings: TrazoSettings, update: ((TrazoSettings) -> TrazoS
                 ChoiceChip(label, settings.brush == b, onClick = { update { it.copy(brush = b) } })
             }
         }
+        // Colores antes que el grosor: en pantallas bajas (teléfono acostado) el menú corta lo último.
+        SectionLabel("Color")
+        ColorGrid(PenPalette, settings.penColor, onPick = { c -> update { it.copy(penColor = c) } }, onCustom = { actions.onPickColor(ColorTarget.Pen) })
         BrushSample(settings.brush, settings.penColor, settings.penWidth, Modifier.fillMaxWidth().height(40.dp))
         LabeledSlider(
             "Grosor", "%.1f".format(settings.penWidth), settings.penWidth, 1f..12f,
             onChange = { w -> update { it.copy(penWidth = (w * 2f).toInt() / 2f) } },
         )
-        SectionLabel("Color")
-        ColorGrid(PenPalette, settings.penColor, onPick = { c -> update { it.copy(penColor = c) } }, onCustom = { actions.onPickColor(ColorTarget.Pen) })
     }
 }
 
 @Composable
 private fun HighlighterPanel(settings: TrazoSettings, update: ((TrazoSettings) -> TrazoSettings) -> Unit, actions: EditorActions) {
     ToolPanel("Resaltador") {
-        BrushSample(InkBrush.HIGHLIGHTER, settings.highlighterColor, settings.highlighterWidth, Modifier.fillMaxWidth().height(40.dp))
-        LabeledSlider(
-            "Grosor", "%.0f".format(settings.highlighterWidth), settings.highlighterWidth, 6f..30f,
-            onChange = { w -> update { it.copy(highlighterWidth = w.toInt().toFloat()) } },
-        )
         SectionLabel("Color")
         ColorGrid(
             HighlighterPalette, settings.highlighterColor,
             onPick = { c -> update { it.copy(highlighterColor = c) } },
             onCustom = { actions.onPickColor(ColorTarget.Highlighter) },
+        )
+        BrushSample(InkBrush.HIGHLIGHTER, settings.highlighterColor, settings.highlighterWidth, Modifier.fillMaxWidth().height(40.dp))
+        LabeledSlider(
+            "Grosor", "%.0f".format(settings.highlighterWidth), settings.highlighterWidth, 6f..30f,
+            onChange = { w -> update { it.copy(highlighterWidth = w.toInt().toFloat()) } },
         )
         Hint("El resaltador queda debajo de la tinta y nunca se toma como gesto.")
     }

@@ -43,7 +43,7 @@ jobs:
             echo "run_attempt=$GITHUB_RUN_ATTEMPT"
             echo "tests_started_at=$started"
             echo "tests_finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            grep -E '^> Task :(core:test|app:testDebugUnitTest)' jvm-tests.log | sed 's/^> Task /task /'
+            grep -E '^> Task :(core:test|app:testDebugUnitTest)( |$)' jvm-tests.log | sed 's/^> Task /task /'
           } | tee output/jvm-provenance.txt
           if grep -qE '^> Task :(core:test|app:testDebugUnitTest) (FROM-CACHE|UP-TO-DATE)' jvm-tests.log; then
             echo "Las pruebas JVM no se ejecutaron en este run" >&2; exit 1

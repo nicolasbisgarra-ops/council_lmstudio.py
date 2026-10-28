@@ -146,7 +146,9 @@ class GuiTourTest {
             find(By.desc("Pluma"))
             capture("trazo-formato-$name-2-editor")
             find(By.desc("Pluma")).click()
-            find(By.text("Grosor"))
+            // Los colores tienen que verse en todo formato; el grosor puede quedar abajo, deslizando.
+            find(By.text("Caligrafía"))
+            find(By.text("Color"))
             capture("trazo-formato-$name-3-pluma")
             device.pressBack()
         }
