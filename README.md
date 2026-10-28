@@ -19,7 +19,7 @@ App **nativa de Android** (Kotlin, Jetpack Compose + una `View` de tinta propia 
 - **Apariencia**: tema del sistema, claro, oscuro u OLED; ocho acentos de color o uno propio; hoja clara, oscura o según el tema (la tinta negra se aclara sobre la hoja oscura sin cambiar el archivo).
 - **Persistencia local offline** (JSON versionado, escritura atómica), autoguardado, **exportar/importar** `.trazo` (ZIP editable con cuaderno + patrones usados) y la **biblioteca de patrones** (JSON). Sin permisos de red.
 - **Compartir** el cuaderno como **PDF vectorial** o una página como **PNG** (solo exportación; el formato fuente sigue siendo de trazos).
-- En **tablet** los patrones quedan en un panel lateral; en teléfono, en una hoja inferior. Vibración breve al convertir, rechazo de palma también por tamaño de contacto, **toque con dos dedos = deshacer**.
+- En **tablet** los patrones quedan en un panel lateral; en teléfono, en una hoja inferior. Vibración breve al convertir, rechazo de palma también por tamaño de contacto, **toque con dos dedos = deshacer**, **toque con tres dedos = prender o apagar la detección automática de signos y letras**.
 
 ## Estructura
 

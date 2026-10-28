@@ -44,8 +44,9 @@ class Viewport {
  *    lateral usa la herramienta que se configuró (goma por defecto), también a mitad de un trazo.
  *    Los Galaxy antiguos mandan el botón como acciones propias (211–213), que se traducen igual.
  *  - Se consumen las muestras históricas de cada MOVE (S Pen reporta más rápido que el refresco).
- *  - Dedo: desplaza y hace zoom (dos dedos). Mientras el lápiz está apoyado o cerca, el dedo/palma
- *    se ignora. `ACTION_CANCEL` y `FLAG_CANCELED` descartan el trazo y nunca convierten.
+ *  - Dedo: desplaza y hace zoom (dos dedos); un toque con dos dedos deshace y con tres prende o
+ *    apaga la detección. Mientras el lápiz está apoyado o cerca, el dedo/palma se ignora.
+ *    `ACTION_CANCEL` y `FLAG_CANCELED` descartan el trazo y nunca convierten.
  *  - Con la herramienta mano ([Tool.PAN]) el lápiz y el ratón también desplazan la hoja.
  *  - La pausa de 1 s se comprueba con ticks en cada frame (`postOnAnimation`), nunca con sleep.
  *  - Tinta seca en un bitmap caché; tinta húmeda e indicador encima.
@@ -86,6 +87,8 @@ class InkCanvasView @JvmOverloads constructor(
     var hapticsEnabled = true
     /** Toque rápido con dos dedos (sin desplazar ni hacer zoom): por defecto, deshacer. */
     var onTwoFingerTap: (() -> Unit)? = null
+    /** Toque rápido con tres dedos: prende o apaga la detección automática de signos y letras. */
+    var onThreeFingerTap: (() -> Unit)? = null
     /** Colores de la hoja y del escritorio; en hoja oscura las tintas oscuras se ven claras. */
     var paperColors: PaperColors = PaperColors.LIGHT
         set(value) {
@@ -479,10 +482,11 @@ class InkCanvasView @JvmOverloads constructor(
         when (action) {
             MotionEvent.ACTION_DOWN -> { tapStartTime = event.eventTime; tapMaxPointers = 1; tapTravel = 0f; tapScaled = false }
             MotionEvent.ACTION_POINTER_DOWN -> tapMaxPointers = max(tapMaxPointers, event.pointerCount)
-            MotionEvent.ACTION_UP -> if (tapMaxPointers == 2 && !tapScaled && tapTravel < tapSlop * 2 &&
-                event.eventTime - tapStartTime < TWO_FINGER_TAP_MS
-            ) {
-                onTwoFingerTap?.invoke()
+            MotionEvent.ACTION_UP -> if (!tapScaled && tapTravel < tapSlop * 2 && event.eventTime - tapStartTime < MULTI_FINGER_TAP_MS) {
+                when (tapMaxPointers) {
+                    2 -> onTwoFingerTap?.invoke()
+                    3 -> onThreeFingerTap?.invoke()
+                }
             }
         }
         val skip = if (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) event.actionIndex else -1
@@ -606,7 +610,7 @@ class InkCanvasView @JvmOverloads constructor(
         private const val INVALID = -1
         private const val PALM_WINDOW_MS = 500L
         private const val FLAG_CANCELED = 0x20
-        private const val TWO_FINGER_TAP_MS = 300L
+        private const val MULTI_FINGER_TAP_MS = 300L
         /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
         private const val SPEN_ACTION_DOWN = 211
         private const val SPEN_ACTION_UP = 212

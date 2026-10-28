@@ -222,6 +222,17 @@ fun EditorScreen(
                                 viewport = vm.viewport
                                 controller = vm.controller
                                 onTwoFingerTap = vm::undo
+                                onThreeFingerTap = {
+                                    store.update { it.copy(gesturesEnabled = !it.gesturesEnabled) }
+                                    val on = store.settings.value.gesturesEnabled
+                                    scope.launch {
+                                        snackbar.currentSnackbarData?.dismiss()
+                                        snackbar.showSnackbar(
+                                            if (on) "Detección automática activada" else "Detección automática desactivada",
+                                            duration = SnackbarDuration.Short,
+                                        )
+                                    }
+                                }
                                 onViewportChanged = { vm.zoomPercent = this.zoomPercent }
                                 canvas.view = this
                             }
