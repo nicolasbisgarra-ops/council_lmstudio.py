@@ -79,8 +79,8 @@ class GuiTourTest {
             // La paleta de colores queda al final de la fila deslizable: se desliza hasta verla.
             val toolsY = find(By.desc("Pluma")).visibleBounds.centerY()
             scrollToolbarTo("Otro color", toolsY)
-            // Solo la paleta de la barra: al abrir el selector de color el emulador de CI se cae
-            // (con swiftshader y con render en el invitado), así que el recorrido no lo abre.
+            // El selector de color se abre en colorPicker(), que CI corre aparte: llegó a tumbar el
+            // emulador y así no se pierden las capturas del recorrido.
             shot("5-color")
 
             // Sigue en la misma fila.
@@ -111,6 +111,22 @@ class GuiTourTest {
             device.pressBack()
             find(By.text("Cálculo I"))
             shot("12-oscuro-cuadernos")
+        }
+    }
+
+    /** Abre el selector de color libre desde la barra, lo captura y elige un color. */
+    @Test fun colorPicker() {
+        app.settings.update { TrazoSettings() }
+        notebook("Colores", Paper.DOTS) { }
+        ActivityScenario.launch<MainActivity>(Intent(app, MainActivity::class.java)).use {
+            find(By.text("Colores")).click()
+            val toolsY = find(By.desc("Pluma")).visibleBounds.centerY()
+            scrollToolbarTo("Otro color", toolsY)
+            find(By.desc("Otro color")).click()
+            find(By.text("Usar"))
+            shot("13-selector-color")
+            find(By.text("Usar")).click()
+            find(By.desc("Pluma"))
         }
     }
 

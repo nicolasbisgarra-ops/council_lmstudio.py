@@ -1,5 +1,6 @@
 package io.trazo.app.ui
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -49,7 +50,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -62,6 +65,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import io.trazo.app.ink.InkLook
 import io.trazo.app.ink.StrokePainter
@@ -366,9 +370,9 @@ fun ColorPickerDialog(
                             }
                         },
                 ) {
+                    val square = remember(hue) { svSquare(hue) }
                     Canvas(Modifier.matchParentSize()) {
-                        drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(hue, 1f, 1f))))
-                        drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
+                        drawImage(square, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
                         val c = Offset(sat * size.width, (1f - value) * size.height)
                         drawCircle(Color.White, 9.dp.toPx(), c, style = Stroke(2.5.dp.toPx()))
                         drawCircle(Color.Black.copy(alpha = 0.4f), 10.5.dp.toPx(), c, style = Stroke(1.dp.toPx()))
@@ -388,8 +392,9 @@ fun ColorPickerDialog(
                             }
                         },
                 ) {
+                    val bar = remember { hueBar() }
                     Canvas(Modifier.matchParentSize()) {
-                        drawRect(Brush.horizontalGradient(HueStops))
+                        drawImage(bar, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
                         val x = hue / 360f * size.width
                         drawCircle(Color.White, size.height / 2f - 2.dp.toPx(), Offset(x, size.height / 2f), style = Stroke(2.5.dp.toPx()))
                     }
@@ -418,6 +423,24 @@ fun ColorPickerDialog(
         confirmButton = { TextButton(onClick = { onPick(color.toArgb()) }) { Text("Usar") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
     )
+}
+
+// El cuadro y la barra se pintan como mapas de bits calculados en la CPU: los degradados en
+// capas del cuadro tumbaban el emulador de las pruebas, y así el dibujo es igual en cualquier GPU.
+private const val SV_SIDE = 64
+
+private fun svSquare(hue: Float): ImageBitmap {
+    val px = IntArray(SV_SIDE * SV_SIDE)
+    for (y in 0 until SV_SIDE) {
+        val v = 1f - y / (SV_SIDE - 1f)
+        for (x in 0 until SV_SIDE) px[y * SV_SIDE + x] = Color.hsv(hue, x / (SV_SIDE - 1f), v).toArgb()
+    }
+    return Bitmap.createBitmap(px, SV_SIDE, SV_SIDE, Bitmap.Config.ARGB_8888).asImageBitmap()
+}
+
+private fun hueBar(): ImageBitmap {
+    val px = IntArray(360) { Color.hsv(it.toFloat(), 1f, 1f).toArgb() }
+    return Bitmap.createBitmap(px, 360, 1, Bitmap.Config.ARGB_8888).asImageBitmap()
 }
 
 /** Matiz (0..360), saturación y brillo (0..1) de un color ARGB. */

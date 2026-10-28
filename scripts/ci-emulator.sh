@@ -110,7 +110,7 @@ settle 1
 # El logcat corre en el host durante el recorrido: si el emulador se cae, la causa queda guardada.
 timeout 480 adb logcat -v time > "$OUT/logcat-interfaz.txt" 2>&1 &
 LOGCAT=$!
-timeout 420 adb shell am instrument -w -e class io.trazo.app.GuiTourTest "$RUNNER" | tee "$OUT/interfaz.txt"
+timeout 420 adb shell am instrument -w -e class io.trazo.app.GuiTourTest#tourOfTheInterface "$RUNNER" | tee "$OUT/interfaz.txt"
 kill $LOGCAT 2>/dev/null || true
 # Si el emulador se cae, cada `adb` queda «waiting for device» hasta que se cancela el job y no
 # se sube nada: de acá en adelante todo con tope y, sin dispositivo, se informa y se termina.
@@ -123,6 +123,23 @@ fi
 for f in $(timeout 20 adb shell ls /data/local/tmp 2>/dev/null | tr -d '\r' | grep -E '^trazo-gui-.*[.]png$'); do
   timeout 30 adb pull "/data/local/tmp/$f" "$OUT/$f" || true
 done
+
+# El selector de color va en su propia corrida: llegó a tumbar el emulador, y así las capturas del
+# recorrido ya están bajadas si vuelve a pasar.
+echo "== Selector de color =="
+timeout 20 adb shell am force-stop io.trazo || true
+settle 1
+timeout 200 adb logcat -v time > "$OUT/logcat-selector-color.txt" 2>&1 &
+LOGCAT=$!
+timeout 180 adb shell am instrument -w -e class io.trazo.app.GuiTourTest#colorPicker "$RUNNER" | tee "$OUT/selector-color.txt"
+kill $LOGCAT 2>/dev/null || true
+if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
+  echo "FALLÓ: se perdió el emulador al abrir el selector de color" | tee -a "$OUT/selector-color.txt"
+  grep -iE 'FATAL|ANR in|lowmemorykiller|Out of memory|Killing|SIGSEGV|SIGABRT' "$OUT/logcat-selector-color.txt" | tail -n 40
+  tail -n 60 "$OUT/logcat-selector-color.txt"
+  exit 1
+fi
+timeout 30 adb pull /data/local/tmp/trazo-gui-13-selector-color.png "$OUT/trazo-gui-13-selector-color.png" || true
 fi
 
 if has demo; then
@@ -154,18 +171,18 @@ timeout 60 adb logcat -d -t 2000 > "$OUT/logcat-$SUF.txt" || true
 status=0
 logs=()
 has pruebas && logs+=(pruebas-instrumentadas.txt)
-has interfaz && logs+=(interfaz.txt)
+has interfaz && logs+=(interfaz.txt selector-color.txt)
 has demo && logs+=(demo.txt)
 for f in "${logs[@]}"; do
   if grep -q "FAILURES!!!" "$OUT/$f" || ! grep -q "^OK (" "$OUT/$f"; then
     echo "FALLÓ: $f"; status=1
   fi
 done
-# Las pruebas pueden decir OK y aun así faltar la evidencia: sin las 12 capturas o sin video la
+# Las pruebas pueden decir OK y aun así faltar la evidencia: sin las 13 capturas o sin video la
 # APK tampoco se da por validada.
 if has interfaz; then
   gui=$(ls "$OUT"/trazo-gui-*.png 2>/dev/null | wc -l)
-  [ "$gui" -ge 12 ] || { echo "FALLÓ: hay $gui capturas de la interfaz, se esperaban 12"; status=1; }
+  [ "$gui" -ge 13 ] || { echo "FALLÓ: hay $gui capturas de la interfaz, se esperaban 13"; status=1; }
 fi
 if has demo; then
   [ -s "$OUT/demo-real-android-emulador.mp4" ] || { echo "FALLÓ: falta el video de la demo"; status=1; }
