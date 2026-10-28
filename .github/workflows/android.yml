@@ -19,6 +19,10 @@ jobs:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     steps:
       - uses: actions/checkout@v4
+      # La rama trae evidencias publicadas por runs anteriores: sin borrarlas, el artifact las
+      # empaquetaba junto a las de este run.
+      - name: Limpiar evidencias heredadas
+        run: rm -rf output
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -40,6 +44,14 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk output/Trazo-debug.apk
           cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk output/Trazo-debug-androidTest.apk
           sha256sum output/*.apk | tee output/SHA256SUMS-apk.txt
+          {
+            echo "source_sha=$GITHUB_SHA"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "ref=$GITHUB_REF_NAME"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            sed 's/^/sha256 /' output/SHA256SUMS-apk.txt
+          } | tee output/build-provenance.txt
           ls -la output
       - uses: actions/upload-artifact@v4
         if: always()
@@ -55,7 +67,7 @@ jobs:
       - name: Publicar APK en la rama
         if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
         continue-on-error: true
-        run: bash scripts/ci-publish.sh "${{ github.ref_name }}" "APK de prueba y evidencias JVM [skip ci]" output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm
+        run: bash scripts/ci-publish.sh "${{ github.ref_name }}" "APK de prueba y evidencias JVM [skip ci]" output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/build-provenance.txt output/jvm
 
   emulator:
     name: Emulador (${{ matrix.fase }})
@@ -78,6 +90,15 @@ jobs:
         with:
           name: trazo-build
           path: artifact
+      # Cada fase escribe en un directorio vacío propio: el artifact lleva solo lo de esta fase y
+      # de este run, con la procedencia de la compilación que probó.
+      - name: Comprobar procedencia
+        run: |
+          grep -qx "source_sha=$GITHUB_SHA" artifact/output/build-provenance.txt
+          grep -qx "run_id=$GITHUB_RUN_ID" artifact/output/build-provenance.txt
+          (cd artifact && sed -n 's/^sha256 //p' output/build-provenance.txt | sha256sum -c -)
+          mkdir -p "$RUNNER_TEMP/fase"
+          { cat artifact/output/build-provenance.txt; echo "fase=${{ matrix.fase }}"; } > "$RUNNER_TEMP/fase/build-provenance-$(echo '${{ matrix.fase }}' | tr , -).txt"
       - name: Habilitar KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -97,12 +118,12 @@ jobs:
           disk-size: 6000M
           disable-animations: true
           emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -camera-back none
-          script: bash scripts/ci-emulator.sh artifact/output output/emulator ${{ matrix.fase }}
+          script: bash scripts/ci-emulator.sh artifact/output ${{ runner.temp }}/fase ${{ matrix.fase }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: trazo-emulator-${{ strategy.job-index }}
-          path: output/emulator/
+          path: ${{ runner.temp }}/fase/
       - name: Publicar evidencias en la rama
         if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
         run: |
@@ -110,6 +131,9 @@ jobs:
           mkdir -p output
           cp artifact/output/Trazo-debug.apk artifact/output/SHA256SUMS-apk.txt output/
           mkdir -p output/jvm && cp artifact/output/jvm/*.png artifact/output/jvm/*.txt output/jvm/ 2>/dev/null || true
+          # Solo se reemplazan los archivos de esta fase: los de la otra quedan como están en la rama.
+          mkdir -p output/emulator
+          cp -r "$RUNNER_TEMP/fase/." output/emulator/
           mv output/emulator/demo-real-android-emulador.mp4 output/demo-real-android.mp4 || true
           bash scripts/ci-publish.sh "${{ github.ref_name }}" "Evidencias del emulador (${{ matrix.fase }}) [skip ci]" \
             output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm output/emulator output/demo-real-android.mp4
