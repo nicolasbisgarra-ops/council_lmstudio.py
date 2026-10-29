@@ -160,3 +160,45 @@ Resultado final: **3340 pruebas, 0 fallas, 0 errores, 0 omitidas** = 2289 previa
 No quedan discrepancias en los 70 escenarios nuevos ni en los 172 anteriores, incluidas sus variantes. Se mantiene el límite ya documentado de barras idénticas y equidistantes: las cajas admiten dos jerarquías y se desempata cerrando primero la barra superior. Su prueba específica sigue activa. `f( )` conserva la interpretación del parser existente como multiplicación; no se cambió la gramática.
 
 Sin dependencias nuevas, red en el código, cambios de SDK/versiones, cambios de `CONFLICT_SCORE` ni ediciones de los archivos prohibidos. Sin amend, rebase, push, PR ni publicación. Después del commit documental no se modifican archivos; la siguiente revisión independiente queda a cargo del orquestador.
+
+## Seguimiento 2 · última ronda de geometría local
+
+Base: `3fb77d07eb56089f9c0a91a0085d5be3348b7792`, rama `codex/p2-reconocedor`. Se leyó `revision-p2-sol2.md` y se recuperó por lectura `/tmp/trazo-p2-review2-extra.tar` de ib4. También se leyeron sus XML y los de la comparación contra `90862dd` para identificar las seis regresiones. No se compiló ni se ejecutaron pruebas en ib4; toda la validación de esta entrega se hizo en **ib3**.
+
+### Batería y commits
+
+- **`b311ee46f715f48e1465748e0f695e1fc9ca8deb`** agrega únicamente `core/src/test/kotlin/io/trazo/core/math/MathLayoutLocalGeometryTest.kt`, antes de cambiar el conversor. Conserva los **119 escenarios**, sus geometrías con alturas individuales, AST de sentencias esperados y posiciones de error. Comprueba que existan exactamente 119 identificadores distintos.
+- Conserva las siete transformaciones originales: escalas uniformes `1e-6`, `0.003`, `1`, `23` y `1e6`, más estiramientos `(sx=0.01, sy=100)` y `(sx=100, sy=0.01)`. Cada escenario corre en cinco órdenes: original, inverso y tres permutaciones con semillas 73, 74 y 75. Total: **4165 pruebas parametrizadas**.
+- Primera ejecución en ib3: **7505 pruebas, 1050 fallas**, correspondientes a los 30 escenarios del informe. Las 3340 pruebas anteriores pasaron. El commit de la batería indica explícitamente su estado en rojo.
+- Las seis regresiones respecto de `90862dd` quedaron identificadas y cubiertas: **V01, V03, V04, V05, V06 y V07**. Cada una corre en las 35 combinaciones de transformación y orden.
+- **`54a657a541b4101060dff73a03976b306950e3f4`** cambia `core/src/main/kotlin/io/trazo/core/math/layout/MathLayoutConverter.kt` y agrega `core/src/test/kotlin/io/trazo/core/math/MathLayoutScopeInvariantTest.kt`.
+- `docs/informes/codex-p2-reconocedor.md`: esta sección se entrega en el commit documental posterior al de implementación.
+
+### Correcciones
+
+1. **Los operadores cortan los números.** La unión de cifras verifica también los operadores que atraviesan el hueco horizontal y el cuerpo vertical de sus vecinos, aunque por su caja fina hayan quedado en otra banda. La compatibilidad de nivel de un operador fino usa el cuerpo de los glifos vecinos. Esto preserva restas y divisiones basales, dentro de raíces y fracciones y dentro de exponentes; incluye las seis regresiones.
+2. **Los paréntesis delimitan una región vertical real.** Los miembros iniciales se toman dentro de la caja vertical de los delimitadores. La región sólo se amplía siguiendo estructuras que le pertenecen: operandos de una barra interior, contenido de una raíz interior o exponentes de una base interior. Se conserva así una fracción completa dentro de paréntesis bajos sin admitir un numerador externo ni otro renglón. Esto cubre T01–T04, los denominadores entre paréntesis y las mezclas M01–M03.
+3. **Las raíces conservan el comienzo sin importar el largo del techo.** El margen izquierdo usa el tamaño de los glifos vecinos; si el primer hijo es una estructura, busca el cuerpo de escritura contenido en ella. No usa el ancho total de la raíz ni el tamaño total de ese hijo. Los errores del primer término siguen el cursor real de emisión. Pasan T05–T11 y una regresión adicional con una raíz de 500×500 y un primer hijo raíz de 400×400.
+4. **Los exponentes se asocian por tramos completos.** La separación vertical se mide entre las cajas vecinas usando su tamaño de escritura local. Los tramos continuos se vinculan en ambos sentidos para conservar signos iniciales finos. Su comienzo debe estar después de la base: no se puede robar únicamente un sufijo del numerador para convertirlo en exponente del denominador. Esto cubre L02, Z05, U22–U30, T15 y conserva los exponentes negativos previos.
+5. **Las cajas de altura cero conservan su pie.** El tamaño nominal se estima con glifos medidos cercanos y el centro se deriva del pie observado, en lugar de inventar una caja alrededor de un centro sin altura. Así Z03 conserva `12`. Cuando falta todo tamaño medido en un eje, la normalización usa su extensión geométrica; no introduce una distancia fija que cambie al escalar.
+
+`MathLayoutScopeInvariantTest.kt` agrega tres pruebas activas: operadores finos en diez posiciones verticales dentro del cuerpo de sus vecinos, raíz con primer hijo grande y el límite sin ninguna altura de referencia descrito abajo. Corren en cinco transformaciones, incluidas escalas extremas y estiramientos por eje, y dos órdenes. Los dos primeros controles encontraron bordes adicionales de las mismas reglas durante el desarrollo y permitieron corregirlos antes del commit.
+
+No se modificó ninguna prueba anterior, incluidas `MathLayoutConverterTest`, `MathLayoutBatteryTest`, `MathLayoutHierarchyTest`, `MathLayoutLevelsTest` y `MathLayoutLexicalBoundaryTest`. La matriz nueva permanece igual a su commit inicial. No hay pruebas desactivadas ni aserciones debilitadas.
+
+### Verificación final
+
+Sincronización mediante tar comprimido a archivo y SSH con stdin redirigido, usando rutas absolutas; actualizaciones posteriores de los archivos cambiados mediante el mismo mecanismo. Los SHA-256 del conversor y de las dos clases de pruebas nuevas coincidieron entre el worktree y `/data/home/trazo-run`. JDK 21 compiló para JVM 17 sin modificar versiones. No se ejecutó Gradle en el teléfono.
+
+```sh
+ssh -F /data/data/com.termux/files/home/.ssh/instabox.sshconfig ib3 'cd /data/home/trazo-run && /data/home/trazo-run/gradlew -q -Ptrazo.coreOnly=true :core:test'
+```
+
+**Resultado: 7508 pruebas, 0 fallas, 0 errores, 0 omitidas** = 3340 previas + 4165 de la revisión + 3 pruebas adicionales. Pasan los 119 escenarios y sus transformaciones completas, las seis regresiones contra `90862dd` y todas las baterías anteriores. Evidencia: XML en `/data/home/trazo-run/core/build/test-results/test/`; salida de Gradle en `/data/home/trazo-p2-local-final.log`.
+
+### Límites conocidos finales
+
+- **Barras idénticas y equidistantes:** se mantiene el límite anterior. Las mismas cajas admiten `(1/2)/3` o `1/(2/3)`; se desempata cerrando primero la barra superior. La prueba específica sigue activa.
+- **Ninguna altura de escritura medida:** si todas las cajas de los glifos tienen altura cero, no hay referencia para distinguir niveles basales de exponentes. Ejemplo `(etiqueta,x,y,ancho,alto)`: `("1",0,0,2,0)` y `("2",6,-10,2,0)` pueden representar dos renglones o una potencia. Se conservan como `2\n1`, sin inventar una potencia. Esta convención y su invariancia a escala están en la prueba activa `limiteConocidoSinNingunaAlturaDeReferencia`. Si existe un glifo cercano con altura medida, se usa esa referencia, como en Z03 y los controles previos de cajas degeneradas.
+
+No quedan discrepancias en los escenarios solicitados. `f( )` mantiene la interpretación existente del parser como multiplicación; la gramática no cambió. Sin dependencias nuevas, red en el código, cambios de SDK/versiones, cambios de `CONFLICT_SCORE` ni ediciones de los archivos prohibidos. Sin amend, rebase, push, PR ni publicación. Se cierra esta ronda con el informe y no se modifican archivos después del último commit.
