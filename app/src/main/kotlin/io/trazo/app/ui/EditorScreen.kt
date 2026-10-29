@@ -190,6 +190,31 @@ fun EditorScreen(
         }
     }
 
+    // Botón del lápiz en el aire: 1 clic abre o cierra la ruleta, 2 alternan los colores de
+    // Preferencias, 3 prenden o apagan el modo formas.
+    fun penButtonClicks(count: Int, x: Float, y: Float) {
+        when (count) {
+            1 -> wheelAt = if (wheelAt == null) Offset(x, y) else null
+            2 -> {
+                wheelAt = null
+                val (a, b) = store.settings.value.swapColors
+                store.update { it.copy(penColor = if (it.penColor == a) b else a) }
+                if (vm.editorTool != EditorTool.PEN && vm.editorTool != EditorTool.SHAPE) vm.selectTool(EditorTool.PEN)
+            }
+            else -> {
+                wheelAt = null
+                val on = vm.toggleShapeTool()
+                scope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar(
+                        if (on) "Modo formas activado" else "Modo formas desactivado",
+                        duration = SnackbarDuration.Short,
+                    )
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             EditorTopBar(
@@ -235,30 +260,7 @@ fun EditorScreen(
                                         )
                                     }
                                 }
-                                // Botón del lápiz en el aire: 1 clic abre la ruleta, 2 alternan los
-                                // colores de Preferencias, 3 prenden o apagan el modo formas.
-                                onPenButtonClicks = { count, x, y ->
-                                    when (count) {
-                                        1 -> wheelAt = if (wheelAt == null) Offset(x, y) else null
-                                        2 -> {
-                                            wheelAt = null
-                                            val (a, b) = store.settings.value.swapColors
-                                            store.update { it.copy(penColor = if (it.penColor == a) b else a) }
-                                            if (vm.editorTool != EditorTool.PEN && vm.editorTool != EditorTool.SHAPE) vm.selectTool(EditorTool.PEN)
-                                        }
-                                        else -> {
-                                            wheelAt = null
-                                            val on = vm.toggleShapeTool()
-                                            scope.launch {
-                                                snackbar.currentSnackbarData?.dismiss()
-                                                snackbar.showSnackbar(
-                                                    if (on) "Modo formas activado" else "Modo formas desactivado",
-                                                    duration = SnackbarDuration.Short,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                onPenButtonClicks = ::penButtonClicks
                                 onViewportChanged = { vm.zoomPercent = this.zoomPercent }
                                 canvas.view = this
                             }
@@ -296,6 +298,8 @@ fun EditorScreen(
                                 colorTarget = if (vm.editorTool == EditorTool.HIGHLIGHTER) ColorTarget.Highlighter else ColorTarget.Pen
                             },
                             onDismiss = { wheelAt = null },
+                            // La ruleta tapa el lienzo: escucha ella misma el botón para cerrarse o cambiar.
+                            onPenButtonClicks = { n -> penButtonClicks(n, at.x, at.y) },
                         )
                     }
                 }

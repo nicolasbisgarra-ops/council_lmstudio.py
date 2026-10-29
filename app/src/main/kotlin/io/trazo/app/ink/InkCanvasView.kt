@@ -346,8 +346,6 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         // Rotación / cierre a mitad de un trazo: cancelar, nunca convertir.
         cancelContact()
-        removeCallbacks(penClickDone)
-        penClicks = 0
         controller?.removeListener(listener)
         cache?.recycle(); cache = null
         super.onDetachedFromWindow()
@@ -374,6 +372,15 @@ class InkCanvasView @JvmOverloads constructor(
             invalidate()
         }
         removeCallbacks(ticker)
+        resetPenButton()
+    }
+
+    /** Descarta clics del botón pendientes y el estado apretado: una interrupción nunca dispara la ruleta. */
+    private fun resetPenButton() {
+        removeCallbacks(penClickDone)
+        penClicks = 0
+        penButtonDown = false
+        penButtonInAir = false
     }
 
     // ------------------------------------------------------------------ entrada
@@ -405,13 +412,21 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Cuenta un clic cuando el botón se suelta con el lápiz en el aire y se había apretado en el aire. */
     private fun trackPenButton(event: MotionEvent) {
+        if (event.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
+            // El lápiz salió del alcance: un botón soltado fuera no es un clic.
+            penButtonDown = false
+            penButtonInAir = false
+            return
+        }
         val pressed = (event.buttonState and STYLUS_BUTTONS) != 0
         if (pressed && !penButtonDown) {
             penButtonDown = true
             penButtonInAir = drawingPointerId == INVALID
+            // Un clic más en curso: la cuenta espera a que se suelte.
+            removeCallbacks(penClickDone)
         } else if (!pressed && penButtonDown) {
             penButtonDown = false
-            if (penButtonInAir && drawingPointerId == INVALID && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) {
+            if (penButtonInAir && drawingPointerId == INVALID) {
                 penClicks++
                 penClickX = event.x
                 penClickY = event.y
@@ -434,6 +449,13 @@ class InkCanvasView @JvmOverloads constructor(
         }
         val index = event.actionIndex
         if (hoverEraser) { hoverEraser = false; invalidate() }
+        if (isStylus(event.getToolType(index)) &&
+            (spenButton || (event.buttonState and STYLUS_BUTTONS) != 0)
+        ) {
+            // Botón apretado con el lápiz apoyado (goma): al soltarlo luego en el aire no cuenta como clic.
+            penButtonDown = true
+            penButtonInAir = false
+        }
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 // Un DOWN inicia siempre un gesto nuevo: se descarta cualquier contacto que quedó colgado.
