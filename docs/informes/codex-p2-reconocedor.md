@@ -122,3 +122,41 @@ ssh -F /data/data/com.termux/files/home/.ssh/instabox.sshconfig ib3 'cd /data/ho
 La etiqueta `f( )` conserva el comportamiento del parser existente: `f(x)` se interpreta como multiplicación, según C07. No se cambió la gramática.
 
 Sin dependencias nuevas, red en el código, cambios de SDK/versiones ni cambios de `CONFLICT_SCORE`. No se tocaron los archivos prohibidos. No se hizo push, PR ni publicación. La revisión final en un hilo nuevo queda a cargo del orquestador; después del commit documental no se modifican archivos.
+
+## Seguimiento de la revisión final de Sol · niveles de escritura
+
+Base: `90862dd85a024ca8678362ea53cda83ede4e2575`, misma rama `codex/p2-reconocedor`. Se leyó `revision-p2-sol.md` y se recuperó por lectura el archivo `/tmp/trazo-p2-final-extra.tar` de ib4. Todas las compilaciones y pruebas de esta ronda corrieron exclusivamente en **ib3**.
+
+### Commits y archivos
+
+- **`86a720e0406dabd17a575a2dc20151819fc23407`**: agrega únicamente `core/src/test/kotlin/io/trazo/core/math/MathLayoutLevelsTest.kt`, antes de cambiar el conversor. Incorpora los **70 escenarios completos** de la revisión, con sus identificadores, geometrías, AST esperados y posiciones de error. Conserva las cinco escalas (0.01, 0.5, 1, 3, 100) y los tres órdenes (original, inverso y permutación con semilla 923): **1050 pruebas parametrizadas**. Una aserción verifica que sean 70 escenarios distintos. Se quitaron solamente el nombre temporal y la impresión diagnóstica de la fuente recibida.
+- Esa batería se commiteó en rojo, indicándolo en el mensaje: la suite en ib3 dio **3339 pruebas, 465 fallas**, todas en la batería nueva. Las 2289 pruebas previas pasaron. Reprodujo exactamente las discrepancias informadas por la revisión.
+- **`422a8768b5879525ac7f188013fe3adc4e0a337b`**: cambia `core/src/main/kotlin/io/trazo/core/math/layout/MathLayoutConverter.kt` y agrega `core/src/test/kotlin/io/trazo/core/math/MathLayoutLexicalBoundaryTest.kt`.
+- `docs/informes/codex-p2-reconocedor.md`: esta sección se entrega en el commit documental siguiente al de implementación.
+
+### Corrección estructural
+
+1. **Bandas y cifras (A01–A08, F03):** las bandas se forman usando el pie y el centro de los símbolos, con referencias estables a los glifos de mayor altura. La unión numérica compara vecinos de la misma banda; los símbolos de otros renglones, numeradores o denominadores ya no quedan intercalados en esa búsqueda. Se conserva el pie al construir el número, incluso con alturas individuales diferentes.
+2. **Decimales (B05, B06, F04–F06, F08):** el punto o la coma se vincula al nivel de los números que lo rodean mediante cercanía horizontal y pertenencia a su región vertical. El número decimal se agrupa antes de resolver potencias y fracciones. Esto cubre puntos bajos y pequeños, además de las cajas convencionales.
+3. **Operandos con potencias (C01, C02, G03):** para cada barra se resuelven primero las potencias dentro de su alcance horizontal. La selección de numerador y denominador usa la base y su exponente como un solo operando; el símbolo elevado más cercano a la barra no puede dejar afuera su propia base. Al cerrar la fracción se consumen sus símbolos originales mediante el árbol, sin duplicarlos ni perderlos.
+4. **Exponentes completos (B01–B04, B16, G02, G07):** una semilla cercana vincula el nivel elevado con su base y la asociación continúa entre vecinos de ese nivel. El límite de distancia desde la base se aplica a la semilla; la longitud de la expresión elevada depende de la continuidad entre sus símbolos. Un término basal o una potencia con otra base conserva su asociación propia.
+5. **Alturas, paréntesis y tolerancias (B13, D04, G01):** la elevación se distingue del mismo nivel por su posición y su pie, permitiendo exponentes de altura cercana a la base. El avance horizontal de un grupo deriva de su contenido, en lugar del ancho del trazo de apertura. Los límites de asociación incorporan tolerancia en coordenadas normalizadas, evitando cambios por redondeo de Float al escalar.
+6. **Límites léxicos (B07–B10, G04–G06):** la emisión contempla el inicio y el final de identificadores de cada nodo e inserta multiplicación cuando el lexer uniría dos átomos en otro nombre. Así se conserva `x^y*z`, también con griegas y bases estructuradas. La prueba adicional verifica los límites entre variables basales y después de potencias, en cinco escalas y dos órdenes.
+
+No se modificaron `MathLayoutConverterTest.kt`, `MathLayoutBatteryTest.kt`, `MathLayoutHierarchyTest.kt` ni las restantes pruebas existentes. La nueva batería permanece igual a su commit inicial. No se quitaron, debilitaron ni omitieron aserciones.
+
+### Verificación
+
+El árbol se sincronizó en ib3 mediante un tar comprimido a archivo y SSH con stdin redirigido; las iteraciones actualizaron los archivos cambiados del mismo modo, siempre con rutas absolutas. Los SHA-256 del conversor y de ambas clases nuevas coincidieron entre el worktree y `/data/home/trazo-run`. JDK 21 compiló para JVM 17 sin cambiar versiones.
+
+```sh
+ssh -F /data/data/com.termux/files/home/.ssh/instabox.sshconfig ib3 'cd /data/home/trazo-run && /data/home/trazo-run/gradlew -q -Ptrazo.coreOnly=true :core:test'
+```
+
+Resultado final: **3340 pruebas, 0 fallas, 0 errores, 0 omitidas** = 2289 previas + 1050 de la revisión final + 1 prueba de límites léxicos. Log: `/data/home/trazo-p2-niveles-final.log`; XML: `/data/home/trazo-run/core/build/test-results/test/`.
+
+### Límites conocidos y entrega
+
+No quedan discrepancias en los 70 escenarios nuevos ni en los 172 anteriores, incluidas sus variantes. Se mantiene el límite ya documentado de barras idénticas y equidistantes: las cajas admiten dos jerarquías y se desempata cerrando primero la barra superior. Su prueba específica sigue activa. `f( )` conserva la interpretación del parser existente como multiplicación; no se cambió la gramática.
+
+Sin dependencias nuevas, red en el código, cambios de SDK/versiones, cambios de `CONFLICT_SCORE` ni ediciones de los archivos prohibidos. Sin amend, rebase, push, PR ni publicación. Después del commit documental no se modifican archivos; la siguiente revisión independiente queda a cargo del orquestador.
