@@ -56,7 +56,8 @@ class GuiTourTest {
         seedNotebooks()
 
         ActivityScenario.launch<MainActivity>(Intent(app, MainActivity::class.java)).use {
-            find(By.text("Cálculo I"))
+            // Arranque en frío: con el emulador cargado la primera lista llegó a tardar más de 10 s.
+            find(By.text("Cálculo I"), timeoutMs = 30_000)
             shot("1-cuadernos")
 
             find(By.text("Cálculo I")).click()
