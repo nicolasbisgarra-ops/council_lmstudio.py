@@ -14,244 +14,270 @@ data class LayoutSymbol(val label: String, val minX: Float, val minY: Float, val
     val centerY get() = (minY + maxY) / 2f
 }
 
-/** Convierte las cajas reconocidas en una expresión, resolviendo las estructuras de afuera hacia adentro. */
+/** Arma un árbol espacial antes de emitir texto: ningún operando se convierte por separado. */
 object MathLayoutConverter {
-    private data class Token(val x: Float, val right: Float, val y: Float, val text: String)
+    private enum class Kind { ATOM, NUMBER, BAR, ROOT_MARK, OPEN, CLOSE, SEQUENCE, ROOT, FRACTION, GROUP, POWER }
+
+    /** La caja completa y el nivel de escritura son distintos: un exponente no mueve la base. */
+    private class Node(
+        val kind: Kind, val box: Box, val y: Double, val emX: Double, val emY: Double,
+        val text: String? = null, val label: String = "", val children: List<Node> = emptyList()
+    ) {
+        val canPower get() = kind in setOf(Kind.NUMBER, Kind.ROOT, Kind.FRACTION, Kind.GROUP, Kind.POWER) ||
+            kind == Kind.ATOM && text?.singleOrNull()?.isLetter() == true
+    }
+
+    private data class Box(val left: Double, val top: Double, val right: Double, val bottom: Double) {
+        val width get() = right - left
+        val height get() = bottom - top
+        val centerY get() = (top + bottom) / 2
+        fun union(other: Box) = Box(min(left, other.left), min(top, other.top), max(right, other.right), max(bottom, other.bottom))
+    }
 
     fun convert(symbols: List<LayoutSymbol>): String {
         if (symbols.isEmpty()) return ""
         if (symbols.any { !it.minX.isFinite() || !it.minY.isFinite() || !it.maxX.isFinite() || !it.maxY.isFinite() || it.width < 0f || it.height < 0f })
             fail("la caja del símbolo no es válida", 0)
-        val output = StringBuilder()
-        for (row in rows(symbols)) {
-            if (output.isNotEmpty()) output.append('\n')
-            val offset = output.length
-            val text = shifted(row, offset) { render(it) }
-            output.append(text)
+        val glyphs = symbols.filter { kind(it.label.trim(), spelling(it.label.trim())) !in setOf(Kind.BAR, Kind.ROOT_MARK, Kind.OPEN, Kind.CLOSE) }
+        val unitX = median(glyphs.map { it.width.toDouble() }.filter { it > 0 })
+        val unitY = median(glyphs.map { it.height.toDouble() }.filter { it > 0 })
+        // Normalizar cada eje permite cambiar escala y proporciones sin introducir distancias en píxeles.
+        val nodes = symbols.map {
+            val label = it.label.trim()
+            val text = spelling(label)
+            val box = Box(it.minX.toDouble() / unitX, it.minY.toDouble() / unitY, it.maxX.toDouble() / unitX, it.maxY.toDouble() / unitY)
+            Node(kind(label, text), box, box.centerY, box.width.takeIf { w -> w > 0 } ?: 1.0,
+                box.height.takeIf { h -> h > 0 } ?: 1.0, text, label)
         }
-        return output.toString()
+        return layout(nodes).joinToString("\n") { row ->
+            // Syntax.position pertenece a esta línea, incluso si una línea anterior ya se emitió.
+            StringBuilder().also { emit(sequence(row), it) }.toString()
+        }
     }
 
-    private fun render(input: List<LayoutSymbol>): String {
-        if (input.isEmpty()) return ""
-        val items = input.toMutableSet()
-        val tokens = mutableListOf<Token>()
-        val scale = typicalHeight(input)
+    private fun layout(input: List<Node>): List<List<Node>> {
+        val items = containers(input).toMutableList()
+        joinNumbers(items)
+        // Las barras interiores se cierran antes que las que las abarcan. Con igual ancho,
+        // la separación entre operandos decide la estructura más local; arriba se desempata.
+        while (true) {
+            val fraction = items.filter { it.kind == Kind.BAR }.mapNotNull { bar -> fraction(bar, items) }
+                .minWithOrNull(Comparator { a, b ->
+                    compareGeometry(a.bar.box.width, b.bar.box.width).takeIf { it != 0 }
+                        ?: compareGeometry(a.span, b.span).takeIf { it != 0 }
+                        ?: compareGeometry(a.bar.y, b.bar.y).takeIf { it != 0 }
+                        ?: compareGeometry(a.bar.box.left, b.bar.box.left)
+                }) ?: break
+            val bar = fraction.bar
+            val children = listOf(sequence(powers(fraction.above)), sequence(powers(fraction.below)))
+            val parts = fraction.above + fraction.below
+            val box = parts.fold(bar.box) { bounds, node -> bounds.union(node.box) }
+            items.removeAll((parts + bar).toSet())
+            items += Node(Kind.FRACTION, box, bar.y, median(parts.map { it.emX }), median(parts.map { it.emY }), children = children)
+        }
+        return rows(powers(items))
+    }
 
-        // Resolver primero la estructura de mayor extensión espacial. Cada recursión reduce el conjunto.
-        for (root in input.filter(::isRoot).filter { candidate -> input.any { isBar(it) && it.minX >= candidate.minX && it.maxX <= candidate.maxX && it.centerY >= candidate.minY && it.centerY <= candidate.maxY } }.sortedByDescending { it.width + it.height }) {
+    /** Paréntesis y techos de raíces delimitan regiones; adentro se aplica el mismo recorrido. */
+    private fun containers(input: List<Node>): List<Node> {
+        val items = input.toMutableList()
+        for (close in input.filter { it.kind == Kind.CLOSE }.sortedWith(order)) {
+            val open = items.filter { it.kind == Kind.OPEN && it.box.right <= close.box.left + EPS && sameLevel(it, close) }
+                .maxByOrNull { it.box.left } ?: continue
+            val inside = items.filter { it !== open && it !== close && it.box.left >= open.box.right - EPS && it.box.right <= close.box.left + EPS &&
+                abs(it.y - open.y) <= open.emY * 1.8 }
+            val children = layout(inside).map(::sequence)
+            val box = inside.fold(open.box.union(close.box)) { bounds, node -> bounds.union(node.box) }
+            items.removeAll((inside + open + close).toSet())
+            items += Node(Kind.GROUP, box, open.y, open.emX, open.emY, text = open.text, children = children)
+        }
+        for (root in input.filter { it.kind == Kind.ROOT_MARK }.sortedWith(compareByDescending<Node> { it.box.width }.thenBy { it.box.top }.thenBy { it.box.left })) {
             if (root !in items) continue
-            val inside = items.filter { it !== root && it.minX >= root.minX + scale * .12f &&
-                it.centerX <= root.maxX + scale * .12f && abs(it.centerY - root.centerY) <= max(root.height * .85f, scale * .8f) }
-            if (inside.isEmpty()) continue
-            val prefixLength = input.filter { it.maxX <= root.minX }.sumOf { symbol ->
-                when (symbol.label.trim()) { "Más", "+", "Menos", "−", "-", "Igual", "=" -> 1; else -> symbol.label.trim().length }
-            }
-            val text = "√(${shifted(inside, prefixLength + 2) { render(it) }})"
-            tokens += Token(root.minX, inside.maxOf { it.maxX }, root.centerY, text)
-            items.removeAll(inside.toSet()); items.remove(root)
+            val inside = items.filter { it !== root && it.box.left >= root.box.left + root.box.width * .04 &&
+                (it.box.left + it.box.right) / 2 <= root.box.right + EPS &&
+                it.y >= root.box.top - root.box.height * .15 && it.y <= root.box.bottom + root.box.height * .15 }
+            val children = layout(inside).map(::sequence)
+            val box = inside.fold(root.box) { bounds, node -> bounds.union(node.box) }
+            items.removeAll((inside + root).toSet())
+            items += Node(Kind.ROOT, box, root.y, median(inside.map { it.emX }), median(inside.map { it.emY }), children = children)
         }
+        return items
+    }
 
-        // Una barra agrupa todos los elementos de arriba y abajo que la atraviesan. Barras anidadas
-        // se procesan de mayor extensión a menor; sus operandos se vuelven a analizar recursivamente.
-        for (bar in input.filter(::isBar).sortedWith(compareByDescending<LayoutSymbol> { it.width }.thenByDescending { it.centerY })) {
-            if (bar !in items) continue
-            val margin = scale * .05f
-            val reach = scale * 3.2f
-            val above = items.filter { it !== bar && it.centerY < bar.centerY && bar.centerY - it.centerY <= reach && overlapsX(it, bar, margin) }
-            val below = items.filter { it !== bar && it.centerY > bar.centerY && it.centerY - bar.centerY <= reach && overlapsX(it, bar, margin) }
-            if (above.isEmpty() || below.isEmpty()) continue
-            val numerator = shifted(above, 1) { render(it) }
-            val denominator = shifted(below, numerator.length + 4) { render(it) }
-            val x0 = min(bar.minX, (above + below).minOf { it.minX })
-            val x1 = max(bar.maxX, (above + below).maxOf { it.maxX })
-            tokens += Token(x0, x1, bar.centerY, "($numerator)/($denominator)")
-            items.removeAll((above + below + bar).toSet())
-        }
+    private data class Fraction(val bar: Node, val above: List<Node>, val below: List<Node>) {
+        val span get() = below.minOf { it.y } - above.maxOf { it.y }
+    }
 
-        for (root in input.filter(::isRoot).sortedByDescending { it.width + it.height }) {
-            if (root !in items) continue
-            val inside = items.filter { it !== root && it.minX >= root.minX + scale * .12f &&
-                it.centerX <= root.maxX + scale * .12f && abs(it.centerY - root.centerY) <= max(root.height * .85f, scale * .8f) }
-            if (inside.isEmpty()) continue
-            val prefixLength = input.filter { it.maxX <= root.minX }.sumOf { symbol ->
-                when (symbol.label.trim()) { "Más", "+", "Menos", "−", "-", "Igual", "=" -> 1; else -> symbol.label.trim().length }
-            }
-            val radicand = shifted(inside, prefixLength + 2) { render(it) }
-            tokens += Token(root.minX, inside.maxOf { it.maxX }, root.centerY, "√($radicand)")
-            items.removeAll(inside.toSet()); items.remove(root)
-        }
-
-        val opens = items.filter { it.label.trim() in setOf("(", "Abre paréntesis", "Paréntesis abre") }.sortedBy { it.minX }
-        val closes = items.filter { it.label.trim() in setOf(")", "Cierra paréntesis", "Paréntesis cierra") }.sortedBy { it.minX }
-        for (close in closes) {
-            val open = opens.filter { it in items && it.minX < close.minX }.maxByOrNull { it.minX } ?: continue
-            val inside = items.filter { it !== open && it !== close && it.minX >= open.maxX && it.maxX <= close.minX }
-            val innerTokens = tokens.filter { it.x >= open.maxX && it.right <= close.minX }
-            val inner = if (inside.isNotEmpty()) render(inside) else innerTokens.sortedBy { it.x }.joinToString("") { it.text }
-            tokens.removeAll(innerTokens.toSet())
-            tokens += Token(open.minX, close.maxX, open.centerY, "($inner)")
-            items.remove(open); items.remove(close); items.removeAll(inside.toSet())
-        }
-
-        // Exponentes son subárboles completos y mantienen sus paréntesis si contienen operadores.
-        for (baseToken in tokens.toList()) {
-            val exponent = items.filter { candidate -> candidate.label !in setOf("Más", "+", "Menos", "−", "-", "Igual", "=") &&
-                candidate.minX >= baseToken.x && candidate.minX - baseToken.right <= scale * 1.5f &&
-                candidate.centerY < baseToken.y - scale * .18f && baseToken.y - candidate.centerY <= scale * 2.2f }
-            if (exponent.isEmpty()) continue
-            val suffix = render(exponent)
-            val baseText = if ('/' in baseToken.text) "(${baseToken.text})" else baseToken.text
-            val grouped = exponent.any { isBar(it) || isRoot(it) } || suffix.any { it in "+-*/" }
-            tokens.remove(baseToken)
-            tokens += baseToken.copy(right = exponent.maxOf { it.maxX }, text = "$baseText^${if (grouped) "($suffix)" else suffix}")
-            items.removeAll(exponent.toSet())
-        }
-
-        for (exponentToken in tokens.toList()) {
-            val baseToken = tokens.filter { it !== exponentToken && it.right <= exponentToken.x + scale * 1.5f &&
-                exponentToken.x - it.right >= -scale * .15f && exponentToken.y < it.y - scale * .18f &&
-                it.y - exponentToken.y <= scale * 2.2f }.maxByOrNull { it.right } ?: continue
-            tokens.remove(baseToken); tokens.remove(exponentToken)
-            val baseText = if ('/' in baseToken.text) "(${baseToken.text})" else baseToken.text
-            tokens += baseToken.copy(right = exponentToken.right, text = "$baseText^(${exponentToken.text})")
-        }
-        for (base in items.sortedBy { it.minX }.toList()) {
-            if (base !in items) continue
-            val exponentToken = tokens.filter { (base.label.trim() in DIGITS || base.label.trim().length == 1 && base.label.trim()[0].isLetter()) && it.x >= base.centerX && it.x - base.maxX <= scale * 2.5f &&
-                it.y < base.centerY - base.height * .18f && base.centerY - it.y <= max(scale * 2.2f, base.height * .95f) }
-                .maxByOrNull { it.right }
-            if (exponentToken != null) {
-                tokens.remove(exponentToken)
-                val baseText = atom(base, tokens, input)
-                val exp = exponentToken.text
-                tokens += Token(base.minX, exponentToken.right, base.centerY, "$baseText^($exp)")
-                items.remove(base)
-                continue
-            }
-            fun nearestExponentBase(candidate: LayoutSymbol): LayoutSymbol? = items.filter { possible ->
-                possible !== candidate && isPowerBase(possible) && isExponent(possible, candidate, scale)
-            }.maxByOrNull(LayoutSymbol::maxX)
-            val direct = items.filter { candidate -> candidate !== base && isExponent(base, candidate, scale) && nearestExponentBase(candidate) == base }
-            if (direct.isEmpty()) continue
-            val exponent = direct.toMutableSet()
-            var grew = true
-            while (grew) {
-                grew = false
-                for (candidate in items) if (candidate !in exponent && nearestExponentBase(candidate) in exponent) {
-                    exponent += candidate
-                    grew = true
+    private fun fraction(bar: Node, items: List<Node>): Fraction? {
+        val available = items.filter { it !== bar && it.kind != Kind.BAR &&
+            min(it.box.right, bar.box.right) >= max(it.box.left, bar.box.left) - EPS }
+        fun band(above: Boolean): List<Node> {
+            val side = available.filter { if (above) it.y < bar.y - EPS else it.y > bar.y + EPS }
+            val seed = side.minWithOrNull(compareBy<Node> { abs(it.y - bar.y) }.then(order)) ?: return emptyList()
+            val members = side.filter { sameLevel(it, seed) }.toMutableSet()
+            // El nivel incluye los exponentes de sus operandos, pero no otra banda del cuaderno.
+            var changed: Boolean
+            do {
+                changed = false
+                for (candidate in side) if (candidate !in members && members.any { isScript(it, candidate) }) {
+                    members += candidate
+                    changed = true
                 }
-            }
-            val baseText = atom(base, tokens, input)
-            val expText = render(exponent.toList())
-            val grouped = exponent.size > 1 || exponent.any { isBar(it) || isRoot(it) } || expText.any { it in "+-*/" }
-            tokens += Token(base.minX, (listOf(base) + exponent).maxOf { it.maxX }, base.centerY,
-                "$baseText^${if (grouped) "($expText)" else expText}")
-            items.remove(base); items.removeAll(exponent.toSet())
+            } while (changed)
+            return members.sortedWith(order)
         }
-        for (symbol in items) tokens += Token(symbol.minX, symbol.maxX, symbol.centerY, atom(symbol, tokens, input))
-
-        val ordered = tokens.sortedWith(compareBy<Token> { it.x }.thenBy { it.y })
-        val out = StringBuilder()
-        var previous: Token? = null
-        for (token in ordered) {
-            if (out.isNotEmpty()) {
-                val prev = previous!!
-                if (prev.text.lastOrNull()?.isDigit() == true && token.text.firstOrNull()?.isDigit() == true) {
-                    if (token.x - prev.right > scale * .55f) out.append(' ')
-                } else if (prev.text.lastOrNull() == '/' && token.text.startsWith('(')) {
-                    out.append('(')
-                    out.append(token.text).append(')')
-                    previous = token
-                    continue
-                } else if (token.text.firstOrNull()?.isDigit() == true && (prev.text.lastOrNull()?.isLetter() == true || prev.text.lastOrNull() == ')')) out.append('*')
-            }
-            out.append(token.text)
-            previous = token
-        }
-        return out.toString()
+        val above = band(true)
+        val below = band(false)
+        if (above.isEmpty() || below.isEmpty()) return null
+        // Una barra sin escritura cercana a ambos lados sigue siendo una división en línea.
+        if (bar.box.top - above.maxOf { it.box.bottom } > above.maxOf { it.emY } * 2 ||
+            below.minOf { it.box.top } - bar.box.bottom > below.maxOf { it.emY } * 2) return null
+        return Fraction(bar, above, below)
     }
 
-    private inline fun <T> shifted(symbols: List<LayoutSymbol>, offset: Int, render: (List<LayoutSymbol>) -> T): T = try {
-        render(symbols)
-    } catch (e: MathException) {
-        val syntax = e.error as? MathError.Syntax ?: throw e
-        fail(syntax.detail, offset + syntax.position)
-    }
-
-    private fun atom(s: LayoutSymbol, tokens: List<Token>, all: List<LayoutSymbol>): String {
-        val priorTokens = tokens.filter { it.x < s.minX }
-        val position = if (priorTokens.isNotEmpty()) priorTokens.sumOf { it.text.length } else all.filter { it !== s && it.maxX <= s.minX }.sumOf {
-            when (it.label.trim()) { "Más", "+", "Menos", "−", "-", "Igual", "=", "Por", "×", "Dividido", "÷" -> 1; else -> it.label.trim().length }
-        }
-        return when (s.label.trim()) {
-            "Más", "+" -> "+"; "Menos", "−", "-" -> "-"; "Por", "Multiplicación", "×", "·" -> "*"
-            "Dividido", "División", "÷", "Barra" -> "/"; "Igual", "=" -> "="; "Raíz", "√" -> "√"
-            "Pi", "π" -> "π"; "Abre paréntesis", "(", "Paréntesis abre" -> "("
-            "Cierra paréntesis", ")", "Paréntesis cierra" -> ")"; "Coma" -> ","; "Punto" -> "."; "f( )" -> "f("
-            else -> {
-                val label = s.label.trim()
-                when (label.lowercase()) {
-                    "alfa" -> "α"; "beta" -> "β"; "gamma" -> "γ"; "delta" -> "δ"; "epsilon", "épsilon" -> "ε"
-                    "theta" -> "θ"; "lambda" -> "λ"; "mu" -> "μ"; "sigma" -> "σ"; "omega" -> "ω"; "rho" -> "ρ"; "pi" -> "π"
-                    else -> if (label.matches(Regex("\\d+")) || (label.length == 1 && label[0].isLetter())) label
-                    else fail("no se reconoce la etiqueta «$label»", position)
-                }
-            }
-        }
-    }
-
-    private fun rows(input: List<LayoutSymbol>): List<List<LayoutSymbol>> {
-        val scale = typicalHeight(input)
-        val sorted = input.sortedBy { it.centerY }
-        val groups = mutableListOf<MutableList<LayoutSymbol>>()
-        for (s in sorted) {
-            val group = groups.minByOrNull { abs(it.map(LayoutSymbol::centerY).average().toFloat() - s.centerY) }
-            if (group != null && abs(group.map(LayoutSymbol::centerY).average().toFloat() - s.centerY) <= scale * .62f) group += s
-            else groups += mutableListOf(s)
-        }
-        // Las cajas de una fracción o de un radicando pueden ocupar varias bandas verticales.
-        // La estructura espacial vuelve a unirlas antes de decidir los saltos de línea.
-        var changed = true
-        while (changed) {
+    /** Agrupa cifras del mismo nivel antes de asociar potencias; 12 puede ser una base o un exponente. */
+    private fun joinNumbers(items: MutableList<Node>) {
+        var changed: Boolean
+        do {
             changed = false
-            for (bar in input.filter(::isBar)) {
-                val related = input.filter { it === bar || (overlapsX(it, bar, scale * .2f) &&
-                    abs(it.centerY - bar.centerY) <= scale * 3.2f) }
-                changed = mergeGroups(groups, related) || changed
+            val sorted = items.sortedWith(order)
+            for ((a, b) in sorted.zipWithNext()) {
+                if (a.kind != Kind.NUMBER || b.kind != Kind.NUMBER ||
+                    min(a.emY, b.emY) < max(a.emY, b.emY) * .78 || abs(a.y - b.y) > min(a.emY, b.emY) * .25 ||
+                    b.box.left - a.box.right > max(a.emX, b.emX) * 1.1) continue
+                items.remove(a); items.remove(b)
+                items += Node(Kind.NUMBER, a.box.union(b.box), (a.y + b.y) / 2, max(a.emX, b.emX), max(a.emY, b.emY), text = a.text + b.text)
+                changed = true
+                break
             }
-            for (root in input.filter(::isRoot)) {
-                val related = input.filter { it === root || (it.minX >= root.minX + scale * .12f &&
-                    it.centerX <= root.maxX + scale * .12f && abs(it.centerY - root.centerY) <= max(root.height * .85f, scale * .8f)) }
-                changed = mergeGroups(groups, related) || changed
-            }
-        }
-        // Un exponente puede estar en una banda vertical distinta, pero solo si está cerca de la base.
-        for (candidate in input) for (base in input) if (isExponent(base, candidate, scale)) {
-            val b = groups.firstOrNull { base in it }; val e = groups.firstOrNull { candidate in it }
-            if (b != null && e != null && b !== e) { b += e; groups.remove(e) }
-        }
-        return groups.map { it.distinct().sortedBy(LayoutSymbol::minX) }.sortedBy { it.map(LayoutSymbol::centerY).average() }
+        } while (changed)
     }
 
-    private fun mergeGroups(groups: MutableList<MutableList<LayoutSymbol>>, related: List<LayoutSymbol>): Boolean {
-        val matching = groups.filter { group -> group.any { it in related } }
-        if (matching.size < 2) return false
-        val target = matching.first()
-        matching.drop(1).forEach { target.addAll(it); groups.remove(it) }
-        return true
+    /** Cada nivel elevado tiene una sola base: la más cercana a la izquierda, incluyendo estructuras. */
+    private fun powers(input: List<Node>): List<Node> {
+        val parent = input.associateWith { candidate ->
+            input.filter { it.canPower && isScript(it, candidate) }.maxWithOrNull(compareBy<Node> { it.box.right }.thenBy { it.box.left })
+        }
+        fun build(base: Node): Node {
+            val exponent = input.filter { parent[it] === base }.map(::build)
+            if (exponent.isEmpty()) return base
+            return Node(Kind.POWER, exponent.fold(base.box) { bounds, node -> bounds.union(node.box) }, base.y, base.emX, base.emY,
+                children = listOf(base, sequence(exponent)))
+        }
+        return input.filter { parent[it] == null }.map(::build).sortedWith(order)
     }
 
-    private fun typicalHeight(input: List<LayoutSymbol>) = input.map { it.height }.filter { it > 0f }.sorted().let { it.getOrNull(it.size / 2) ?: 1f }
-    private fun isRoot(s: LayoutSymbol) = s.label in setOf("Raíz", "√")
-    private fun isBar(s: LayoutSymbol) = s.label in setOf("Fracción", "Barra de fracción") || (s.label == "Barra" && s.width > s.height * 2f)
-    private fun overlapsX(a: LayoutSymbol, b: LayoutSymbol, margin: Float) = min(a.maxX, b.maxX + margin) >= max(a.minX, b.minX - margin)
-    private fun isPowerBase(symbol: LayoutSymbol) = symbol.label.trim() in DIGITS ||
-        symbol.label.trim().length == 1 && symbol.label.trim()[0].isLetter() || symbol.label.trim() in setOf("Pi", "π", "alfa", "beta", "gamma")
-    private fun isExponent(base: LayoutSymbol, candidate: LayoutSymbol, scale: Float): Boolean =
-        base !== candidate && candidate.height < base.height * .78f && candidate.centerY < base.centerY - base.height * .18f &&
-            candidate.minX >= base.centerX && candidate.minX - base.maxX <= scale * 2.5f && base.centerY - candidate.centerY <= max(scale * 2.2f, base.height * .95f)
-    private fun fail(message: String, position: Int): Nothing = throw MathException(MathError.Syntax(message, position.coerceAtLeast(0)))
-    private val DIGITS = ('0'..'9').map(Char::toString).toSet()
+    private fun isScript(base: Node, candidate: Node): Boolean = base !== candidate && base.canPower &&
+        candidate.kind !in setOf(Kind.BAR, Kind.OPEN, Kind.CLOSE) && candidate.text != "=" &&
+        candidate.emY < base.emY * .78 && candidate.y < base.y - base.emY * .18 &&
+        base.y - candidate.y <= max(base.emY, base.box.height) * .95 &&
+        candidate.box.left >= base.box.right - base.emX * .15 && candidate.box.left - base.box.right <= base.emX * 2.5
+
+    private fun sameLevel(a: Node, b: Node): Boolean {
+        fun reach(node: Node) = if (node.kind == Kind.ROOT) node.box.height / 2 else node.emY * .31
+        return abs(a.y - b.y) <= reach(a) + reach(b) + EPS
+    }
+
+    private fun rows(input: List<Node>): List<List<Node>> {
+        val rows = mutableListOf<MutableList<Node>>()
+        for (node in input.sortedWith(compareBy<Node> { it.y }.then(order))) {
+            val row = rows.filter { group -> group.any { sameLevel(it, node) } }
+                .minByOrNull { group -> abs(group.map { it.y }.average() - node.y) }
+            if (row == null) rows += mutableListOf(node) else row += node
+        }
+        return rows.sortedBy { row -> row.map { it.y }.average() }.map { it.sortedWith(order) }
+    }
+
+    private fun sequence(nodes: List<Node>): Node {
+        val sorted = nodes.sortedWith(order)
+        val box = sorted.map { it.box }.reduceOrNull(Box::union) ?: Box(0.0, 0.0, 0.0, 0.0)
+        return Node(Kind.SEQUENCE, box, sorted.map { it.y }.average(), median(sorted.map { it.emX }), median(sorted.map { it.emY }), children = sorted)
+    }
+
+    /** Un solo cursor cuenta todo lo emitido, incluidos separadores y paréntesis generados. */
+    private fun emit(node: Node, out: StringBuilder) {
+        when (node.kind) {
+            Kind.SEQUENCE -> {
+                var previous: Node? = null
+                for (child in node.children) {
+                    val prior = previous
+                    if (prior != null && startsNumber(child)) {
+                        if (prior.kind == Kind.NUMBER) out.append(' ')
+                        else if (endsAtom(prior)) out.append('*')
+                    }
+                    val wrap = prior?.text == "/" && child.kind == Kind.FRACTION
+                    if (wrap) out.append('(')
+                    emit(child, out)
+                    if (wrap) out.append(')')
+                    previous = child
+                }
+            }
+            Kind.FRACTION -> {
+                out.append('('); emit(node.children[0], out)
+                out.append(")/("); emit(node.children[1], out); out.append(')')
+            }
+            Kind.ROOT -> {
+                if (node.children.isEmpty()) fail("la raíz necesita un radicando", out.length)
+                out.append("√("); emitLines(node.children, out); out.append(')')
+            }
+            Kind.GROUP -> {
+                out.append(node.text ?: "("); emitLines(node.children, out); out.append(')')
+            }
+            Kind.POWER -> {
+                val base = node.children[0]
+                val exponent = node.children[1]
+                if (base.kind == Kind.FRACTION) out.append('(')
+                emit(base, out)
+                if (base.kind == Kind.FRACTION) out.append(')')
+                out.append('^')
+                val single = exponent.children.singleOrNull()
+                val wrap = single == null || single.kind !in setOf(Kind.ATOM, Kind.NUMBER) || single.text in setOf("+", "-", "*", "/")
+                if (wrap) out.append('(')
+                emit(exponent, out)
+                if (wrap) out.append(')')
+            }
+            else -> out.append(node.text ?: fail("no se reconoce la etiqueta «${node.label}»", out.length))
+        }
+    }
+
+    private fun emitLines(lines: List<Node>, out: StringBuilder) {
+        for ((index, line) in lines.withIndex()) {
+            if (index > 0) out.append('\n')
+            emit(line, out)
+        }
+    }
+
+    private fun startsNumber(node: Node): Boolean = when (node.kind) {
+        Kind.NUMBER -> true
+        Kind.POWER -> startsNumber(node.children[0])
+        else -> false
+    }
+    private fun endsAtom(node: Node) = node.canPower || node.kind == Kind.CLOSE
+    private fun kind(label: String, text: String?): Kind = when {
+        label in setOf("Fracción", "Barra de fracción", "Barra") -> Kind.BAR
+        text == "√" -> Kind.ROOT_MARK
+        text in setOf("(", "f(") -> Kind.OPEN
+        text == ")" -> Kind.CLOSE
+        text?.all { it.isDigit() } == true -> Kind.NUMBER
+        else -> Kind.ATOM
+    }
+
+    private fun spelling(label: String): String? = when (label) {
+        "Más", "+" -> "+"; "Menos", "−", "-" -> "-"; "Por", "Multiplicación", "×", "·", "*" -> "*"
+        "Dividido", "División", "÷", "Barra", "Fracción", "Barra de fracción", "/" -> "/"
+        "Igual", "=" -> "="; "Raíz", "√" -> "√"; "Pi", "π" -> "π"
+        "Abre paréntesis", "(", "Paréntesis abre" -> "("; "Cierra paréntesis", ")", "Paréntesis cierra" -> ")"
+        "Coma", "," -> ","; "Punto", "." -> "."; "f( )" -> "f("
+        else -> when (label.lowercase()) {
+            "alfa" -> "α"; "beta" -> "β"; "gamma" -> "γ"; "delta" -> "δ"; "epsilon", "épsilon" -> "ε"
+            "theta" -> "θ"; "lambda" -> "λ"; "mu" -> "μ"; "sigma" -> "σ"; "omega" -> "ω"; "rho" -> "ρ"; "pi" -> "π"
+            else -> label.takeIf { it.matches(Regex("\\d+")) || it.length == 1 && it[0].isLetter() }
+        }
+    }
+
+    private fun compareGeometry(a: Double, b: Double) = if (abs(a - b) <= EPS) 0 else a.compareTo(b)
+    private fun median(values: List<Double>) = values.sorted().let { it.getOrNull(it.size / 2) ?: 1.0 }
+    private fun fail(message: String, position: Int): Nothing = throw MathException(MathError.Syntax(message, position))
+    private val order = compareBy<Node> { it.box.left }.thenBy { it.y }.thenBy { it.box.right }.thenBy { it.label }
+    private const val EPS = 1e-4
 }
