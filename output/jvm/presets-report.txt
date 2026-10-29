@@ -1,4 +1,4 @@
-Biblioteca de partida: 132 patrones, 108 activos
+Biblioteca de partida: 132 patrones, 111 activos
 
 Signos que cedieron ante un patrón anterior (umbral 0.84):
   2 (preset-2): DESACTIVADO por 2 (mismo nombre)
