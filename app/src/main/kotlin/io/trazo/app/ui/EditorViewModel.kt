@@ -251,7 +251,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         if (controller.mathEnabled) MathNotes.results(page.strokes, repo.patterns.value, controller.mathColor) else emptyList()
 
     /** Calcula lo seleccionado y escribe el resultado (con «=» si faltaba); false si no había una cuenta. */
-    fun calculateSelection(): Boolean = controller.calculateSelection()
+    /** Calcula la selección; si no se puede, devuelve el motivo para mostrarlo. */
+    fun calculateSelection(): String? = if (controller.calculateSelection()) null else controller.calculationProblem()
 
     fun duplicateSelection() { controller.duplicateSelection() }
     fun recolorSelection(color: Int) { controller.recolorSelection(color) }

@@ -586,9 +586,7 @@ fun SelectionPill(vm: EditorViewModel, onCustomColor: () -> Unit, modifier: Modi
             ToolButton(TrazoIcons.Grow, "Agrandar", onClick = { vm.controller.scaleSelection(1.15f) })
             ToolButton(TrazoIcons.Duplicate, "Duplicar", onClick = vm::duplicateSelection)
             ToolButton(TrazoIcons.Calculate, "Calcular", onClick = {
-                if (!vm.calculateSelection()) {
-                    Toast.makeText(context, "No hay una cuenta para calcular en la selección", Toast.LENGTH_SHORT).show()
-                }
+                vm.calculateSelection()?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
             })
             Box {
                 ToolButton(TrazoIcons.Palette, "Color de la selección", onClick = { colors = true }, selected = colors)

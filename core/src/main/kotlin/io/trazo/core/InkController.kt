@@ -572,6 +572,9 @@ class InkController(
         return true
     }
 
+    /** Por qué [calculateSelection] no pudo calcular, para mostrarlo. */
+    fun calculationProblem(): String = MathNotes.problem(page.strokes, selection.toSet(), patterns())
+
     /** Vacía la página entera (trazos y formas) en un solo paso deshacible. */
     fun clearPage() {
         if (mode != Mode.NONE) return

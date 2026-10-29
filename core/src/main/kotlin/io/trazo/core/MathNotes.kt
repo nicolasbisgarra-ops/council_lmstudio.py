@@ -42,7 +42,19 @@ object MathNotes {
     fun glyphs(strokes: List<InkStroke>, patterns: Map<String, InkPattern>): List<Glyph> =
         strokes.filter { it.patternId != null && it.brush != Brush.HIGHLIGHTER }
             .groupBy { it.groupId ?: it.id }
-            .mapNotNull { (_, g) -> patterns[g.first().patternId]?.let { Glyph(it.name.trim(), g.bounds(), g) } }
+            .mapNotNull { (_, g) -> patterns[g.first().patternId]?.let { Glyph(label(it.name), g.bounds(), g) } }
+
+    /** Nombres de signos sin tilde ni mayúsculas («mas», «IGUAL») como los lee el reconocedor. */
+    private val SIGN_NAMES = listOf(
+        "Más", "Menos", "Por", "Multiplicación", "Dividido", "División", "Igual", "Barra", "Fracción",
+        "Barra de fracción", "Raíz", "Pi", "Abre paréntesis", "Cierra paréntesis", "Paréntesis abre",
+        "Paréntesis cierra", "Coma", "Punto",
+    ).associateBy { fold(it) }
+
+    private fun fold(name: String) = java.text.Normalizer.normalize(name.trim().lowercase(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+
+    internal fun label(name: String): String = SIGN_NAMES[fold(name)] ?: name.trim()
 
     /** Renglones: barrido de arriba hacia abajo; un signo entra al renglón si empieza antes de que termine. */
     fun rows(glyphs: List<Glyph>): List<List<Glyph>> {
@@ -63,7 +75,7 @@ object MathNotes {
     }
 
     /** Un renglón listo para calcular: su texto y, si termina en «=», ese signo. */
-    private class Line(val glyphs: List<Glyph>, val text: String, val trailingEquals: Glyph?)
+    private class Line(val glyphs: List<Glyph>, val text: String, val trailingEquals: Glyph?, val blocked: Boolean)
 
     private fun lines(strokes: List<InkStroke>, patterns: Map<String, InkPattern>): List<Line> {
         val handwriting = strokes.filter { it.patternId == null && it.brush != Brush.HIGHLIGHTER }
@@ -76,7 +88,7 @@ object MathNotes {
             val reach = Bounds(box.left, box.top, box.right + if (trailing != null) unit * 3f else 0f, box.bottom)
             val blocked = handwriting.any { s -> val b = s.bounds; reach.contains(b.centerX, b.centerY) }
             val text = if (blocked) "" else convert(row)
-            Line(row, text, trailing.takeIf { !blocked })
+            Line(row, text, trailing.takeIf { !blocked }, blocked)
         }
     }
 
@@ -128,6 +140,44 @@ object MathNotes {
             val glyph = Glyph(EQUALS, added.bounds(), added)
             added + writer.value(value, glyph, line.glyphs, color)
         }
+    }
+
+    /**
+     * Por qué «Calcular» no escribe nada para [selected], en palabras para el usuario. Se usa solo cuando
+     * [materialize] vuelve vacío.
+     */
+    fun problem(strokes: List<InkStroke>, selected: Set<String>, patterns: List<InkPattern>): String {
+        val byId = patterns.associateBy { it.id }
+        val chosen = strokes.filter { it.id in selected && it.brush != Brush.HIGHLIGHTER }
+        if (chosen.none { it.patternId != null }) {
+            return "Lo seleccionado es escritura a mano: para calcular, cada número y signo tiene que estar convertido " +
+                "con un patrón (pausa del lápiz al terminarlo)."
+        }
+        val lost = chosen.filter { it.patternId != null && it.patternId !in byId }
+        if (lost.isNotEmpty()) return "Hay signos convertidos con un patrón que ya no existe: volvé a escribirlos."
+        val lines = lines(strokes, byId).filter { l -> l.glyphs.any { g -> g.ids.any { it in selected } } }
+        if (lines.isEmpty()) return "No hay una cuenta en la selección."
+        val values = VariableGraph.evaluate(lines.map { it.text })
+        for ((line, result) in lines.zip(values)) {
+            val read = line.glyphs.joinToString(" ") { it.label }
+            if (line.blocked) return "Hay trazos a mano sin convertir dentro de la cuenta o justo después del = (leí: $read)."
+            val unknown = line.glyphs.map { it.label }.distinct().filter { name ->
+                name !in SIGN_NAMES.values && name != "f( )" && runCatching { MathLayoutConverter.convert(listOf(LayoutSymbol(name, 0f, 0f, 1f, 1f))) }.isFailure
+            }
+            if (unknown.isNotEmpty()) {
+                return "No sé leer ${unknown.joinToString(", ") { "«$it»" }} como número o signo. " +
+                    "Renombrá ese patrón con el número, la letra o el signo (por ejemplo «5», «x», «Más», «Igual»)."
+            }
+            if (line.text.isEmpty()) return "Los signos no arman una cuenta (leí: $read)."
+            val eqs = line.glyphs.count { it.label == EQUALS }
+            if (eqs > 0 && line.trailingEquals == null) return "Ya hay algo escrito después del = (leí: ${line.text})."
+            when (result) {
+                is LineResult.Failure -> return "Leí «${line.text}», pero: ${result.error.message}."
+                is LineResult.Value -> if (shown(result.value) == null) return "El resultado de «${line.text}» es muy largo para escribirlo."
+                else -> return "Leí «${line.text}»: no es una cuenta para resolver."
+            }
+        }
+        return "No se pudo escribir el resultado con los patrones disponibles."
     }
 
     /** Texto que se dibuja para un valor: entero, fracción (numerador / denominador), múltiplo de π o decimal. */

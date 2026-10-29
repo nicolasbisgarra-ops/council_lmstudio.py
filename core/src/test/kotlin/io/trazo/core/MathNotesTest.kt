@@ -62,6 +62,23 @@ class MathNotesTest {
         assertEquals(listOf(listOf("4")), labels(c.mathResults))
     }
 
+    @Test fun `los nombres sin tilde ni mayusculas tambien se leen`() {
+        val renamed = patterns.map { p -> when (p.name) { "Más" -> p.copy(name = "mas"); "Igual" -> p.copy(name = "IGUAL ") ; else -> p } }
+        val out = MathNotes.results(row(0f, "2", "Más", "3", "Igual"), renamed)
+        assertEquals(listOf(listOf("5")), labels(out))
+    }
+
+    @Test fun `si no puede calcular explica por que`() {
+        val hand = InkStroke("h", listOf(InkPoint(0f, 0f), InkPoint(10f, 30f)))
+        assertTrue(MathNotes.problem(listOf(hand), setOf("h"), patterns).contains("escritura a mano"))
+        val page = row(0f, "2", "Más", "3", "Igual")
+        val odd = patterns.map { p -> if (p.name == "Más") p.copy(name = "suma rara") else p }
+        val msg = MathNotes.problem(page, page.map { it.id }.toSet(), odd)
+        assertTrue(msg, msg.contains("«suma rara»"))
+        val inside = page + InkStroke("h", listOf(InkPoint(30f, 10f), InkPoint(34f, 30f)))
+        assertTrue(MathNotes.problem(inside, page.map { it.id }.toSet(), patterns).contains("sin convertir"))
+    }
+
     @Test fun `no tapa lo que se escribio despues del igual`() {
         assertTrue(MathNotes.results(row(0f, "2", "Más", "3", "Igual", "5"), patterns).isEmpty())
         val page = row(0f, "2", "Más", "3", "Igual")
