@@ -44,4 +44,55 @@ class MathLayoutConverterTest {
         val error = assertThrows(MathException::class.java) { MathLayoutConverter.convert(listOf(s("garabato", 7f, 0f))) }
         assertEquals(0, (error.error as MathError.Syntax).position)
     }
+
+    @Test fun fraccionComoDivisorMantieneAgrupacion() {
+        val entrada = listOf(s("8", 0f, 11f), s("Dividido", 12f, 11f)) + listOf(s("1", 28f, 0f), s("Barra", 24f, 20f, 24f, 2f), s("2", 28f, 27f))
+        assertEquals("8/((1)/(2))", MathLayoutConverter.convert(entrada))
+    }
+
+    @Test fun barraExteriorSeResuelveAntesQueLaInterior() {
+        assertEquals("((1)/(2))/(3)", MathLayoutConverter.convert(listOf(s("Barra", 0f, 38f, 40f, 2f), s("1", 4f, 0f), s("Barra", 0f, 14f, 24f, 2f), s("2", 4f, 21f), s("3", 12f, 46f))))
+    }
+
+    @Test fun fraccionDentroDeRaiz() {
+        assertEquals("√((1)/(2))", MathLayoutConverter.convert(listOf(s("Raíz", 0f, 0f, 50f, 60f), s("1", 20f, 0f), s("Barra", 15f, 25f, 30f, 2f), s("2", 20f, 35f))))
+    }
+
+    @Test fun noAsociaExponentesLejanos() {
+        assertEquals("2\nx", MathLayoutConverter.convert(listOf(s("2", 100f, 0f, 6f, 10f), s("x", 0f, 100f))))
+    }
+
+    @Test fun menosNoEsBarraDeFraccion() {
+        assertEquals("2-1", MathLayoutConverter.convert(listOf(s("2", 0f, 0f), s("Menos", 12f, 9f, 14f, 2f), s("1", 30f, 0f))))
+    }
+
+    @Test fun conservaFraccionesLaterales() {
+        val a = listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("Más", 30f, 11f), s("3", 48f, 0f), s("Barra", 44f, 20f, 24f, 2f), s("4", 48f, 27f))
+        assertEquals("(1)/(2)+(3)/(4)", MathLayoutConverter.convert(a))
+    }
+
+    @Test fun escalaMediaRaizNoSeConfundeConFraccion() {
+        assertEquals("√(2)", MathLayoutConverter.convert(listOf(s("Raíz", 0f, 0f, 25f, 10f), s("2", 6f, 0f, 5f, 10f))))
+    }
+
+    @Test fun multiplicaNumeroALaDerechaDeFraccion() {
+        assertEquals("(1)/(2)*3", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("3", 30f, 11f))))
+    }
+
+    @Test fun fraccionNoMueveLaLineaSiguiente() {
+        assertEquals("(1)/(2)\nx", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("x", 0f, 100f))))
+    }
+
+    @Test fun separaCifrasAlejadas() {
+        assertEquals("2 3", MathLayoutConverter.convert(listOf(s("2", 0f, 0f), s("3", 100f, 0f))))
+    }
+
+    @Test fun aceptaCajaDeAnchoCeroEnNumerador() {
+        assertEquals("(1)/(2)", MathLayoutConverter.convert(listOf(s("1", 4f, 0f, 0f, 20f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f))))
+    }
+
+    @Test fun errorAnidadoUsaPosicionDelTextoEmitido() {
+        val error = assertThrows(MathException::class.java) { MathLayoutConverter.convert(listOf(s("Raíz", 0f, 0f, 40f, 20f), s("x", 12f, 0f), s("Más", 23f, 0f), s("garabato", 34f, 0f))) }
+        assertEquals(4, (error.error as MathError.Syntax).position)
+    }
 }
