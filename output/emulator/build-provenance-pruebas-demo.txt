@@ -1,8 +1,8 @@
-source_sha=db5fb35688c782544f270a923cc5132a2678a370
-run_id=40879941173
+source_sha=9690785a2cfa60e8c54df7772ddeb54dd31d0cc6
+run_id=40882018633
 run_attempt=1
 ref=claude/imolementa-esto-ag7u18
-built_at=2026-10-29T13:18:53Z
+built_at=2026-10-29T13:28:28Z
 sha256 c1ef4b6ba416db1a14b6dbd9d7bf05a01df079d38428ee2bdd16ff3d202f9596  output/Trazo-debug-androidTest.apk
-sha256 3950acd8867bca19c6a26d7311e4b22d20761fa3fb5c6a08ec34a8ccabc99f2e  output/Trazo-debug.apk
+sha256 c4927ceb865eab114f4a74f2939f6183ea68ddc24c2f104828559414d7d39873  output/Trazo-debug.apk
 fase=pruebas,demo
