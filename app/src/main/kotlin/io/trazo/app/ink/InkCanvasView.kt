@@ -587,6 +587,8 @@ class InkCanvasView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> if (!holdTapUsed && !tapScaled && tapTravel < tapSlop * 2 && event.eventTime - tapStartTime < MULTI_FINGER_TAP_MS) {
                 when (tapMaxPointers) {
+                    // Un toque con el dedo sobre una cuenta muestra qué se calculó y cómo.
+                    1 -> { val (x, y) = screenToDocument(event.x, event.y); controller?.explainAt(x, y, wholeLine = true) }
                     2 -> onTwoFingerTap?.invoke()
                     3 -> onThreeFingerTap?.invoke()
                 }

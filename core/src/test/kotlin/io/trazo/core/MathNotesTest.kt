@@ -91,6 +91,57 @@ class MathNotesTest {
         assertEquals(listOf(listOf("8")), labels(MathNotes.results(listOf(hand) + right, patterns)))
     }
 
+    @Test fun `despeja la incognita de una ecuacion de otro renglon`() {
+        val page = row(0f, "2", "x", "Igual", "5") + row(100f, "x", "Igual")
+        val out = MathNotes.results(page, patterns)
+        assertEquals(setOf("5", "2", "Barra"), labels(out).flatten().toSet())
+        assertTrue(out.bounds().top > 90f)
+        // Encadenado: y depende de x, que sale de la ecuación.
+        val chain = row(0f, "2", "x", "Igual", "6") + row(100f, "y", "Igual", "x", "Más", "1") + row(200f, "y", "Igual")
+        assertEquals(listOf(listOf("4")), labels(MathNotes.results(chain, patterns)))
+        // No lineal: no inventa un resultado.
+        val square = row(0f, "x", "Por", "x", "Igual", "4") + row(100f, "x", "Igual")
+        assertTrue(MathNotes.results(square, patterns).isEmpty())
+    }
+
+    @Test fun `el patron elegido como incognita vale con su letra aunque se llame distinto`() {
+        val renamed = patterns.map { p -> if (p.name == "x") p.copy(name = "Mi equis rara", unknown = "x") else p }
+        val page = row(0f, "2", "x", "Igual", "5") + row(100f, "x", "Igual")
+        assertEquals(setOf("5", "2", "Barra"), labels(MathNotes.results(page, renamed)).flatten().toSet())
+        // «No usar en cuentas»: estorba como la escritura a mano.
+        val ignored = patterns.map { p -> if (p.name == "x") p.copy(unknown = "") else p }
+        assertTrue(MathNotes.results(row(0f, "2", "Más", "3", "Igual", "x"), ignored).isEmpty())
+        assertEquals(listOf(listOf("5")), labels(MathNotes.results(row(0f, "2", "Más", "3", "Igual"), ignored)))
+    }
+
+    @Test fun `tocar el resultado explica la cuenta y de donde sale cada variable`() {
+        val page = row(0f, "2", "x", "Igual", "5") + row(100f, "y", "Igual", "x", "Más", "1") + row(200f, "y", "Igual")
+        val shown = MathNotes.results(page, patterns)
+        val e = MathNotes.explain(page, patterns, shown.bounds().centerX, shown.bounds().centerY)!!
+        assertEquals("y = 7/2", e.steps[0])
+        assertTrue(e.steps.toString(), e.steps.contains("≈ 3,5"))
+        assertTrue(e.steps.toString(), e.steps.any { it.startsWith("y = 7/2") && it.contains("«y = x + 1»") })
+        assertTrue(e.steps.toString(), e.steps.any { it.startsWith("x = 5/2") && it.contains("despejada de «2x = 5»") })
+        // Lejos del resultado no hay explicación; con el lazo vale todo el renglón.
+        assertEquals(null, MathNotes.explain(page, patterns, -500f, -500f))
+        val first = page.filter { it.bounds.top < 50f }.bounds()
+        assertEquals(null, MathNotes.explain(page, patterns, first.left + 2f, first.centerY))
+        assertTrue(MathNotes.explain(page, patterns, first.left + 2f, first.centerY, wholeLine = true)!!.steps[0].startsWith("2x = 5"))
+    }
+
+    @Test fun `un toque de la pluma sobre el resultado lo explica sin dejar tinta`() {
+        val page = PageState(row(0f, "5", "Más", "5", "Igual"))
+        val c = InkController(page, History(), { patterns }, IdGenerator.sequential("c"))
+        val events = mutableListOf<InkEvent>()
+        c.addListener { events += it }
+        val at = c.mathResults.bounds()
+        val before = page.strokes.size
+        c.penDown(at.centerX, at.centerY, 0.5f, 0L, PointerKind.STYLUS)
+        c.penUp(at.centerX, at.centerY, 0.5f, 80L)
+        assertEquals(before, page.strokes.size)
+        assertEquals("5 + 5 = 10", (events.single() as InkEvent.MathExplained).explanation.steps[0])
+    }
+
     @Test fun `no tapa lo que se escribio despues del igual`() {
         assertTrue(MathNotes.results(row(0f, "2", "Más", "3", "Igual", "5"), patterns).isEmpty())
         val page = row(0f, "2", "Más", "3", "Igual")

@@ -57,6 +57,12 @@ class PatternEditorViewModel(
     var elastic by mutableStateOf(original?.stretch != null)
     /** Sección de la biblioteca; null = "Mis patrones". */
     var category by mutableStateOf(original?.category)
+    /** Cómo cuenta el patrón en las cuentas de la hoja ([InkPattern.unknown]). */
+    var mathUse by mutableStateOf(MathUse.of(original?.unknown))
+    /** Letra de la incógnita cuando [mathUse] es [MathUse.UNKNOWN]. */
+    var unknownLetter by mutableStateOf(
+        original?.unknown?.takeIf { it.isNotBlank() } ?: original?.name?.trim()?.takeIf { it.length == 1 && it[0].isLetter() } ?: "x",
+    )
     var revision by mutableIntStateOf(0)
         private set
     var testResult by mutableStateOf<String?>(null)
@@ -117,6 +123,11 @@ class PatternEditorViewModel(
             builtIn = original?.builtIn ?: false,
             category = category,
             stretch = stretchFor(out),
+            unknown = when (mathUse) {
+                MathUse.AUTO -> null
+                MathUse.NONE -> ""
+                MathUse.UNKNOWN -> unknownLetter.trim().firstOrNull { it.isLetter() }?.toString()
+            },
         )
     }
 
@@ -141,4 +152,19 @@ class PatternEditorViewModel(
     }
 
     fun clearTest() { testPad.clear(); testResult = null }
+}
+
+/** Uso de un patrón en las cuentas de la hoja. */
+enum class MathUse(val label: String) {
+    AUTO("Automático"),
+    UNKNOWN("Incógnita"),
+    NONE("No usar en cuentas");
+
+    companion object {
+        fun of(unknown: String?) = when {
+            unknown == null -> AUTO
+            unknown.isBlank() -> NONE
+            else -> UNKNOWN
+        }
+    }
 }

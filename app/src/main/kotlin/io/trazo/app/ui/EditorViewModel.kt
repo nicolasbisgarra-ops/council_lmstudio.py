@@ -72,6 +72,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     var teachOffer by mutableStateOf<InkEvent.NotRecognized?>(null)
     /** Hoja abierta para elegir qué patrón era el gesto. */
     var teaching by mutableStateOf<InkEvent.NotRecognized?>(null)
+    /** Resultado tocado: qué se calculó y cómo (burbuja como en Samsung Notes). */
+    var mathExplanation by mutableStateOf<MathNotes.Explanation?>(null)
     var hasSelection by mutableStateOf(false)
         private set
     /** Id de la forma dinámica elegida (null si no hay); dispara el inspector. */
@@ -95,11 +97,12 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         strokeClock = { it + offset }
         addListener { e ->
             when (e) {
-                InkEvent.PageChanged -> { revision++; if (!attaching) markDirty() }
+                InkEvent.PageChanged -> { revision++; mathExplanation = null; if (!attaching) markDirty() }
                 InkEvent.SelectionChanged -> { hasSelection = selection.isNotEmpty(); shapeSelected = selectedShapeId }
                 is InkEvent.Converted -> lastConversion = e
                 is InkEvent.Ambiguous -> ambiguous = e
                 is InkEvent.NotRecognized -> teachOffer = e
+                is InkEvent.MathExplained -> mathExplanation = e.explanation
             }
         }
     }

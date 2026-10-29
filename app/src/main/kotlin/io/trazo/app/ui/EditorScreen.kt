@@ -278,7 +278,7 @@ fun EditorScreen(
                                     }
                                 }
                                 onPenButtonClicks = ::penButtonClicks
-                                onViewportChanged = { vm.zoomPercent = this.zoomPercent }
+                                onViewportChanged = { vm.zoomPercent = this.zoomPercent; vm.mathExplanation = null }
                                 canvas.view = this
                             }
                         },
@@ -299,6 +299,9 @@ fun EditorScreen(
                     )
                     vm.selectedShape?.let { shape ->
                         ShapeInspector(vm, shape, Modifier.align(Alignment.BottomCenter).padding(16.dp))
+                    }
+                    vm.mathExplanation?.let { e ->
+                        MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null })
                     }
                     if (vm.hasSelection) {
                         SelectionPill(

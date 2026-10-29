@@ -103,6 +103,11 @@ data class InkPattern(
     val category: String? = null,
     /** Barra elástica de la salida ([Stretch]); null = la salida se escala sin deformarse. */
     val stretch: Stretch? = null,
+    /**
+     * Uso en las cuentas: null = automático (por el nombre), "" = no se usa en cuentas,
+     * una letra = incógnita con esa letra (por ejemplo «x»), sin importar el nombre.
+     */
+    val unknown: String? = null,
 ) {
     init {
         require(gestureExamples.isNotEmpty() && gestureExamples.all { it.isNotEmpty() }) { "Pattern needs a gesture" }

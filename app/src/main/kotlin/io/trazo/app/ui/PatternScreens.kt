@@ -424,6 +424,31 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                 }
             }
 
+            SectionLabel("Uso en las cuentas")
+            ChoiceRow(MathUse.entries, vm.mathUse, { it.label }, { vm.mathUse = it })
+            Column(Modifier.widthIn(max = 520.dp)) {
+                if (vm.mathUse == MathUse.UNKNOWN) {
+                    OutlinedTextField(
+                        value = vm.unknownLetter,
+                        onValueChange = { t -> vm.unknownLetter = t.filter { it.isLetter() }.takeLast(1) },
+                        label = { Text("Letra de la incógnita") },
+                        singleLine = true,
+                        modifier = Modifier.padding(top = 8.dp).widthIn(max = 200.dp),
+                    )
+                }
+                Text(
+                    when (vm.mathUse) {
+                        MathUse.AUTO -> "Se lee por el nombre: un número, un signo (Más, Igual…) o una sola letra, que es una incógnita."
+                        MathUse.UNKNOWN -> "En las cuentas vale como la incógnita «${vm.unknownLetter.ifBlank { "?" }}», aunque el patrón tenga otro nombre. " +
+                            "Escribí «2x = 5» y abajo «x =» para ver su valor."
+                        MathUse.NONE -> "Las cuentas lo ignoran, como un adorno (flecha, tilde…). Si queda dentro de una cuenta o después del =, ese renglón no se calcula."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+
             PadCard("Probar: dibujá el gesto y sostené la punta", Modifier.fillMaxWidth()) {
                 Text(vm.testResult ?: " ", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 pad(vm.testPad, recognize = true)

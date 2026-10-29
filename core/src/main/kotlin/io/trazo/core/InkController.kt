@@ -23,6 +23,8 @@ sealed interface InkEvent {
     data class Ambiguous(val options: List<Match>, val gestureIds: List<String>, val anchor: Bounds) : InkEvent
     /** Pausa cumplida sin coincidencia clara: se conserva la escritura. [candidates] son los grupos de ids (del más chico al más grande, el primero es solo el trazo actual) que la UI puede ofrecer para enseñar como gesto. */
     data class NotRecognized(val candidates: List<List<String>>, val anchor: Bounds) : InkEvent
+    /** Toque sobre un resultado de las cuentas: qué se calculó y cómo ([MathNotes.explain]). */
+    data class MathExplained(val explanation: MathNotes.Explanation) : InkEvent
 }
 
 /**
@@ -334,8 +336,11 @@ class InkController(
                 val stroke = currentStroke()
                 val tiny = lengthUnits * pxPerUnit < minInkLengthPx / 4f
                 val heldWithoutInk = tiny && timeMs - downTime >= holdMillis
-                val tapToDismiss = tiny && dismissedSelection && timeMs - downTime < TAP_MS
-                if (!heldWithoutInk && !tapToDismiss) {
+                val tap = tiny && timeMs - downTime < TAP_MS
+                val tapToDismiss = tap && dismissedSelection
+                // Tocar un resultado lo explica, sin dejar un punto encima.
+                val explained = tap && !dismissedSelection && explainAt(x, y, wholeLine = false)
+                if (!heldWithoutInk && !tapToDismiss && !explained) {
                     history.perform(page, StrokeEdit(emptyList(), listOf(stroke), StrokeEdit.Kind.DRAW))
                     emit(InkEvent.PageChanged)
                 }
@@ -348,8 +353,10 @@ class InkController(
             }
             Mode.LASSO_PATH -> {
                 lassoPoints += InkPoint(x, y)
-                selection = Lasso.select(page.strokes, lassoPoints).map { it.id }
-                if (selection.isEmpty()) lassoShape()?.let { selectedShapeId = it.id }
+                val tap = timeMs - downTime < TAP_MS && lassoPoints.all { hypot(it.x - x, it.y - y) * pxPerUnit < tremorRadiusPx }
+                selection = if (tap) emptyList() else Lasso.select(page.strokes, lassoPoints).map { it.id }
+                if (tap) explainAt(x, y, wholeLine = true)
+                else if (selection.isEmpty()) lassoShape()?.let { selectedShapeId = it.id }
                 resetContact()
                 emit(InkEvent.SelectionChanged)
             }
@@ -573,6 +580,18 @@ class InkController(
     }
 
     /** Por qué [calculateSelection] no pudo calcular, para mostrarlo. */
+    /**
+     * Explica el resultado de la cuenta en ([x], [y]) con [InkEvent.MathExplained]; con [wholeLine] vale
+     * tocar cualquier parte del renglón (con el lazo). false si ahí no hay un resultado.
+     */
+    fun explainAt(x: Float, y: Float, wholeLine: Boolean = true): Boolean {
+        if (!mathEnabled) return false
+        val e = MathNotes.explain(page.strokes, patterns(), x, y, slop = tremorRadiusPx * 2f / pxPerUnit, wholeLine = wholeLine)
+            ?: return false
+        emit(InkEvent.MathExplained(e))
+        return true
+    }
+
     fun calculationProblem(): String = MathNotes.problem(page.strokes, selection.toSet(), patterns())
 
     /** Vacía la página entera (trazos y formas) en un solo paso deshacible. */
