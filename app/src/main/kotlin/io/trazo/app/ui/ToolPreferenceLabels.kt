@@ -30,4 +30,3 @@ internal fun WheelEntry.preferenceIcon(): ImageVector = tool?.preferenceIcon() ?
     WheelEntry.UNDO -> TrazoIcons.Undo
     else -> TrazoIcons.Redo
 }
-

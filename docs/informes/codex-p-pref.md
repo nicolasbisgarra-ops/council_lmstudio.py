@@ -52,24 +52,25 @@ Pruebas nuevas escritas antes que la implementación. Primera corrida dirigida: 
 
 Incluye nueve pruebas nuevas: migración desde claves ausentes, listas vacías/corruptas, PEN obligatoria, orden, desconocidos/duplicados, mínimo de tres, límite superior, serialización de ida y vuelta e idempotencia sobre las 256 selecciones posibles de las ocho entradas.
 
-La autorrevisión adversarial se hizo **después** de los tres commits de implementación, releyendo el diff completo contra `6d7140b`. Hallazgos corregidos en un commit separado:
+La autorrevisión adversarial se hizo **después** de los tres commits de implementación, releyendo el diff completo contra `6d7140b`. Hallazgos corregidos en commits separados de la implementación:
 
 1. Las filas reordenables no tenían identidad estable de Compose: se agregó `key(option)` para que foco y estado interno sigan a cada entrada al subirla o bajarla.
 2. Al abrir una sección desde la búsqueda no se limpiaba el foco del campo: ahora se llama a `clearFocus()` antes de navegar.
 3. Buscar «vibración» no encontraba el ajuste llamado «Vibrar…»: se agregó ese nombre al índice.
+4. El chequeo final del diff completo contra la base detectó una línea vacía sobrante al final de `ToolPreferenceLabels.kt`; se quitó en un commit adicional, sin amend.
 
 Además se revisaron las firmas reales de `ToolButton`, `ChoiceRow`, `LabeledSlider`, `ColorPickerDialog` y el uso existente de `BackHandler`/`rememberSaveable`; imports, tipos y nulos; defaults desde prefs viejas; claves nuevas sin colisiones; alcance de cada reset; selección y acciones de la ruleta; y diff mínimo de la barra. Un chequeo estático contrastó las claves de core con los enums reales de app, los tamaños 40/48/56, las claves leídas/escritas y los archivos excluidos: **OK**. `git diff --check`: **OK**.
 
 ## Commits y límites
 
-SHA del último commit de código, con la autorrevisión corregida: **`f84b9882888de237e5ca95c5e074ade46228cf7d`**.
+SHA del commit funcional con la autorrevisión corregida: **`f84b9882888de237e5ca95c5e074ade46228cf7d`**.
 
 - `5db6037`: lógica pura y pruebas JVM.
 - `c811b4c`: datos, persistencia y aplicación en barra/ruleta.
 - `af81406`: páginas, buscador y editores de preferencias.
 - `f84b988`: correcciones de la autorrevisión adversarial.
 
-Este informe y el cierre de coordinación se incorporan en un commit documental posterior. El SHA de HEAD de la entrega completa se informa en el mensaje final. Todos los commits son locales, sin amend.
+`39e8d92` incorpora el informe y el cierre de coordinación. Un commit adicional elimina la línea vacía detectada en la comprobación final y actualiza este informe. El SHA de HEAD de la entrega completa se informa en el mensaje final. Todos los commits son locales, sin amend.
 
 La app no se compila ni se ejecuta en esta VM por falta de SDK Android, según el brief. Pendiente la validación Android/Compose por el orquestador, incluida rotación, navegación atrás y uso real de las casillas, flechas y vistas previas. No se cambiaron dependencias, SDK, versiones ni el umbral de conflictos. Los archivos excluidos por el pedido permanecen intactos.
 
