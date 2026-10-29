@@ -46,8 +46,8 @@ class Viewport {
  *    lateral usa la herramienta que se configuró (goma por defecto), también a mitad de un trazo.
  *    Los Galaxy antiguos mandan el botón como acciones propias (211–213), que se traducen igual.
  *  - Se consumen las muestras históricas de cada MOVE (S Pen reporta más rápido que el refresco).
- *  - Dedo: desplaza y hace zoom (dos dedos); un toque con dos dedos deshace y con tres prende o
- *    apaga la detección. Mientras el lápiz está apoyado o cerca, el dedo/palma se ignora.
+ *  - Dedo: desplaza y hace zoom (dos dedos); un toque con dos dedos deshace; con tres, o un dedo
+ *    apoyado y otro que toca dos veces, prende o apaga la detección. Mientras el lápiz está apoyado o cerca, el dedo/palma se ignora.
  *    `ACTION_CANCEL` y `FLAG_CANCELED` descartan el trazo y nunca convierten.
  *  - Con la herramienta mano ([Tool.PAN]) el lápiz y el ratón también desplazan la hoja.
  *  - La pausa de 1 s se comprueba con ticks en cada frame (`postOnAnimation`), nunca con sleep.
@@ -91,6 +91,8 @@ class InkCanvasView @JvmOverloads constructor(
     var onTwoFingerTap: (() -> Unit)? = null
     /** Toque rápido con tres dedos: prende o apaga la detección automática de signos y letras. */
     var onThreeFingerTap: (() -> Unit)? = null
+    /** Un dedo apoyado y otro que toca dos veces seguidas: prende o apaga la detección de gestos. */
+    var onHoldSecondDoubleTap: (() -> Unit)? = null
     /** Dos dedos apoyados y un tercero que toca dos veces seguidas. */
     var onHoldDoubleTap: (() -> Unit)? = null
     /**
@@ -171,6 +173,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var tapTravel = 0f
     private var tapScaled = false
     // Toques de un tercer dedo con dos apoyados.
+    private var secondDownTime = 0L
+    private var lastSecondTap = 0L
     private var thirdDownTime = 0L
     private var lastThirdTap = 0L
     private var holdTapUsed = false
@@ -569,13 +573,26 @@ class InkCanvasView @JvmOverloads constructor(
         when (action) {
             MotionEvent.ACTION_DOWN -> {
                 tapStartTime = event.eventTime; tapMaxPointers = 1; tapTravel = 0f; tapScaled = false
-                holdTapUsed = false; lastThirdTap = 0L
+                holdTapUsed = false; lastThirdTap = 0L; lastSecondTap = 0L
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 tapMaxPointers = max(tapMaxPointers, event.pointerCount)
+                if (event.pointerCount == 2) secondDownTime = event.eventTime
                 if (event.pointerCount == 3) thirdDownTime = event.eventTime
             }
-            MotionEvent.ACTION_POINTER_UP -> if (event.pointerCount == 3 && event.eventTime - thirdDownTime < MULTI_FINGER_TAP_MS) {
+            // Un dedo apoyado y el segundo toca: el primer toque solo se anota (sigue valiendo el toque con dos
+            // dedos para deshacer); el segundo seguido dispara el gesto y ya no se deshace al soltar.
+            MotionEvent.ACTION_POINTER_UP -> if (event.pointerCount == 2 && event.actionIndex != 0 && !tapScaled &&
+                event.eventTime - secondDownTime < MULTI_FINGER_TAP_MS && tapMaxPointers == 2
+            ) {
+                if (lastSecondTap != 0L && event.eventTime - lastSecondTap < DOUBLE_TAP_MS) {
+                    lastSecondTap = 0L
+                    holdTapUsed = true
+                    onHoldSecondDoubleTap?.invoke()
+                } else {
+                    lastSecondTap = event.eventTime
+                }
+            } else if (event.pointerCount == 3 && event.eventTime - thirdDownTime < MULTI_FINGER_TAP_MS) {
                 // Un toque del tercer dedo; el segundo seguido dispara el gesto.
                 holdTapUsed = true
                 if (lastThirdTap != 0L && event.eventTime - lastThirdTap < DOUBLE_TAP_MS) {

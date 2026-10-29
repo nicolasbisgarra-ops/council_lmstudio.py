@@ -255,7 +255,7 @@ fun EditorScreen(
                                 viewport = vm.viewport
                                 controller = vm.controller
                                 onTwoFingerTap = vm::undo
-                                onThreeFingerTap = {
+                                val toggleGestures = {
                                     store.update { it.copy(gesturesEnabled = !it.gesturesEnabled) }
                                     val on = store.settings.value.gesturesEnabled
                                     scope.launch {
@@ -265,7 +265,10 @@ fun EditorScreen(
                                             duration = SnackbarDuration.Short,
                                         )
                                     }
+                                    Unit
                                 }
+                                onThreeFingerTap = toggleGestures
+                                onHoldSecondDoubleTap = toggleGestures
                                 onHoldDoubleTap = {
                                     store.update { it.copy(autoAlign = !it.autoAlign) }
                                     val on = store.settings.value.autoAlign

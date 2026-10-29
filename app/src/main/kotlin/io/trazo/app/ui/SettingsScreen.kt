@@ -334,7 +334,7 @@ private fun SettingsPage(
             )
             SwitchRow(
                 "Gestos con pausa del lápiz", s.gesturesEnabled, { on -> update { it.copy(gesturesEnabled = on) } },
-                subtitle = "Sostené la punta quieta al terminar un gesto y se reemplaza por tu tinta.",
+                subtitle = "Sostené la punta quieta al terminar un gesto y se reemplaza por tu tinta. También se cambia con 3 dedos, o con 1 dedo apoyado y otro tocando 2 veces.",
             )
         }
     }
