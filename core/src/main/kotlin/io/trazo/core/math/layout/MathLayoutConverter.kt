@@ -40,17 +40,30 @@ object MathLayoutConverter {
         if (symbols.any { !it.minX.isFinite() || !it.minY.isFinite() || !it.maxX.isFinite() || !it.maxY.isFinite() || it.width < 0f || it.height < 0f })
             fail("la caja del símbolo no es válida", 0)
         val glyphs = symbols.filter { kind(it.label.trim(), spelling(it.label.trim())) !in setOf(Kind.BAR, Kind.ROOT_MARK, Kind.OPEN, Kind.CLOSE) }
-        val unitX = median(glyphs.map { it.width.toDouble() }.filter { it > 0 })
-        val unitY = median(glyphs.map { it.height.toDouble() }.filter { it > 0 })
+        val unitX = coordinateUnit(glyphs.map { it.width.toDouble() }, symbols.maxOf { it.maxX.toDouble() } - symbols.minOf { it.minX.toDouble() })
+        val unitY = coordinateUnit(glyphs.map { it.height.toDouble() }, symbols.maxOf { it.maxY.toDouble() } - symbols.minOf { it.minY.toDouble() })
         // Normalizar cada eje permite cambiar escala y proporciones sin introducir distancias en píxeles.
         val nodes = symbols.map {
             val label = it.label.trim()
             val text = spelling(label)
             val box = Box(it.minX.toDouble() / unitX, it.minY.toDouble() / unitY, it.maxX.toDouble() / unitX, it.maxY.toDouble() / unitY)
-            Node(kind(label, text), box, box.centerY, box.width.takeIf { w -> w > 0 } ?: 1.0,
-                box.height.takeIf { h -> h > 0 } ?: 1.0, text, label)
+            Node(kind(label, text), box, box.centerY, box.width, box.height, text, label)
         }
-        return layout(nodes).joinToString("\n") { row ->
+        // Una caja sin altura conserva su pie medido; la altura nominal se toma del vecino.
+        // Poner una altura artificial alrededor del centro inventaría un nivel de escritura.
+        val measured = nodes.filter { it.emY > 0 && (it.canPower || it.text == null) }
+        val sized = nodes.map { node ->
+            val neighbor = measured.filter { it !== node }.minByOrNull {
+                val width = max(it.emX, node.emX)
+                val horizontal = if (width > 0) abs(it.box.left - node.box.right) / width else 0.0
+                horizontal + abs(it.box.bottom - node.box.bottom) / it.emY
+            }
+            val height = node.emY.takeIf { it > 0 } ?: neighbor?.emY ?: 0.0
+            val width = node.emX.takeIf { it > 0 } ?: neighbor?.emX ?: 0.0
+            Node(node.kind, node.box, if (node.emY > 0) node.y else node.box.bottom - height / 2,
+                width, height, node.text, node.label)
+        }
+        return layout(sized).joinToString("\n") { row ->
             // Syntax.position pertenece a esta línea, incluso si una línea anterior ya se emitió.
             StringBuilder().also { emit(sequence(row), it) }.toString()
         }
@@ -85,8 +98,7 @@ object MathLayoutConverter {
         for (close in input.filter { it.kind == Kind.CLOSE }.sortedWith(order)) {
             val open = items.filter { it.kind == Kind.OPEN && it.box.right <= close.box.left + EPS && sameLevel(it, close) }
                 .maxByOrNull { it.box.left } ?: continue
-            val inside = items.filter { it !== open && it !== close && it.box.left >= open.box.right - EPS && it.box.right <= close.box.left + EPS &&
-                abs(it.y - open.y) <= open.emY * 1.8 }
+            val inside = groupMembers(open, close, items)
             val children = layout(inside).map(::sequence)
             val box = inside.fold(open.box.union(close.box)) { bounds, node -> bounds.union(node.box) }
             items.removeAll((inside + open + close).toSet())
@@ -94,15 +106,54 @@ object MathLayoutConverter {
         }
         for (root in input.filter { it.kind == Kind.ROOT_MARK }.sortedWith(compareByDescending<Node> { it.box.width }.thenBy { it.box.top }.thenBy { it.box.left })) {
             if (root !in items) continue
-            val inside = items.filter { it !== root && it.box.left >= root.box.left + root.box.width * .04 &&
-                (it.box.left + it.box.right) / 2 <= root.box.right + EPS &&
-                it.y >= root.box.top - root.box.height * .15 && it.y <= root.box.bottom + root.box.height * .15 }
+            val inside = items.filter { insideRoot(root, it, items) }
             val children = layout(inside).map(::sequence)
             val box = inside.fold(root.box) { bounds, node -> bounds.union(node.box) }
             items.removeAll((inside + root).toSet())
             items += Node(Kind.ROOT, box, root.y, median(inside.map { it.emX }), median(inside.map { it.emY }), children = children)
         }
         return items
+    }
+
+    /** La caja del delimitador fija el renglón. Sólo sus estructuras propias amplían la región. */
+    private fun groupMembers(open: Node, close: Node, items: List<Node>): List<Node> {
+        val scope = items.filter { it !== open && it !== close && it.box.left >= open.box.right - EPS && it.box.right <= close.box.left + EPS }
+        val top = min(open.box.top, close.box.top)
+        val bottom = max(open.box.bottom, close.box.bottom)
+        fun onLine(node: Node) = node.y >= top - node.emY * EPS && node.y <= bottom + node.emY * EPS
+        val members = scope.filter { onLine(it) || it.kind == Kind.ROOT_MARK &&
+            min(it.box.bottom, bottom) > max(it.box.top, top) }.toMutableSet()
+        val elevated = powers(scope.filter { it.kind != Kind.BAR })
+        var changed: Boolean
+        do {
+            val size = members.size
+            for (node in members.toList()) when (node.kind) {
+                Kind.BAR -> fraction(node, scope)?.let { part ->
+                    members.addAll((part.above + part.below).flatMap { origins(it, scope) })
+                }
+                Kind.ROOT_MARK -> members.addAll(scope.filter { insideRoot(node, it, scope) })
+                else -> Unit
+            }
+            for (power in elevated.filter { it.kind == Kind.POWER }) {
+                if (origins(power.children[0], scope).any { it in members }) members.addAll(origins(power, scope))
+            }
+            changed = members.size > size
+        } while (changed)
+        return members.sortedWith(order)
+    }
+
+    /** El comienzo del radicando depende del vecino inmediato, no del largo del techo. */
+    private fun insideRoot(root: Node, node: Node, scope: List<Node>): Boolean {
+        fun body(part: Node) = part.kind == Kind.NUMBER || part.kind == Kind.ATOM &&
+            (part.text == null || part.text.singleOrNull()?.isLetter() == true)
+        val local = if (body(node)) node else scope.filter { body(it) &&
+            it.box.left >= node.box.left && it.box.right <= node.box.right &&
+            it.y >= node.box.top && it.y <= node.box.bottom }.minWithOrNull(order)
+        val width = local?.emX ?: 0.0
+        val height = local?.emY ?: 0.0
+        return node !== root && node.box.left >= root.box.left + width * .12 - width * EPS &&
+            (node.box.left + node.box.right) / 2 <= root.box.right + width * EPS &&
+            node.y >= root.box.top - height * .15 && node.y <= root.box.bottom + height * .15
     }
 
     private data class Fraction(val bar: Node, val above: List<Node>, val below: List<Node>) {
@@ -143,7 +194,11 @@ object MathLayoutConverter {
     /** Los niveles se comparan por pie y por centro: una cifra baja no es un exponente. */
     private fun sameWritingLevel(a: Node, b: Node): Boolean {
         val height = min(a.emY, b.emY)
-        return abs(a.baseline - b.baseline) <= height * .22 + EPS || abs(a.y - b.y) <= height * .3 + EPS
+        fun thinInside(operator: Node, neighbor: Node) = isOperator(operator) && operator.emY <= neighbor.emY * .35 &&
+            operator.y >= neighbor.box.top - neighbor.emY * EPS && operator.y <= neighbor.box.bottom + neighbor.emY * EPS
+        if (thinInside(a, b) || thinInside(b, a)) return true
+        val centerHeight = if (isOperator(a) || isOperator(b)) max(a.emY, b.emY) else height
+        return abs(a.baseline - b.baseline) <= height * .22 + EPS || abs(a.y - b.y) <= centerHeight * .3 + EPS
     }
 
     private fun bands(input: List<Node>, broadRoots: Boolean = false): List<List<Node>> {
@@ -183,6 +238,12 @@ object MathLayoutConverter {
                     val b = level.getOrNull(index + if (point == null) 1 else 2) ?: continue
                     if (b.kind != Kind.NUMBER || !sameWritingLevel(a, b) ||
                         b.box.left - a.box.right > max(a.emX, b.emX) * (if (point == null) 1.1 else 2.0) + EPS) continue
+                    // Aunque el operador tenga otra altura o banda, corta el número si cruza el hueco.
+                    if (items.any { operator -> isOperator(operator) &&
+                        (operator.box.left + operator.box.right) / 2 >= a.box.right - max(a.emX, b.emX) * EPS &&
+                        (operator.box.left + operator.box.right) / 2 <= b.box.left + max(a.emX, b.emX) * EPS &&
+                        operator.y >= min(a.box.top, b.box.top) - max(a.emY, b.emY) * EPS &&
+                        operator.y <= max(a.box.bottom, b.box.bottom) + max(a.emY, b.emY) * EPS }) continue
                     val height = max(a.emY, b.emY)
                     val box = a.box.union(b.box).let { if (point == null) it else it.union(point.box) }
                     items.removeAll(listOfNotNull(a, point, b).toSet())
@@ -197,16 +258,32 @@ object MathLayoutConverter {
         }
     }
 
-    /** Una semilla vincula el nivel elevado a una base; el resto sigue por continuidad en ese nivel. */
+    /** El tramo elevado se vincula completo: incluye prefijos y no roba sufijos de otro operando. */
     private fun powers(input: List<Node>): List<Node> {
-        val parent = input.associateWith { candidate ->
-            input.filter { it.canPower && isScript(it, candidate) }.maxWithOrNull(compareBy<Node> { it.box.right }.thenBy { it.box.left })
-        }.toMutableMap()
+        val runs = mutableListOf<MutableList<Node>>()
         for (level in bands(input.filter { it.kind !in setOf(Kind.BAR, Kind.OPEN, Kind.CLOSE) && it.text != "=" })) {
-            for ((previous, candidate) in level.zipWithNext()) {
-                if (parent[candidate] == null && parent[previous] != null &&
-                    candidate.box.left - previous.box.right <= max(previous.emX, candidate.emX) * 2 + EPS)
-                    parent[candidate] = parent[previous]
+            var run = mutableListOf<Node>()
+            for (node in level) {
+                val previous = run.lastOrNull()
+                if (previous == null || node.box.left - previous.box.right > max(previous.emX, node.emX) * 2 + EPS) {
+                    run = mutableListOf()
+                    runs += run
+                }
+                run += node
+            }
+        }
+        val beginning = runs.flatMap { run -> run.map { it to run.first() } }.toMap()
+        fun follows(base: Node, candidate: Node) = (beginning[candidate] ?: candidate).box.left >= base.box.right - base.emX * .15 - EPS
+        val parent = input.associateWith { candidate ->
+            input.filter { it.canPower && isScript(it, candidate) && follows(it, candidate) }
+                .maxWithOrNull(compareBy<Node> { it.box.right }.thenBy { it.box.left })
+        }.toMutableMap()
+        for (run in runs) {
+            for ((previous, candidate) in run.zipWithNext()) {
+                if (parent[candidate] == null && parent[previous] != null) parent[candidate] = parent[previous]
+            }
+            for ((candidate, next) in run.zipWithNext().reversed()) {
+                if (parent[candidate] == null && parent[next] != null) parent[candidate] = parent[next]
             }
         }
         fun build(base: Node): Node {
@@ -222,9 +299,11 @@ object MathLayoutConverter {
         candidate.kind !in setOf(Kind.BAR, Kind.OPEN, Kind.CLOSE) && candidate.text !in setOf("=", ".", ",") &&
         !sameWritingLevel(base, candidate) && candidate.emY <= base.emY * 1.05 + EPS &&
         candidate.y < base.y - base.emY * .18 + EPS &&
-        base.y - candidate.y <= max(base.emY, base.box.height) * .95 + EPS &&
+        base.box.top - candidate.box.bottom <= min(base.emY, candidate.emY) * .65 + EPS &&
         candidate.box.left >= base.box.right - base.emX * .15 - EPS &&
         candidate.box.left - base.box.right <= max(base.emX, candidate.emX) * 2.5 + EPS
+
+    private fun isOperator(node: Node) = node.kind == Kind.BAR || node.kind == Kind.ATOM && node.text in setOf("+", "-", "*", "/", "=")
 
     private fun sameLevel(a: Node, b: Node): Boolean {
         fun reach(node: Node) = if (node.kind == Kind.ROOT) node.box.height / 2 else node.emY * .31
@@ -334,6 +413,12 @@ object MathLayoutConverter {
     }
 
     private fun compareGeometry(a: Double, b: Double) = if (abs(a - b) <= EPS) 0 else a.compareTo(b)
+    private fun coordinateUnit(sizes: List<Double>, span: Double): Double {
+        val measured = sizes.filter { it > 0 }
+        // Sin tamaños medidos, normalizar por la extensión del eje conserva la escala.
+        // Si tampoco hay extensión, todas las coordenadas de ese eje coinciden.
+        return if (measured.isNotEmpty()) median(measured) else span.takeIf { it > 0 } ?: 1.0
+    }
     private fun median(values: List<Double>) = values.sorted().let { it.getOrNull(it.size / 2) ?: 1.0 }
     private fun fail(message: String, position: Int): Nothing = throw MathException(MathError.Syntax(message, position))
     private val order = compareBy<Node> { it.box.left }.thenBy { it.y }.thenBy { it.box.right }.thenBy { it.label }
