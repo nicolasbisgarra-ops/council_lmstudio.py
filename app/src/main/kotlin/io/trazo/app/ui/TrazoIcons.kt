@@ -117,6 +117,7 @@ object TrazoIcons {
     val Import by lazy { icon("Import", stroke("M12 3.5 V14.5 M7.5 10 L12 14.5 L16.5 10"), stroke("M4 15.5 V20 H20 V15.5")) }
     val Export by lazy { icon("Export", stroke("M12 14.5 V3.5 M7.5 8 L12 3.5 L16.5 8"), stroke("M4 15.5 V20 H20 V15.5")) }
     val Rotate by lazy { icon("Rotate", stroke("M4.5 12 A7.5 7.5 0 1 0 6.7 6.7"), stroke("M6.7 2.9 V6.7 H10.5")) }
+    val Calculate by lazy { icon("Calculate", stroke("M5.5 3.5 H18.5 V20.5 H5.5 Z"), stroke("M8.5 7.5 H15.5"), stroke("M8.5 12.5 H15.5 M8.5 16.5 H15.5")) }
     val Duplicate by lazy { icon("Duplicate", stroke("M9 9 H19.5 V19.5 H9 Z"), stroke("M15 9 V4.5 H4.5 V15 H9")) }
     val Palette by lazy {
         icon(

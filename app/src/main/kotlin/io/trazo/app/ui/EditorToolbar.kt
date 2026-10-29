@@ -1,5 +1,6 @@
 package io.trazo.app.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.verticalScroll
 import io.trazo.core.GeoKind
 import io.trazo.core.ParametricGeometry
@@ -51,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -562,6 +564,7 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions) {
 @Composable
 fun SelectionPill(vm: EditorViewModel, onCustomColor: () -> Unit, modifier: Modifier = Modifier) {
     var colors by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -582,6 +585,11 @@ fun SelectionPill(vm: EditorViewModel, onCustomColor: () -> Unit, modifier: Modi
             ToolButton(TrazoIcons.Shrink, "Achicar", onClick = { vm.controller.scaleSelection(0.85f) })
             ToolButton(TrazoIcons.Grow, "Agrandar", onClick = { vm.controller.scaleSelection(1.15f) })
             ToolButton(TrazoIcons.Duplicate, "Duplicar", onClick = vm::duplicateSelection)
+            ToolButton(TrazoIcons.Calculate, "Calcular", onClick = {
+                if (!vm.calculateSelection()) {
+                    Toast.makeText(context, "No hay una cuenta para calcular en la selección", Toast.LENGTH_SHORT).show()
+                }
+            })
             Box {
                 ToolButton(TrazoIcons.Palette, "Color de la selección", onClick = { colors = true }, selected = colors)
                 PanelMenu(colors, { colors = false }) {

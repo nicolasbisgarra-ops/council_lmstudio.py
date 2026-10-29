@@ -23,6 +23,8 @@ import io.trazo.core.IdGenerator
 import io.trazo.core.InkController
 import io.trazo.core.InkEvent
 import io.trazo.core.InkPattern
+import io.trazo.core.InkStroke
+import io.trazo.core.MathNotes
 import io.trazo.core.Notebook
 import io.trazo.core.Page
 import io.trazo.core.PageState
@@ -123,6 +125,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         controller.handleRadiusPx = 24f * density
         controller.recognitionEnabled = s.gesturesEnabled
         controller.autoAlign = s.autoAlign
+        controller.mathEnabled = s.mathNotes
+        controller.mathColor = s.mathResultColor
         controller.shape = s.shape
         // El extremo goma del lápiz borra como la goma elegida; el botón lateral hace lo que se configuró.
         controller.hardwareEraserTool = eraserTool(s)
@@ -242,6 +246,13 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         return true
     }
 
+    /** Resultados de las cuentas de [page] para exportar, como se ven en la hoja. */
+    private fun mathResults(page: Page): List<InkStroke> =
+        if (controller.mathEnabled) MathNotes.results(page.strokes, repo.patterns.value, controller.mathColor) else emptyList()
+
+    /** Calcula lo seleccionado y escribe el resultado (con «=» si faltaba); false si no había una cuenta. */
+    fun calculateSelection(): Boolean = controller.calculateSelection()
+
     fun duplicateSelection() { controller.duplicateSelection() }
     fun recolorSelection(color: Int) { controller.recolorSelection(color) }
     /** Color del primer trazo elegido (para marcarlo en la paleta). */
@@ -332,7 +343,10 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
             val error = withContext(Dispatchers.IO) {
                 runCatching {
                     val out = resolver.openOutputStream(uri) ?: error("No se pudo abrir el archivo")
-                    out.use { if (pdf) PageExporter.writePdf(n, it) else PageExporter.writePng(page, n.paper, it) }
+                    out.use {
+                        if (pdf) PageExporter.writePdf(n, it, ::mathResults)
+                        else PageExporter.writePng(page, n.paper, it, results = mathResults(page))
+                    }
                 }.exceptionOrNull()
             }
             onDone(error)

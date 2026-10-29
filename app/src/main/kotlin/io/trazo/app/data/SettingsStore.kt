@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import io.trazo.core.Brush
 import io.trazo.core.DEFAULT_INK_COLOR
+import io.trazo.core.MathNotes
 import io.trazo.core.Paper
 import io.trazo.core.ShapeKind
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +65,10 @@ data class TrazoSettings(
     val highlighterOpacity: Int = 40,
     /** Alinear lo reconocido con las formas del mismo renglón (y los cierres con su apertura). */
     val autoAlign: Boolean = true,
+    /** Cuentas en la hoja: el resultado aparece solo después de un «=» al final del renglón. */
+    val mathNotes: Boolean = true,
+    /** Color de lo autocompletado (resultados de las cuentas). */
+    val mathResultColor: Int = MathNotes.DEFAULT_RESULT_COLOR,
     val shape: ShapeKind = ShapeKind.LINE,
     val eraserMode: EraserMode = EraserMode.AREA,
     val sideButton: SideButtonAction = SideButtonAction.ERASER,
@@ -97,6 +102,8 @@ class SettingsStore(context: Context) {
         highlighterWidth = prefs.getFloat("highlighterWidth", 14f),
         highlighterOpacity = prefs.getInt("highlighterOpacity", 40).coerceIn(10, 90),
         autoAlign = prefs.getBoolean("autoAlign", true),
+        mathNotes = prefs.getBoolean("mathNotes", true),
+        mathResultColor = prefs.getInt("mathResultColor", MathNotes.DEFAULT_RESULT_COLOR),
         shape = prefs.enum("shape", ShapeKind.LINE),
         eraserMode = prefs.enum("eraserMode", EraserMode.AREA),
         sideButton = prefs.enum("sideButton", SideButtonAction.ERASER),
@@ -128,6 +135,8 @@ class SettingsStore(context: Context) {
             .putFloat("highlighterWidth", s.highlighterWidth)
             .putInt("highlighterOpacity", s.highlighterOpacity)
             .putBoolean("autoAlign", s.autoAlign)
+            .putBoolean("mathNotes", s.mathNotes)
+            .putInt("mathResultColor", s.mathResultColor)
             .putString("shape", s.shape.name)
             .putString("eraserMode", s.eraserMode.name)
             .putString("sideButton", s.sideButton.name)

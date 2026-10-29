@@ -21,6 +21,7 @@ import android.view.ViewConfiguration
 import io.trazo.core.Brush
 import io.trazo.core.InkController
 import io.trazo.core.InkEvent
+import io.trazo.core.InkStroke
 import io.trazo.core.Notebook
 import io.trazo.core.Paper
 import io.trazo.core.PointerKind
@@ -186,6 +187,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var cache: Bitmap? = null
     private var cacheValid = false
     private var cacheVersion = -1L
+    private var cacheMath: List<InkStroke> = emptyList()
     private val cacheMatrixValues = FloatArray(9)
     private val currentMatrixValues = FloatArray(9)
     // Solo la tinta de la página, transparente: va encima de un resaltador en vivo para que no la tape.
@@ -699,7 +701,8 @@ class InkCanvasView @JvmOverloads constructor(
             cache = bmp
             cacheValid = false
         }
-        if (!cacheValid || version != cacheVersion || !currentMatrixValues.contentEquals(cacheMatrixValues)) {
+        val math = c?.mathResults.orEmpty()
+        if (!cacheValid || version != cacheVersion || math !== cacheMath || !currentMatrixValues.contentEquals(cacheMatrixValues)) {
             val cc = Canvas(bmp)
             cc.drawColor(deskColor)
             cc.save()
@@ -712,7 +715,10 @@ class InkCanvasView @JvmOverloads constructor(
                 cc.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), borderPaint)
             }
             c?.page?.allInk?.let { StrokePainter.drawAll(cc, it, paperColors.dark) }
+            // Resultados de las cuentas: tinta derivada, no está en la página.
+            StrokePainter.drawInkOnly(cc, math, paperColors.dark)
             cc.restore()
+            cacheMath = math
             System.arraycopy(currentMatrixValues, 0, cacheMatrixValues, 0, 9)
             cacheVersion = version
             cacheValid = true
@@ -735,6 +741,7 @@ class InkCanvasView @JvmOverloads constructor(
             val oc = Canvas(bmp)
             oc.concat(docToScreen)
             StrokePainter.drawInkOnly(oc, page.allInk, paperColors.dark)
+            StrokePainter.drawInkOnly(oc, cacheMath, paperColors.dark)
             System.arraycopy(currentMatrixValues, 0, inkOverlayMatrixValues, 0, 9)
             inkOverlayVersion = page.version
         }

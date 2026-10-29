@@ -61,6 +61,31 @@ class InkController(
     /** Al convertir, alinear la salida con las formas reconocidas del mismo renglón ([AutoAlign]). */
     var autoAlign: Boolean = true
 
+    /** Cuentas en la hoja: el resultado aparece solo después de un «=» final de renglón ([MathNotes]). */
+    var mathEnabled: Boolean = true
+        set(value) { field = value; mathKey = null }
+    /** Color de lo autocompletado (resultados). */
+    var mathColor: Int = MathNotes.DEFAULT_RESULT_COLOR
+        set(value) { field = value; mathKey = null }
+    private var mathKey: Any? = null
+    private var mathCache: List<InkStroke> = emptyList()
+
+    /**
+     * Tinta de los resultados de las cuentas de la página (no está en la página: se recalcula cuando
+     * cambian la página o los patrones). Vacía si [mathEnabled] es false.
+     */
+    val mathResults: List<InkStroke>
+        get() {
+            if (!mathEnabled) return emptyList()
+            val pats = patterns()
+            val key = Triple(page, page.version, pats)
+            if (key != mathKey) {
+                mathCache = MathNotes.results(page.strokes, pats, mathColor)
+                mathKey = key
+            }
+            return mathCache
+        }
+
     /** Punta de la pluma. Con [Brush.HIGHLIGHTER] nunca se reconoce un gesto. */
     var brush: Brush = Brush.PEN
     /** Forma que dibuja [Tool.SHAPE]. */
@@ -531,6 +556,20 @@ class InkController(
         history.perform(page, StrokeEdit(strokes, emptyList(), StrokeEdit.Kind.DELETE))
         selection = emptyList()
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+    }
+
+    /**
+     * Calcula las cuentas de la selección y escribe el resultado en la página (con «=» si faltaba), en un
+     * solo paso deshacible. Devuelve false si no había nada que calcular.
+     */
+    fun calculateSelection(): Boolean {
+        if (mode != Mode.NONE || selection.isEmpty()) return false
+        val added = MathNotes.materialize(page.strokes, selection.toSet(), patterns(), mathColor, ids)
+        if (added.isEmpty()) return false
+        history.perform(page, StrokeEdit(emptyList(), added, StrokeEdit.Kind.INSERT))
+        selection = selection + added.map { it.id }
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+        return true
     }
 
     /** Vacía la página entera (trazos y formas) en un solo paso deshacible. */

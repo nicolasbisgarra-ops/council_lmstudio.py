@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -64,6 +65,7 @@ import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.ThemeMode
 import io.trazo.app.data.TrazoSettings
 import io.trazo.app.trazo
+import io.trazo.core.MathNotes
 import io.trazo.core.Paper
 
 /** Qué color libre se está eligiendo en las preferencias. */
@@ -72,6 +74,8 @@ private sealed interface PrefColor {
     data class Quick(val slot: Int) : PrefColor
     /** Uno de los dos colores que alternan dos clics del botón del lápiz. */
     data class Swap(val slot: Int) : PrefColor
+    /** El color de los resultados que completa la hoja al escribir «=». */
+    data object MathResult : PrefColor
 }
 
 /** Preferencias agrupadas como en las apps de notas: apariencia, lápiz y gestos, S Pen y cuadernos. */
@@ -131,6 +135,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                         "Aprender de mis correcciones", s.learnFromCorrections, { on -> update { it.copy(learnFromCorrections = on) } },
                         subtitle = "Al enseñar o corregir un gesto en la hoja, se guarda como ejemplo del patrón.",
                     )
+                }
+
+                PrefCard("Cuentas en la hoja") {
+                    SwitchRow(
+                        "Resolver las cuentas", s.mathNotes, { on -> update { it.copy(mathNotes = on) } },
+                        subtitle = "Al terminar un renglón con = aparece el resultado con tus patrones, usando los valores " +
+                            "escritos en otros renglones (x = 3). Con el lazo también podés elegir «Calcular».",
+                    )
+                    Text("Color de lo autocompletado", style = MaterialTheme.typography.bodyMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ColorDot(s.mathResultColor, selected = false, onClick = { picking = PrefColor.MathResult }, size = 32.dp, description = "Cambiar el color de lo autocompletado")
+                        TextButton(onClick = { update { it.copy(mathResultColor = MathNotes.DEFAULT_RESULT_COLOR) } }) { Text("Volver al verde") }
+                    }
+                    Hint("Lo autocompletado no se guarda como tinta: se recalcula al cambiar la cuenta. «Calcular» con el lazo sí lo escribe en la hoja.")
                 }
 
                 PrefCard("S Pen") {
@@ -195,11 +213,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 PrefColor.Accent -> s.accent
                 is PrefColor.Quick -> s.quickColors.getOrElse(target.slot) { s.penColor }
                 is PrefColor.Swap -> s.swapColors.getOrElse(target.slot) { s.penColor }
+                PrefColor.MathResult -> s.mathResultColor
             },
             title = when (target) {
                 PrefColor.Accent -> "Color de acento"
                 is PrefColor.Quick -> "Color rápido"
                 is PrefColor.Swap -> "Color del doble clic ${target.slot + 1}"
+                PrefColor.MathResult -> "Color de lo autocompletado"
             },
             onDismiss = { picking = null },
             onPick = { c ->
@@ -208,6 +228,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     PrefColor.Accent -> update { it.copy(accent = c) }
                     is PrefColor.Quick -> update { st -> st.copy(quickColors = st.quickColors.mapIndexed { i, q -> if (i == target.slot) c else q }) }
                     is PrefColor.Swap -> update { st -> st.copy(swapColors = st.swapColors.mapIndexed { i, q -> if (i == target.slot) c else q }) }
+                    PrefColor.MathResult -> update { it.copy(mathResultColor = c) }
                 }
             },
             suggestions = if (target == PrefColor.Accent) AccentPresets.map { it.accent } else PenPalette,
