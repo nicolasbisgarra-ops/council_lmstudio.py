@@ -141,7 +141,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                     SwitchRow(
                         "Resolver las cuentas", s.mathNotes, { on -> update { it.copy(mathNotes = on) } },
                         subtitle = "Al terminar un renglón con = aparece el resultado con tus patrones, usando los valores " +
-                            "escritos en otros renglones (x = 3). Con el lazo también podés elegir «Calcular».",
+                            "escritos en otros renglones de la misma hoja (x = 3); cada hoja es independiente. " +
+                            "Con el lazo también podés elegir «Calcular».",
                     )
                     Text("Color de lo autocompletado", style = MaterialTheme.typography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {

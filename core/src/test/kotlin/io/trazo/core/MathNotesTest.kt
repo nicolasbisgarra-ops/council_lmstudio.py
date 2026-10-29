@@ -51,6 +51,17 @@ class MathNotesTest {
         assertTrue(out.bounds().top > 90f)
     }
 
+    @Test fun `cada hoja es aislada y no usa las variables de otra`() {
+        val first = PageState(row(0f, "x", "Igual", "3") + row(100f, "x", "Más", "1", "Igual"))
+        val second = PageState(row(0f, "x", "Más", "1", "Igual"))
+        val c = InkController(first, History(), { patterns }, IdGenerator.sequential("c"))
+        assertEquals(listOf(listOf("4")), labels(c.mathResults))
+        c.attach(second, History())
+        assertTrue(c.mathResults.isEmpty())
+        c.attach(first, History())
+        assertEquals(listOf(listOf("4")), labels(c.mathResults))
+    }
+
     @Test fun `no tapa lo que se escribio despues del igual`() {
         assertTrue(MathNotes.results(row(0f, "2", "Más", "3", "Igual", "5"), patterns).isEmpty())
         val page = row(0f, "2", "Más", "3", "Igual")
