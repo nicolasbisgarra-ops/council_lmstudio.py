@@ -14,6 +14,8 @@ import kotlin.math.min
  *   su misma línea, sin cambiar de tamaño.
  * - Los "contenedores" (paréntesis, integrales, raíz, fracción, sumatoria) no sirven de referencia
  *   para las demás formas: un número dentro de una matriz no se centra en el corchete.
+ * - Los signos de operación (+, −, ×, ÷, =, <…) tampoco: no marcan la altura del renglón. Ellos se
+ *   centran en la línea de las letras y números más cercanos, sin cambiar de tamaño.
  *
  * Solo mira la tinta que salió de un patrón; la escritura a mano no cuenta.
  */
@@ -64,11 +66,14 @@ object AutoAlign {
             return resized(gesture, open.bounds, scale)
         }
 
-        val refs = if (isContainer(pattern)) row else row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) } ?: true }
-        val ref = refs.minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
+        val sign = isSign(pattern)
+        val refs = if (isContainer(pattern)) row else row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
+        // Un signo sin letras ni números al lado se centra en otro signo; lo demás nunca toma su altura.
+        val ref = (refs.takeIf { it.isNotEmpty() || !sign } ?: row.filter { r -> lookup(r.patternId)?.let(::isSign) == true })
+            .minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
         val predicted = gesture.height * scale
         val ratio = predicted / ref.bounds.height.coerceAtLeast(0.5f)
-        return if (ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) {
+        return if (!sign && ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) {
             resized(gesture, ref.bounds, scale)
         } else {
             val dy = ref.bounds.centerY - gesture.centerY
@@ -96,6 +101,32 @@ object AutoAlign {
         if (key in PAIRS.keys || key in PAIRS.values) return key
         return NAMES[p.name.trim()]
     }
+
+    /**
+     * Signo de operación que va centrado en la línea (+, −, ×, ÷, =, <, ≈…): no marca la altura del
+     * renglón. Los de la biblioteca por su sección; los propios del usuario por su nombre.
+     */
+    fun isSign(p: InkPattern): Boolean {
+        if (p.stretch != null) return false
+        val key = p.id.removePrefix(PresetPatterns.PREFIX)
+        if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) return p.category == PatternCategory.OPERATORS && key !in TALL_OPERATORS
+        return isSignName(p.name)
+    }
+
+    /** Un nombre de signo centrado («Más», «+», «igual»…), sin importar tildes ni mayúsculas. */
+    fun isSignName(name: String): Boolean = fold(name) in SIGN_NAMES
+
+    /** Operadores de la biblioteca con alto de letra: sí sirven de referencia. */
+    private val TALL_OPERATORS = setOf("porcentaje", "factorial", "barra")
+
+    private val SIGN_NAMES = listOf(
+        "Más", "Menos", "Por", "Multiplicación", "Dividido", "División", "Igual", "Más o menos", "Distinto",
+        "Aproximado", "Equivalente", "Menor", "Mayor", "Menor o igual", "Mayor o igual",
+        "+", "-", "−", "×", "·", "*", "÷", "=", "±", "≠", "≈", "≡", "<", ">", "≤", "≥",
+    ).map(::fold).toSet()
+
+    private fun fold(name: String) = java.text.Normalizer.normalize(name.trim().lowercase(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
 
     /** Formas que abarcan a otras: no sirven de referencia de tamaño para una forma suelta. */
     fun isContainer(p: InkPattern): Boolean {

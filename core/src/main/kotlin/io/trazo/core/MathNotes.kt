@@ -76,7 +76,8 @@ object MathNotes {
     /** Renglones: barrido de arriba hacia abajo; un signo entra al renglón si empieza antes de que termine. */
     fun rows(glyphs: List<Glyph>): List<List<Glyph>> {
         if (glyphs.isEmpty()) return emptyList()
-        val unit = median(glyphs.filter { !isFlat(it) }.map { it.bounds.height }) ?: median(glyphs.map { it.bounds.height }) ?: 1f
+        val unit = median(glyphs.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
+            ?: median(glyphs.filter { !isFlat(it) }.map { it.bounds.height }) ?: median(glyphs.map { it.bounds.height }) ?: 1f
         val out = mutableListOf<MutableList<Glyph>>()
         var bottom = Float.NEGATIVE_INFINITY
         for (g in glyphs.sortedBy { it.bounds.top }) {
@@ -96,7 +97,8 @@ object MathNotes {
      * escritas a la misma altura (por ejemplo, una a cada lado de la hoja).
      */
     private fun split(row: List<Glyph>): List<List<Glyph>> {
-        val unit = median(row.filter { !isFlat(it) }.map { it.bounds.height }) ?: return listOf(row)
+        val unit = (median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
+            ?: median(row.filter { !isFlat(it) }.map { it.bounds.height })) ?: return listOf(row)
         val out = mutableListOf(mutableListOf(row.first()))
         var right = row.first().bounds.right
         for (g in row.drop(1)) {
@@ -115,7 +117,8 @@ object MathNotes {
             val box = row.map { it.bounds }.reduce(Bounds::union)
             val last = row.maxByOrNull { it.bounds.right }!!
             val trailing = last.takeIf { it.label == EQUALS && row.none { g -> g !== it && g.bounds.centerX > it.bounds.right } }
-            val unit = median(row.filter { !isFlat(it) }.map { it.bounds.height }) ?: box.height
+            val unit = median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
+                ?: median(row.filter { !isFlat(it) }.map { it.bounds.height }) ?: box.height
             // Tinta a mano dentro de la cuenta o en el lugar del resultado: no se calcula este renglón.
             val reach = Bounds(box.left, box.top, box.right + if (trailing != null) unit * 3f else 0f, box.bottom)
             val blocked = handwriting.any { s -> val b = s.bounds; reach.contains(b.centerX, b.centerY) }
@@ -401,6 +404,9 @@ object MathNotes {
 
     private fun isFlat(g: Glyph) = g.bounds.height < g.bounds.width * 0.4f
 
+    /** Signos centrados (+, ×, =…): no marcan la altura del renglón ([AutoAlign.isSign]). */
+    private fun isSign(g: Glyph) = AutoAlign.isSignName(g.label)
+
     private fun median(values: List<Float>): Float? = values.sorted().let { it.getOrNull(it.size / 2) }
 
     /** Dibuja con los patrones: los del usuario si tiene uno con ese nombre, si no los de la biblioteca. */
@@ -505,10 +511,12 @@ object MathNotes {
         }
 
         private fun height(row: List<Glyph>): Float =
-            median(row.filter { !isFlat(it) && it.label != EQUALS }.map { it.bounds.height })
+            median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
+                ?: median(row.filter { !isFlat(it) && it.label != EQUALS }.map { it.bounds.height })
                 ?: row.maxOf { it.bounds.width } * 1.4f
 
         private fun centerY(row: List<Glyph>): Float =
-            median(row.filter { !isFlat(it) }.map { it.bounds.centerY }) ?: row.first().bounds.centerY
+            median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.centerY })
+                ?: median(row.filter { !isFlat(it) }.map { it.bounds.centerY }) ?: row.first().bounds.centerY
     }
 }

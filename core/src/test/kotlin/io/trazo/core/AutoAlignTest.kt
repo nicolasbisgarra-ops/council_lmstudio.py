@@ -31,6 +31,27 @@ class AutoAlignTest {
         assertEquals(150f, out.centerY, 0.5f)
     }
 
+    @Test fun `un signo no marca la altura del renglon para el numero siguiente`() {
+        // «5 + 3»: el 3 toma la altura del 5 aunque el + esté más cerca.
+        val out = align("3", Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), item("mas", 170f, 125f, 210f, 165f))
+        assertEquals(80f / preset("3").outputScale, out.height, 0.5f)
+        assertEquals(140f, out.centerY, 0.5f)
+        // Solo un signo al lado: el número queda como se escribió.
+        val g = Bounds(260f, 120f, 290f, 170f)
+        assertSame(g, align("3", g, item("mas", 170f, 125f, 210f, 165f)))
+    }
+
+    @Test fun `un signo se centra en la linea de los numeros sin cambiar de tamano`() {
+        // Un + casi del alto del número: antes tomaba su altura; ahora solo se centra.
+        val g = Bounds(170f, 150f, 230f, 210f)
+        val out = align("mas", g, item("5", 100f, 100f, 140f, 180f), item("menos", 240f, 150f, 280f, 160f))
+        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(140f, out.centerY, 0.5f)
+        // Sin números al lado, se centra en otro signo.
+        val alone = align("igual", Bounds(300f, 128f, 340f, 146f), item("mas", 200f, 120f, 240f, 160f))
+        assertEquals(140f, alone.centerY, 0.5f)
+    }
+
     @Test fun `closing bracket copies the height and level of its opening`() {
         val p = preset("parentesis-cierra")
         val out = align(
