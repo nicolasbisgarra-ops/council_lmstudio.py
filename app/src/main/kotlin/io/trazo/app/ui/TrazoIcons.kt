@@ -83,6 +83,8 @@ object TrazoIcons {
             stroke("M7.8 10.5 H13.2"),
         )
     }
+    /** Dos formas de distinto ancho apoyadas sobre la misma línea. */
+    val Align by lazy { icon("Align", stroke("M3 19.5 H21"), stroke("M5 16 V7 H10 V16 Z"), stroke("M14 16 V10 H19 V16 Z")) }
     val Fit by lazy { icon("Fit", stroke("M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15")) }
     val Patterns by lazy {
         icon(

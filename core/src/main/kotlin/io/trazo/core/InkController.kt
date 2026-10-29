@@ -58,6 +58,9 @@ class InkController(
         }
     var color: Int = DEFAULT_INK_COLOR
     var width: Float = DEFAULT_INK_WIDTH
+    /** Al convertir, alinear la salida con las formas reconocidas del mismo renglón ([AutoAlign]). */
+    var autoAlign: Boolean = true
+
     /** Punta de la pluma. Con [Brush.HIGHLIGHTER] nunca se reconoce un gesto. */
     var brush: Brush = Brush.PEN
     /** Forma que dibuja [Tool.SHAPE]. */
@@ -463,7 +466,8 @@ class InkController(
             return convertToShape(pattern, 1f, gesture, shape)
         }
         val start = strokeClock(if (nowMs != 0L) nowMs else gesture.last().endTime)
-        val output = InkReplacement.place(pattern, gesture.bounds(), ids, start, style = gesture.last().style)
+        val anchor = alignedAnchor(pattern, gesture.bounds(), gestureIds.toSet())
+        val output = InkReplacement.place(pattern, anchor, ids, start, style = gesture.last().style)
         history.perform(page, StrokeEdit(gesture, output, StrokeEdit.Kind.CONVERT))
         if (selection.any { it in gestureIds }) clearSelection()
         emit(InkEvent.Converted(pattern, 1f, gesture, output))
@@ -714,6 +718,13 @@ class InkController(
         }
     }
 
+    /** Rectángulo de la salida: el del gesto, o alineado con el renglón si [autoAlign] ([AutoAlign]). */
+    private fun alignedAnchor(pattern: InkPattern, gesture: Bounds, exclude: Set<String>): Bounds {
+        if (!autoAlign) return gesture
+        val byId = patterns().associateBy { it.id }
+        return AutoAlign.anchor(pattern, gesture, AutoAlign.items(page.strokes, exclude)) { byId[it] }
+    }
+
     private fun recognize(pats: List<InkPattern>): Recognition {
         val full = currentStroke()
         val gesture = trimHold(full)
@@ -735,7 +746,8 @@ class InkController(
             points.clear()
             return
         }
-        val output = InkReplacement.place(r.match.pattern, anchorGesture.bounds(), ids, strokeClock(downTime), style = contactStyle)
+        val anchor = alignedAnchor(r.match.pattern, anchorGesture.bounds(), r.gesture.map { it.id }.toSet())
+        val output = InkReplacement.place(r.match.pattern, anchor, ids, strokeClock(downTime), style = contactStyle)
         // Un solo comando: deshacer restaura todo el gesto (incluido el trazo en curso).
         val edit = StrokeEdit(r.gesture, output, StrokeEdit.Kind.CONVERT)
         history.perform(page, edit)

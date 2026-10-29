@@ -112,6 +112,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                         "Gestos con pausa del lápiz", s.gesturesEnabled, { on -> update { it.copy(gesturesEnabled = on) } },
                         subtitle = "Sostené la punta quieta al terminar un gesto y se reemplaza por tu tinta.",
                     )
+                    SwitchRow(
+                        "Auto-alinear lo reconocido", s.autoAlign, { on -> update { it.copy(autoAlign = on) } },
+                        subtitle = "Lo nuevo toma la altura y la línea de la forma más cercana del renglón; un ), ] o } se iguala con su apertura. " +
+                            "También se cambia con 2 dedos apoyados y un tercero tocando 2 veces.",
+                    )
                     LabeledSlider(
                         "Pausa para convertir", "${s.holdMillis} ms", s.holdMillis.toFloat(), 100f..1000f,
                         onChange = { v -> update { it.copy(holdMillis = Math.round(v / 100) * 100L) } }, steps = 8,

@@ -266,6 +266,17 @@ fun EditorScreen(
                                         )
                                     }
                                 }
+                                onHoldDoubleTap = {
+                                    store.update { it.copy(autoAlign = !it.autoAlign) }
+                                    val on = store.settings.value.autoAlign
+                                    scope.launch {
+                                        snackbar.currentSnackbarData?.dismiss()
+                                        snackbar.showSnackbar(
+                                            if (on) "Auto-alineado activado" else "Auto-alineado desactivado",
+                                            duration = SnackbarDuration.Short,
+                                        )
+                                    }
+                                }
                                 onPenButtonClicks = ::penButtonClicks
                                 onViewportChanged = { vm.zoomPercent = this.zoomPercent }
                                 canvas.view = this

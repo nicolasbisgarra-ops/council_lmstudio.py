@@ -90,6 +90,8 @@ class InkCanvasView @JvmOverloads constructor(
     var onTwoFingerTap: (() -> Unit)? = null
     /** Toque rápido con tres dedos: prende o apaga la detección automática de signos y letras. */
     var onThreeFingerTap: (() -> Unit)? = null
+    /** Dos dedos apoyados y un tercero que toca dos veces seguidas. */
+    var onHoldDoubleTap: (() -> Unit)? = null
     /**
      * Clics del botón lateral con el lápiz en el aire: cuántos seguidos (1 a 3) y dónde, en
      * coordenadas de la vista. Se avisa [PEN_CLICK_WAIT_MS] después del último, para distinguir 1, 2 y 3.
@@ -167,6 +169,10 @@ class InkCanvasView @JvmOverloads constructor(
     private var tapMaxPointers = 0
     private var tapTravel = 0f
     private var tapScaled = false
+    // Toques de un tercer dedo con dos apoyados.
+    private var thirdDownTime = 0L
+    private var lastThirdTap = 0L
+    private var holdTapUsed = false
     private val tapSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -559,9 +565,25 @@ class InkCanvasView @JvmOverloads constructor(
         scaleDetector.onTouchEvent(event)
         val action = event.actionMasked
         when (action) {
-            MotionEvent.ACTION_DOWN -> { tapStartTime = event.eventTime; tapMaxPointers = 1; tapTravel = 0f; tapScaled = false }
-            MotionEvent.ACTION_POINTER_DOWN -> tapMaxPointers = max(tapMaxPointers, event.pointerCount)
-            MotionEvent.ACTION_UP -> if (!tapScaled && tapTravel < tapSlop * 2 && event.eventTime - tapStartTime < MULTI_FINGER_TAP_MS) {
+            MotionEvent.ACTION_DOWN -> {
+                tapStartTime = event.eventTime; tapMaxPointers = 1; tapTravel = 0f; tapScaled = false
+                holdTapUsed = false; lastThirdTap = 0L
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                tapMaxPointers = max(tapMaxPointers, event.pointerCount)
+                if (event.pointerCount == 3) thirdDownTime = event.eventTime
+            }
+            MotionEvent.ACTION_POINTER_UP -> if (event.pointerCount == 3 && event.eventTime - thirdDownTime < MULTI_FINGER_TAP_MS) {
+                // Un toque del tercer dedo; el segundo seguido dispara el gesto.
+                holdTapUsed = true
+                if (lastThirdTap != 0L && event.eventTime - lastThirdTap < DOUBLE_TAP_MS) {
+                    lastThirdTap = 0L
+                    onHoldDoubleTap?.invoke()
+                } else {
+                    lastThirdTap = event.eventTime
+                }
+            }
+            MotionEvent.ACTION_UP -> if (!holdTapUsed && !tapScaled && tapTravel < tapSlop * 2 && event.eventTime - tapStartTime < MULTI_FINGER_TAP_MS) {
                 when (tapMaxPointers) {
                     2 -> onTwoFingerTap?.invoke()
                     3 -> onThreeFingerTap?.invoke()
@@ -725,6 +747,7 @@ class InkCanvasView @JvmOverloads constructor(
         private const val PALM_WINDOW_MS = 500L
         private const val FLAG_CANCELED = 0x20
         private const val MULTI_FINGER_TAP_MS = 300L
+        private const val DOUBLE_TAP_MS = 450L
         /** Espera tras soltar el botón en el aire antes de decidir si fueron 1, 2 o 3 clics. */
         const val PEN_CLICK_WAIT_MS = 350L
         private val BUTTON_ACTIONS = setOf(MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE)

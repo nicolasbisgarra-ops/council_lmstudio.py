@@ -122,6 +122,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         controller.minInkLengthPx = 12f * density
         controller.handleRadiusPx = 24f * density
         controller.recognitionEnabled = s.gesturesEnabled
+        controller.autoAlign = s.autoAlign
         controller.shape = s.shape
         // El extremo goma del lápiz borra como la goma elegida; el botón lateral hace lo que se configuró.
         controller.hardwareEraserTool = eraserTool(s)
