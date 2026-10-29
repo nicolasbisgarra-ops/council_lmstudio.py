@@ -95,4 +95,50 @@ class MathLayoutConverterTest {
         val error = assertThrows(MathException::class.java) { MathLayoutConverter.convert(listOf(s("Raíz", 0f, 0f, 40f, 20f), s("x", 12f, 0f), s("Más", 23f, 0f), s("garabato", 34f, 0f))) }
         assertEquals(4, (error.error as MathError.Syntax).position)
     }
+
+    @Test fun conservaRaicesYOperadoresLateralesYEnRenglonesSeparados() {
+        assertEquals("√(4)+1", MathLayoutConverter.convert(listOf(s("Raíz", 0f, 0f, 30f, 20f), s("4", 12f, 0f), s("Más", 36f, 0f), s("1", 48f, 0f))))
+        assertEquals("3+√(4)", MathLayoutConverter.convert(listOf(s("3", 0f, 0f), s("Más", 12f, 0f), s("Raíz", 24f, 0f, 30f, 20f), s("4", 36f, 0f))))
+        assertEquals("√(4)\nx", MathLayoutConverter.convert(listOf(s("Raíz", 0f, 0f, 30f, 20f), s("4", 12f, 0f), s("x", 0f, 100f))))
+        assertEquals("(1)/(√(2))", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 30f, 2f), s("Raíz", 0f, 27f, 30f, 20f), s("2", 12f, 27f))))
+        assertEquals("√(4)^2", MathLayoutConverter.convert(listOf(s("Raíz", 0f, 10f, 30f, 20f), s("4", 12f, 10f), s("2", 32f, 0f, 6f, 10f))))
+    }
+
+    @Test fun conservaFraccionesPorRenglonOperadoresYEstructurasRecursivas() {
+        assertEquals("(1)/(2)\n(3)/(4)", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("3", 4f, 100f), s("Barra", 0f, 120f, 24f, 2f), s("4", 4f, 127f))))
+        assertEquals("(1)/(2)+(3)/(4)+(5)/(6)", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("Más", 30f, 11f), s("3", 48f, 0f), s("Barra", 44f, 20f, 24f, 2f), s("4", 48f, 27f), s("Más", 74f, 11f), s("5", 92f, 0f), s("Barra", 88f, 20f, 24f, 2f), s("6", 92f, 27f))))
+        assertEquals("((1)/(2)+(3)/(4))/(5)", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 25f, 24f, 2f), s("2", 4f, 32f), s("Más", 30f, 10f), s("3", 48f, 0f), s("Barra", 44f, 25f, 24f, 2f), s("4", 48f, 32f), s("Barra", 0f, 60f, 80f, 2f), s("5", 32f, 70f))))
+    }
+
+    @Test fun exponenteEspacialmenteLejanoNoSeAsocia() {
+        assertEquals("2\nx", MathLayoutConverter.convert(listOf(s("2", 12f, 0f, 6f, 10f), s("x", 0f, 100f))))
+    }
+
+    @Test fun erroresUsanPosicionDeSalida() {
+        val e = assertThrows(MathException::class.java) { MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("Más", 30f, 11f), s("garabato", 44f, 11f))) }
+        assertEquals(8, (e.error as MathError.Syntax).position)
+        val fraccion = assertThrows(MathException::class.java) { MathLayoutConverter.convert(listOf(s("garabato", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f))) }
+        assertEquals(1, (fraccion.error as MathError.Syntax).position)
+    }
+
+    @Test fun noAbsorbeLateralesAlResolverRaiz() {
+        assertEquals("√((1)/(2))+3", MathLayoutConverter.convert(listOf(s("Raíz", 0f, 0f, 50f, 60f), s("1", 20f, 0f), s("Barra", 15f, 25f, 30f, 2f), s("2", 20f, 35f), s("Más", 56f, 20f), s("3", 68f, 20f))))
+        assertEquals("3+√(4)", MathLayoutConverter.convert(listOf(s("3", 0f, 0f), s("Más", 12f, 0f), s("Raíz", 24f, 0f, 30f, 20f), s("4", 36f, 0f))))
+        assertEquals("√(4)^2", MathLayoutConverter.convert(listOf(s("Raíz", 0f, 10f, 30f, 20f), s("4", 12f, 10f), s("2", 32f, 0f, 6f, 10f))))
+    }
+
+    @Test fun procesaRaicesComoPartesDeFraccionesAcumuladas() {
+        val a = listOf(s("Raíz", 0f, 0f, 30f, 20f), s("4", 12f, 0f), s("Barra", 0f, 25f, 36f, 2f), s("2", 12f, 32f), s("Más", 42f, 25f), s("Raíz", 56f, 0f, 30f, 20f), s("9", 68f, 0f), s("Barra", 56f, 25f, 36f, 2f), s("3", 68f, 32f))
+        assertEquals("(√(4))/(2)+(√(9))/(3)", MathLayoutConverter.convert(a))
+    }
+
+    @Test fun exponentesPuedenSerEstructurasCompletas() {
+        assertEquals("((1)/(2))^2", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("2", 26f, -3f, 6f, 10f))))
+        assertEquals("x^(2+3)", MathLayoutConverter.convert(listOf(s("x", 0f, 14f), s("2", 12f, 0f, 6f, 10f), s("Más", 20f, 0f, 6f, 10f), s("3", 28f, 0f, 6f, 10f))))
+        assertEquals("x^((1)/(2))", MathLayoutConverter.convert(listOf(s("x", 0f, 18f, 10f, 40f), s("1", 16f, 0f, 4f, 8f), s("Barra", 12f, 10f, 14f, 1f), s("2", 16f, 14f, 4f, 8f))))
+    }
+
+    @Test fun conservaFraccionComoDenominadorDesdeLaIzquierda() {
+        assertEquals("8/((1)/(2))", MathLayoutConverter.convert(listOf(s("8", 0f, 11f), s("Barra", 12f, 11f), s("1", 28f, 0f), s("Barra", 24f, 20f, 24f, 2f), s("2", 28f, 27f))))
+    }
 }
