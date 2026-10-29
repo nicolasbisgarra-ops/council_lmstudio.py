@@ -51,3 +51,26 @@ Se sincronizó el worktree en `ib3` y se ejecutó únicamente `./gradlew -q -Ptr
 - Código y regresiones, ronda 1: `90612c02db8c1e33f088d421bf4ccb37330c5792`.
 - Código y regresiones, ronda 2: `87718c0`.
 - Informe de ronda 2: se completa en el commit de documentación que contiene este archivo.
+
+### Ronda 3
+
+El commit de código `0f945214f3a538de478c2020346ddb5035dfc691` cierra los casos priorizados de exponentes y evita las regresiones observadas al limitarse a la altura típica de la escritura el alcance vertical de las barras.
+
+- Cada símbolo elevado se asigna a la base válida más cercana a la izquierda; los descendientes forman el subárbol recursivo, para casos como `x+y^2`, `x^2+y^3` y `x^(2^3)`.
+- Los grupos entre paréntesis completos se convierten en una base; las cifras contiguas de un exponente se agrupan, y se asocian tokens estructurados, incluyendo fracción elevada a raíz.
+- Las barras de igual ancho se desempatan por posición vertical para conservar la fracción exterior y la interior. El alcance de numerador y denominador depende de la altura típica, no del ancho de la barra.
+- Los errores dentro de raíces con fracciones suman los prefijos ya emitidos, incluso al convertir renglones. La multiplicación implícita ante números se aplica a átomos variables sin lista de letras predefinida.
+- Se agregaron cinco pruebas agrupadas con entradas mínimas y resultados esperados para esas asociaciones, grupos, jerarquía de barras, renglones alejados, variables y posición de error.
+
+**Límites conocidos:** no se quitaron pruebas. No quedó un límite conocido entre los casos priorizados que se agregaron en esta ronda. La matriz temporal completa del revisor no está disponible en el checkout, así que la corrida cubre los casos mínimos agregados y las pruebas previas, no cada variante de escala de esa matriz.
+
+## Verificación de ronda 3
+
+- VM: `ib3`.
+- Comando: `./gradlew -q -Ptrazo.coreOnly=true :core:test`.
+- Resultado: **221 pruebas, 0 fallas** (216 previas y 5 pruebas nuevas).
+
+## Commits de ronda 3
+
+- Código y pruebas: `0f945214f3a538de478c2020346ddb5035dfc691`.
+- Informe: se completa en el commit documental siguiente.
