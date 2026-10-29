@@ -241,7 +241,7 @@ private fun ToolsGroup(
         Triple(EditorTool.SHAPE, TrazoIcons.Shapes, "Formas"),
         Triple(EditorTool.PAN, TrazoIcons.Pan, "Mano: desplazar la hoja"),
     )
-    tools.forEach { (tool, icon, label) ->
+    settings.toolbarTools.mapNotNull { wanted -> tools.firstOrNull { it.first == wanted } }.forEach { (tool, icon, label) ->
         val own = tool.panel()
         Box {
             ToolButton(
@@ -249,6 +249,7 @@ private fun ToolsGroup(
                 onClick = { if (vm.editorTool == tool && own != null) setPanel(own) else vm.selectTool(tool) },
                 onLongClick = { vm.selectTool(tool); if (own != null) setPanel(own) },
                 selected = vm.editorTool == tool,
+                size = settings.toolbarButtonSize.dp.dp,
             )
             if (own != null) {
                 PanelMenu(panel == own, { setPanel(null) }) {

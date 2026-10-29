@@ -2,11 +2,13 @@ package io.trazo.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import io.trazo.app.ui.EditorTool
 import io.trazo.core.Brush
 import io.trazo.core.DEFAULT_INK_COLOR
 import io.trazo.core.MathNotes
 import io.trazo.core.Paper
 import io.trazo.core.ShapeKind
+import io.trazo.core.settings.ToolPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -75,6 +77,10 @@ data class TrazoSettings(
     val quickColors: List<Int> = DEFAULT_QUICK_COLORS,
     val paperTone: PaperTone = PaperTone.THEME,
     val swapColors: List<Int> = DEFAULT_SWAP_COLORS,
+    // Orden y visibilidad de la barra y del aro de la ruleta.
+    val toolbarTools: List<EditorTool> = DEFAULT_TOOLBAR_TOOLS,
+    val wheelItems: List<WheelEntry> = DEFAULT_WHEEL_ITEMS,
+    val toolbarButtonSize: ToolbarButtonSize = ToolbarButtonSize.MEDIUM,
 )
 
 class SettingsStore(context: Context) {
@@ -111,10 +117,18 @@ class SettingsStore(context: Context) {
             ?: DEFAULT_QUICK_COLORS,
         paperTone = prefs.enum("paperTone", PaperTone.THEME),
         swapColors = prefs.getString("swapColors", null)?.let(::parseColors)?.takeIf { it.size == 2 } ?: DEFAULT_SWAP_COLORS,
+        toolbarTools = readToolbarTools(prefs.toolPreference("toolbarTools")),
+        wheelItems = readWheelItems(prefs.toolPreference("wheelItems")),
+        toolbarButtonSize = ToolbarButtonSize.entries.firstOrNull { it.name == prefs.toolPreference("toolbarButtonSize") }
+            ?: ToolbarButtonSize.MEDIUM,
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
-        val s = transform(_settings.value)
+        val next = transform(_settings.value)
+        val s = next.copy(
+            toolbarTools = normalizeToolbarTools(next.toolbarTools),
+            wheelItems = normalizeWheelItems(next.wheelItems),
+        )
         prefs.edit()
             .putLong("holdMillis", s.holdMillis)
             .putFloat("tremorRadiusDp", s.tremorRadiusDp)
@@ -143,12 +157,19 @@ class SettingsStore(context: Context) {
             .putString("quickColors", s.quickColors.joinToString(",") { Integer.toHexString(it) })
             .putString("paperTone", s.paperTone.name)
             .putString("swapColors", s.swapColors.joinToString(",") { Integer.toHexString(it) })
+            .putString("toolbarTools", ToolPreferences.serializeToolbar(s.toolbarTools.map { it.name }))
+            .putString("wheelItems", ToolPreferences.serializeWheel(s.wheelItems.map { it.name }))
+            .putString("toolbarButtonSize", s.toolbarButtonSize.name)
             .apply()
         _settings.value = s
     }
 
     private inline fun <reified E : Enum<E>> SharedPreferences.enum(key: String, default: E): E =
         getString(key, null)?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: default
+
+    /** También tolera un tipo de preferencia incorrecto, como un valor viejo o importado. */
+    private fun SharedPreferences.toolPreference(key: String): String? =
+        runCatching { getString(key, null) }.getOrNull()
 
     private fun parseColors(csv: String): List<Int>? =
         runCatching { csv.split(",").map { it.trim().toLong(16).toInt() } }.getOrNull()

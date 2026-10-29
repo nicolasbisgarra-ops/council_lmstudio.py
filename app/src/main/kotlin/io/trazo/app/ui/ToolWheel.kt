@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import io.trazo.app.data.TrazoSettings
+import io.trazo.app.data.WheelEntry
 import io.trazo.app.ink.InkCanvasView
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -58,16 +59,16 @@ fun ToolWheel(
     onPenButtonClicks: (Int) -> Unit,
 ) {
     val tool = vm.editorTool
-    val items = listOf(
-        WheelItem(TrazoIcons.Pen, "Pluma", tool == EditorTool.PEN, true) { vm.selectTool(EditorTool.PEN) },
-        WheelItem(TrazoIcons.Highlighter, "Resaltador", tool == EditorTool.HIGHLIGHTER, true) { vm.selectTool(EditorTool.HIGHLIGHTER) },
-        WheelItem(TrazoIcons.Eraser, "Goma", tool == EditorTool.ERASER, true) { vm.selectTool(EditorTool.ERASER) },
-        WheelItem(TrazoIcons.Lasso, "Lazo", tool == EditorTool.LASSO, true) { vm.selectTool(EditorTool.LASSO) },
-        WheelItem(TrazoIcons.Shapes, "Formas", tool == EditorTool.SHAPE, true) { vm.selectTool(EditorTool.SHAPE) },
-        WheelItem(TrazoIcons.Pan, "Mano: desplazar la hoja", tool == EditorTool.PAN, true) { vm.selectTool(EditorTool.PAN) },
-        WheelItem(TrazoIcons.Undo, "Deshacer", false, vm.canUndo) { vm.undo() },
-        WheelItem(TrazoIcons.Redo, "Rehacer", false, vm.canRedo) { vm.redo() },
-    )
+    val items = settings.wheelItems.map { entry ->
+        when (entry) {
+            WheelEntry.UNDO -> WheelItem(TrazoIcons.Undo, "Deshacer", false, vm.canUndo) { vm.undo() }
+            WheelEntry.REDO -> WheelItem(TrazoIcons.Redo, "Rehacer", false, vm.canRedo) { vm.redo() }
+            else -> {
+                val target = requireNotNull(entry.tool)
+                WheelItem(target.preferenceIcon(), target.preferenceLabel(), tool == target, true) { vm.selectTool(target) }
+            }
+        }
+    }
     val highlighter = tool == EditorTool.HIGHLIGHTER
     val colors = if (highlighter) HighlighterPalette.take(settings.quickColors.size) else settings.quickColors
     val current = if (highlighter) settings.highlighterColor else settings.penColor
