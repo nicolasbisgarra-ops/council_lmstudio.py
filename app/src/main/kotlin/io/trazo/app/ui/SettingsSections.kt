@@ -32,7 +32,7 @@ internal enum class PreferenceSection(val title: String, val summary: String, va
     ),
     GENERAL(
         "General", "Vibración, dedo y gestos",
-        listOf("Vibrar al reemplazar un gesto", "Escribir también con el dedo", "Gestos con pausa del lápiz"),
+        listOf("Vibrar al reemplazar un gesto (vibración)", "Escribir también con el dedo", "Gestos con pausa del lápiz"),
     ),
 }
 

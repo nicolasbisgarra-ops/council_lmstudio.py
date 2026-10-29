@@ -22,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,21 +108,23 @@ private fun <T> OrderedChoices(
 ) {
     Column {
         (selected + options.filter { it !in selected }).forEach { option ->
-            val index = selected.indexOf(option)
-            val checked = index >= 0
-            val name = label(option)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = checked, enabled = canToggle(option),
-                    onCheckedChange = { show -> onChange(if (show) selected + option else selected - option) },
-                    modifier = Modifier.semantics { contentDescription = "Mostrar $name" },
-                )
-                Text(name, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.bodyMedium)
-                IconButton(onClick = { onChange(selected.moved(index, index - 1)) }, enabled = checked && index > 0) {
-                    Icon(Icons.Filled.KeyboardArrowUp, "Subir $name")
-                }
-                IconButton(onClick = { onChange(selected.moved(index, index + 1)) }, enabled = checked && index < selected.lastIndex) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "Bajar $name")
+            key(option) {
+                val index = selected.indexOf(option)
+                val checked = index >= 0
+                val name = label(option)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = checked, enabled = canToggle(option),
+                        onCheckedChange = { show -> onChange(if (show) selected + option else selected - option) },
+                        modifier = Modifier.semantics { contentDescription = "Mostrar $name" },
+                    )
+                    Text(name, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.bodyMedium)
+                    IconButton(onClick = { onChange(selected.moved(index, index - 1)) }, enabled = checked && index > 0) {
+                        Icon(Icons.Filled.KeyboardArrowUp, "Subir $name")
+                    }
+                    IconButton(onClick = { onChange(selected.moved(index, index + 1)) }, enabled = checked && index < selected.lastIndex) {
+                        Icon(Icons.Filled.KeyboardArrowDown, "Bajar $name")
+                    }
                 }
             }
         }

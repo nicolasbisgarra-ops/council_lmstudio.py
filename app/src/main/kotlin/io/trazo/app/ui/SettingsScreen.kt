@@ -58,6 +58,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -95,7 +96,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var resetTarget by rememberSaveable { mutableStateOf<String?>(null) }
     val section = PreferenceSection.entries.firstOrNull { it.name == page }
+    val focusManager = LocalFocusManager.current
     val update = store::update
+    val openSection: (PreferenceSection) -> Unit = { target ->
+        focusManager.clearFocus()
+        page = target.name
+    }
     val back: () -> Unit = {
         if (section == null) onBack() else { page = null; picking = null }
     }
@@ -122,7 +128,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                         if (query.isBlank()) {
                             PreferenceSection.entries.forEach { item ->
-                                PreferenceLink(item.icon(), item.title, item.summary) { page = item.name }
+                                PreferenceLink(item.icon(), item.title, item.summary) { openSection(item) }
                             }
                         } else {
                             val search = query.preferenceSearchKey()
@@ -133,7 +139,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             }
                             if (matches.isEmpty()) Hint("No encontramos ajustes con ese nombre.")
                             matches.forEach { (item, name) ->
-                                PreferenceLink(item.icon(), name, item.title) { page = item.name }
+                                PreferenceLink(item.icon(), name, item.title) { openSection(item) }
                             }
                         }
                     } else {
