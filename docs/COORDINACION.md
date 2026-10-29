@@ -42,7 +42,7 @@ Reglas por agente para pegar en cada proyecto: `docs/REGLAS_AGENTES.md`.
 ## En curso
 | Quién | Qué | Archivos |
 |---|---|---|
-| Codex P-PREF | Listo para integrar en `codex/p-pref`: preferencias por sección y barra/ruleta; core verde en ib3, autorrevisión cerrada, sin push. Informe: `docs/informes/codex-p-pref.md` | `SettingsScreen.kt`, `SettingsStore.kt`, archivos nuevos de preferencias, cambios mínimos en `EditorToolbar.kt` y `ToolWheel.kt`, pruebas JVM e informe |
+| Codex P-PREF | Integrado por Claude en `claude/imolementa-esto-ag7u18` (6 commits, sha256 verificados). Conflicto en `SettingsScreen.kt` resuelto: «Auto-alinear» va en Reconocimiento y «Cuentas en la hoja» es una sección nueva. Core 7555/0/0. Riesgo abierto: barra compacta justa en ventanas angostas con botones de 48/56 dp. Informe: `docs/informes/codex-p-pref.md` | `SettingsScreen.kt`, `SettingsStore.kt`, `SettingsSections.kt`, `ToolPreferencesEditor.kt`, `EditorToolbar.kt`, `ToolWheel.kt` |
 | Claude | Revisión de capturas de la interfaz y pulido visual | `app/src/main/kotlin/io/trazo/app/ui/*`, `docs/test-results.md` |
 | Claude | El recorrido de la interfaz ahora hace fallar la CI (aviso de ChatGPT) | `scripts/ci-emulator.sh` |
 | Claude | Orquestación, revisión y merge de ramas de agentes | `docs/COORDINACION.md`, `docs/DECISIONES.md` |
