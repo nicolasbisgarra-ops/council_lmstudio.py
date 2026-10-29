@@ -16,16 +16,28 @@ object Evaluator {
         is Expr.Num -> ExactValue.of(e.value)
         is Expr.Pi -> ExactValue.PI_VALUE
         is Expr.Var -> lookup(e.name)
-        is Expr.Neg -> when (val v = evaluate(e.operand, lookup)) {
-            is ExactValue -> -v
-            is ApproxValue -> ApproxValue(-v.value)
-        }
+        is Expr.Neg -> negate(evaluate(e.operand, lookup))
         is Expr.Bin -> binary(e.op, evaluate(e.left, lookup), evaluate(e.right, lookup))
         is Expr.Pow -> power(evaluate(e.base, lookup), evaluate(e.exponent, lookup))
         is Expr.Sqrt -> squareRoot(evaluate(e.operand, lookup))
+        is Expr.Tuple -> TupleValue(e.items.map { evaluate(it, lookup) })
+    }
+
+    private fun negate(v: MathValue): MathValue = when (v) {
+        is ExactValue -> -v
+        is ApproxValue -> ApproxValue(-v.value)
+        is SymbolicValue -> SymbolicValue.negate(v)
+        is TupleValue -> TupleValue(v.items.map(::negate))
     }
 
     private fun binary(op: Char, a: MathValue, b: MathValue): MathValue {
+        if (a is TupleValue || b is TupleValue) return TupleValue.binary(op, a, b, ::binary)
+        if (a is SymbolicValue || b is SymbolicValue) return when (op) {
+            '+' -> SymbolicValue.add(a, b)
+            '-' -> SymbolicValue.add(a, SymbolicValue.negate(b))
+            '*' -> SymbolicValue.multiply(a, b)
+            else -> SymbolicValue.divide(a, b)
+        }
         if (a is ExactValue && b is ExactValue) {
             when (op) {
                 '+' -> return a + b
@@ -48,6 +60,9 @@ object Evaluator {
     }
 
     private fun power(base: MathValue, exponent: MathValue): MathValue {
+        if (exponent is TupleValue) domain("El exponente no puede ser un par")
+        if (base is TupleValue) return TupleValue(base.items.map { power(it, exponent) })
+        if (base is SymbolicValue || exponent is SymbolicValue) return SymbolicValue.power(base, exponent)
         val n = (exponent as? ExactValue)?.rational
         if (n != null && n.isInteger) {
             if (n.num.abs() > MAX_EXACT_EXPONENT.toBigInteger()) domain("El exponente es demasiado grande")
@@ -77,6 +92,8 @@ object Evaluator {
     }
 
     private fun squareRoot(v: MathValue): MathValue {
+        if (v is TupleValue) return TupleValue(v.items.map(::squareRoot))
+        if (v is SymbolicValue) domain("No se puede sacar la raíz de una cuenta con letras")
         if (v is ExactValue) {
             if (v.isZero) return v
             val (p, c) = v.monomial ?: return approxSqrt(v.toDouble())
@@ -95,6 +112,7 @@ object Evaluator {
     private fun MathValue.isZeroValue() = when (this) {
         is ExactValue -> isZero
         is ApproxValue -> value == 0.0
+        is SymbolicValue, is TupleValue -> false
     }
 
     private fun approx(x: Double): ApproxValue {

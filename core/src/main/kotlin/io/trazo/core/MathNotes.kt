@@ -7,7 +7,10 @@ import io.trazo.core.math.MathException
 import io.trazo.core.math.MathParser
 import io.trazo.core.math.MathValue
 import io.trazo.core.math.Statement
+import io.trazo.core.math.SymbolicValue
+import io.trazo.core.math.TupleValue
 import io.trazo.core.math.VariableGraph
+import io.trazo.core.math.hasLetters
 import io.trazo.core.math.variables
 import io.trazo.core.math.layout.LayoutSymbol
 import io.trazo.core.math.layout.MathLayoutConverter
@@ -24,6 +27,13 @@ import kotlin.math.abs
  *   en la página, se recalcula cuando la página cambia.
  * - [materialize]: la misma tinta (más el «=» si falta) para los renglones elegidos con el lazo, para
  *   insertarla en la página.
+ *
+ * - [calculate]: «Calcular» en el lazo. Calcula solo lo seleccionado y lo deja guardado como una cuenta
+ *   ([CalcTag]): moverla o cambiarle el tamaño no la recalcula ni la junta con lo que tenga cerca; [refresh]
+ *   la vuelve a calcular cuando se borran o se agregan signos dentro de ella.
+ *
+ * Las letras sin valor quedan escritas en el resultado («resolución genérica»): `2x + 3x = 5x`,
+ * `(3, 2)·(5, k) = (15, 2k)`.
  *
  * Un renglón con escritura a mano sin reconocer, o con algo escrito después del «=», no se calcula:
  * el resultado sería el de una parte de la cuenta, o taparía la respuesta del usuario.
@@ -145,9 +155,14 @@ object MathNotes {
     /** Un renglón listo para calcular: su texto y, si termina en «=», ese signo. */
     private class Line(val glyphs: List<Glyph>, val text: String, val trailingEquals: Glyph?, val blocked: Boolean)
 
-    private fun lines(strokes: List<InkStroke>, patterns: Map<String, InkPattern>): List<Line> {
-        val handwriting = strokes.filter { (it.patternId == null || ignored(it, patterns)) && it.brush != Brush.HIGHLIGHTER }
-        return rows(glyphs(strokes, patterns)).map { row ->
+    /**
+     * Renglones de la hoja sin las cuentas guardadas (esas ya tienen su resultado); con [only], solo los de
+     * esos trazos (lo elegido con el lazo, o una cuenta guardada).
+     */
+    private fun lines(strokes: List<InkStroke>, patterns: Map<String, InkPattern>, only: Set<String>? = null): List<Line> {
+        val pool = if (only == null) strokes.filter { it.calc == null } else strokes.filter { it.id in only }
+        val handwriting = pool.filter { (it.patternId == null || ignored(it, patterns)) && it.brush != Brush.HIGHLIGHTER }
+        return rows(glyphs(pool, patterns)).map { row ->
             val box = row.map { it.bounds }.reduce(Bounds::union)
             val last = row.maxByOrNull { it.bounds.right }!!
             val trailing = last.takeIf { it.label == EQUALS && row.none { g -> g !== it && g.bounds.centerX > it.bounds.right } }
@@ -177,7 +192,38 @@ object MathNotes {
 
     /** Valores de cada renglón, en el orden de [lines]; null donde no hay un resultado para mostrar. */
     private fun values(lines: List<Line>): List<MathValue?> =
-        evaluate(lines.map { it.text }).map { (it as? LineResult.Value)?.value }
+        evaluate(lines.map { it.text }).mapIndexed { i, r -> shownValue(lines[i].text, r) }
+
+    /** El valor para escribir después del «=»; null si no hay, o si con letras no se pudo simplificar nada. */
+    private fun shownValue(text: String, r: LineResult): MathValue? =
+        (r as? LineResult.Value)?.value?.takeIf { !trivial(text, it) }
+
+    /**
+     * Si el resultado con letras (o un par) es lo mismo que ya está escrito, en otro orden: `x + 1 =` daría
+     * `x + 1`, y eso no se escribe. Se comparan los términos sueltos con sus caracteres ordenados.
+     */
+    internal fun trivial(text: String, value: MathValue): Boolean {
+        if (!value.hasLetters() && value !is TupleValue) return false
+        fun norm(t: String) = t.removeSuffix("=").replace("≈", "").replace(';', ',')
+            .filter { it !in " *·^" }
+            .map { c -> SUPERSCRIPTS.indexOf(c).let { if (it >= 0) '0' + it else c } }.joinToString("")
+        fun terms(t: String): List<String> {
+            val out = mutableListOf<String>()
+            var depth = 0
+            val cur = StringBuilder()
+            for (c in t) {
+                if (depth == 0 && c in "+-" && cur.isNotEmpty()) { out += cur.toString(); cur.clear() }
+                if (c == '(') depth++
+                if (c == ')') depth--
+                cur.append(c)
+            }
+            if (cur.isNotEmpty()) out += cur.toString()
+            return out.map { it.removePrefix("+").toList().sorted().joinToString("") }.sorted()
+        }
+        return terms(norm(text)) == terms(norm(value.display()))
+    }
+
+    private const val SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹"
 
     /**
      * Como [VariableGraph.evaluate], pero antes despeja las incógnitas: una igualdad con una sola incógnita
@@ -185,7 +231,7 @@ object MathNotes {
      * escrito `x = 5/2`. Se repite para encadenar (`2x = 5`, `y = x + 1`, `3z = y`).
      */
     internal fun evaluate(texts: List<String>): List<LineResult> =
-        VariableGraph.evaluate(texts + solve(texts).map { it.text }).take(texts.size)
+        VariableGraph.evaluate(texts + solve(texts).map { it.text }, symbolic = true).take(texts.size)
 
     /** Una incógnita despejada: `x=5/2` ([text]) sale de la igualdad del renglón [from]. */
     private class Solved(val name: String, val text: String, val from: Int)
@@ -216,6 +262,7 @@ object MathNotes {
         fun f(x: Int): MathValue? {
             val r = VariableGraph.evaluate(texts + "$name=$x")[line] as? LineResult.Check ?: return null
             val (a, b) = r.left to r.right
+            if (a !is ExactValue && a !is ApproxValue || b !is ExactValue && b !is ApproxValue) return null
             return if (a is ExactValue && b is ExactValue) a - b else ApproxValue(a.toDouble() - b.toDouble())
         }
         val f0 = f(0) ?: return null
@@ -266,42 +313,59 @@ object MathNotes {
      * escrito en tinta). null si ahí no hay ninguno. [slop] agranda la zona del toque.
      */
     fun explain(strokes: List<InkStroke>, patterns: List<InkPattern>, x: Float, y: Float, slop: Float = 0f, wholeLine: Boolean = false): Explanation? {
+        fun hit(b: Bounds) = x >= b.left - slop && x <= b.right + slop && y >= b.top - slop && y <= b.bottom + slop
+        // Una cuenta guardada explica lo que se calculó cuando se resolvió.
+        for (op in strokes.filter { it.calc != null }.groupBy { it.calc!!.id }.values) {
+            val result = op.filter { it.calc!!.result }
+            val steps = result.firstOrNull()?.calc?.steps?.takeIf { it.isNotEmpty() } ?: continue
+            val target = if (wholeLine) op.bounds() else result.bounds()
+            if (hit(target)) return Explanation(target, steps)
+        }
         val byId = patterns.associateBy { it.id }
         val lines = lines(strokes, byId)
         if (lines.none { l -> l.glyphs.any { it.label == EQUALS } }) return null
         val texts = lines.map { it.text }
         val solved = solve(texts)
         val all = texts + solved.map { it.text }
-        val results = VariableGraph.evaluate(all)
+        val results = VariableGraph.evaluate(all, symbolic = true)
         val writer = Writer(patterns, IdGenerator.sequential("explain"))
         for ((i, line) in lines.withIndex()) {
             if (line.text.isEmpty() || line.glyphs.none { it.label == EQUALS }) continue
             val result = results[i]
             val box = line.glyphs.map { it.bounds }.reduce(Bounds::union)
-            val shownInk = if (line.trailingEquals != null && result is LineResult.Value) writer.value(result.value, line.trailingEquals, line.glyphs, 0) else emptyList()
+            val value = shownValue(line.text, result)
+            val shownInk = if (line.trailingEquals != null && value != null) writer.value(value, line.trailingEquals, line.glyphs, 0) else emptyList()
             val target = when {
                 shownInk.isNotEmpty() && wholeLine -> box.union(shownInk.bounds())
                 shownInk.isNotEmpty() -> shownInk.bounds().union(line.trailingEquals!!.bounds)
                 wholeLine -> box
                 else -> continue
             }
-            if (x < target.left - slop || x > target.right + slop || y < target.top - slop || y > target.bottom + slop) continue
-            val main = when (result) {
-                is LineResult.Value -> "${pretty(line.text)} ${result.value.display()}"
-                is LineResult.Assignment -> pretty(line.text)
-                is LineResult.Check -> pretty(line.text) + if (result.holds) "  ✓" else "  ✗ (${result.left.display()} ≠ ${result.right.display()})"
-                is LineResult.Failure -> "${pretty(line.text)}  → ${result.error.message}"
-                LineResult.Empty -> continue
-            }
-            val steps = mutableListOf(main)
-            val value = (result as? LineResult.Value)?.value
-            if (value != null && value.display().let { it.contains('/') || it.contains('π') }) {
-                decimal(value)?.let { steps += "≈ " + (if (it.negative) "−" else "") + it.numerator }
-            }
-            steps += sources(i, texts, solved, results)
-            return Explanation(target, steps)
+            if (!hit(target)) continue
+            return Explanation(target, steps(i, texts, solved, results) ?: continue)
         }
         return null
+    }
+
+    /** Explicación del renglón [i]: la cuenta con su resultado y de dónde sale cada variable. */
+    private fun steps(i: Int, texts: List<String>, solved: List<Solved>, results: List<LineResult>): List<String>? {
+        val text = texts[i]
+        val result = results[i]
+        val main = when (result) {
+            is LineResult.Value -> "${pretty(text)} ${result.value.display()}"
+            is LineResult.Assignment -> pretty(text)
+            is LineResult.Check -> pretty(text) + if (result.holds) "  ✓" else "  ✗ (${result.left.display()} ≠ ${result.right.display()})"
+            is LineResult.Failure -> "${pretty(text)}  → ${result.error.message}"
+            LineResult.Empty -> return null
+        }
+        val steps = mutableListOf(main)
+        val value = (result as? LineResult.Value)?.value
+        if (value != null && value.display().let { it.contains('/') || it.contains('π') }) {
+            decimal(value)?.let { steps += "≈ " + (if (it.negative) "−" else "") + it.numerator }
+        }
+        if (value != null && value.hasLetters()) steps += "Las letras sin valor quedan escritas: se operó con los números."
+        steps += sources(i, texts, solved, results)
+        return steps
     }
 
     /** De dónde sale cada variable que usa el renglón [line], siguiendo las que dependen de otras. */
@@ -343,7 +407,7 @@ object MathNotes {
     /** La cuenta como texto legible: «2·x + 1 =». */
     internal fun pretty(raw: String): String {
         // «(1)/(2)» de una fracción apilada se lee «1/2».
-        val text = raw.replace(SIMPLE_PARENS, "$1")
+        val text = raw.replace(SIMPLE_PARENS, "$1").replace(';', ',')
         val out = StringBuilder()
         for ((i, c) in text.withIndex()) {
             val prev = text.getOrNull(i - 1)
@@ -351,6 +415,7 @@ object MathNotes {
             when {
                 c == '*' -> out.append('·')
                 c == ' ' -> Unit
+                c == ',' -> out.append(", ")
                 binary -> { if (out.isNotEmpty()) out.append(' '); out.append(if (c == '-') '−' else c); out.append(' ') }
                 c == '-' -> out.append('−')
                 else -> out.append(c)
@@ -381,6 +446,129 @@ object MathNotes {
         }
     }
 
+    /** Los trazos de la selección que forman la cuenta: los elegidos y el resto de sus signos, sin resultados guardados. */
+    private fun pool(strokes: List<InkStroke>, selected: Set<String>): Set<String> {
+        val groups = strokes.filter { it.id in selected }.mapNotNullTo(HashSet()) { it.groupId }
+        return strokes.filter { (it.id in selected || it.groupId in groups) && it.calc?.result != true }.mapTo(HashSet()) { it.id }
+    }
+
+    /** Un renglón resuelto: sus trazos, el «=» que faltaba y el resultado, todavía sin marcar. */
+    private class Resolved(val existing: List<InkStroke>, val newInk: List<InkStroke>, val result: List<InkStroke>, val steps: List<String>)
+
+    /**
+     * Resuelve los renglones de los trazos [pool] (solo esos). Las variables salen del resto de la hoja (sin
+     * las cuentas guardadas). Solo con [addEquals] se agrega el «=» a un renglón que no lo tiene.
+     */
+    private fun resolve(strokes: List<InkStroke>, pool: Set<String>, patterns: List<InkPattern>, color: Int, ids: IdGenerator, addEquals: Boolean): List<Resolved> {
+        val byId = patterns.associateBy { it.id }
+        val lines = lines(strokes, byId, only = pool)
+        if (lines.isEmpty()) return emptyList()
+        val texts = (lines + lines(strokes.filter { it.id !in pool }, byId)).map { it.text }.toMutableList()
+        val solved = solve(texts)
+        val results = VariableGraph.evaluate(texts + solved.map { it.text }, symbolic = true)
+        val writer = Writer(patterns, ids)
+        return lines.indices.mapNotNull { i ->
+            val line = lines[i]
+            val value = shownValue(line.text, results[i]) ?: return@mapNotNull null
+            var eq = line.trailingEquals
+            var added = emptyList<InkStroke>()
+            if (eq == null) {
+                if (!addEquals || line.glyphs.any { it.label == EQUALS }) return@mapNotNull null
+                added = writer.equals(line.glyphs) ?: return@mapNotNull null
+                eq = Glyph(EQUALS, added.bounds(), added)
+                texts[i] = texts[i] + "="
+            }
+            val ink = writer.value(value, eq, line.glyphs, color)
+            if (ink.isEmpty()) return@mapNotNull null
+            Resolved(line.glyphs.flatMap { it.strokes }, added, ink, steps(i, texts, solved, results).orEmpty())
+        }
+    }
+
+    private fun tagged(r: Resolved, id: String, inputs: (InkStroke) -> InkStroke = { it }): Pair<List<InkStroke>, List<InkStroke>> {
+        val n = r.existing.size + r.newInk.size
+        val tag = CalcTag(id, inputs = n)
+        val result = r.result.map { it.copy(calc = CalcTag(id, result = true, inputs = r.result.size, steps = r.steps)) }
+        return r.existing.map { inputs(it).copy(calc = tag) } to r.newInk.map { it.copy(calc = tag) } + result
+    }
+
+    /**
+     * «Calcular» en el lazo: calcula solo los signos de [selected] (no lo que está al lado) y guarda cada
+     * renglón como una cuenta ([CalcTag]): sus signos, el «=» si faltaba y el resultado quedan marcados.
+     * Las variables de otros renglones valen con el valor que tienen ahora. Una cuenta guardada que toca la
+     * selección se rehace. null si nada se puede calcular (ver [problem]).
+     */
+    fun calculate(strokes: List<InkStroke>, selected: Set<String>, patterns: List<InkPattern>, color: Int = DEFAULT_RESULT_COLOR, ids: IdGenerator): StrokeEdit? {
+        val pool = pool(strokes, selected)
+        val made = resolve(strokes, pool, patterns, color, ids, addEquals = true)
+        if (made.isEmpty()) return null
+        val touched = strokes.filter { it.id in selected || it.id in pool }.mapNotNullTo(HashSet()) { it.calc?.id }
+        val original = strokes.associateBy { it.id }
+        val replaced = LinkedHashMap<String, InkStroke>()
+        // Las cuentas guardadas que se vuelven a calcular pierden su resultado; sus signos quedan sueltos.
+        strokes.filter { it.calc?.id in touched && it.calc?.result == false }.forEach { replaced[it.id] = it.copy(calc = null) }
+        val fresh = mutableListOf<InkStroke>()
+        for (r in made) {
+            val (inputs, ink) = tagged(r, ids.next())
+            inputs.forEach { replaced[it.id] = it }
+            fresh += ink
+        }
+        val oldResults = strokes.filter { it.calc?.id in touched && it.calc?.result == true }
+        return StrokeEdit(oldResults + replaced.keys.map { original.getValue(it) }, replaced.values.toList() + fresh, StrokeEdit.Kind.INSERT)
+    }
+
+    /**
+     * Pone al día las cuentas guardadas después de borrar o agregar algo ([added] = trazos nuevos de ese
+     * cambio). Moverlas o cambiarles el tamaño no las cambia; en cambio:
+     * - un signo nuevo escrito dentro de una cuenta se suma a ella, y la cuenta se vuelve a calcular;
+     * - si se borró algo de la cuenta, se vuelve a calcular (si queda a medias, espera sin resultado);
+     * - si se borró el resultado o el «=», deja de ser una cuenta guardada; si se borró la cuenta, se va su resultado.
+     * null si no hay nada que cambiar.
+     */
+    fun refresh(strokes: List<InkStroke>, patterns: List<InkPattern>, added: Set<String>, ids: IdGenerator, color: Int = DEFAULT_RESULT_COLOR): StrokeEdit? {
+        val ops = strokes.filter { it.calc != null }.groupBy { it.calc!!.id }
+        if (ops.isEmpty()) return null
+        val byId = patterns.associateBy { it.id }
+        val newcomers = glyphs(strokes.filter { it.id in added && it.calc == null }, byId)
+        val claimed = HashSet<String>()
+        val removed = mutableListOf<InkStroke>()
+        val replaced = LinkedHashMap<String, InkStroke>()
+        val fresh = mutableListOf<InkStroke>()
+        for ((id, op) in ops) {
+            val (results, inputs) = op.partition { it.calc!!.result }
+            val tag = inputs.firstOrNull()?.calc
+            fun dissolve() {
+                removed += results
+                inputs.forEach { replaced[it.id] = it.copy(calc = null) }
+            }
+            when {
+                tag == null -> { removed += results; continue }
+                results.isEmpty() && !tag.failed -> { dissolve(); continue }
+                results.isNotEmpty() && results.size != results.first().calc!!.inputs -> { dissolve(); continue }
+            }
+            val box = inputs.bounds().let { Bounds(it.left - it.height * 0.3f, it.top, it.right + it.height * 0.3f, it.bottom) }
+            val joined = newcomers.filter { g -> g.ids.none { it in claimed } && box.contains(g.bounds.centerX, g.bounds.centerY) }
+            if (joined.isEmpty() && inputs.size == tag!!.inputs) continue
+            val joinedStrokes = joined.flatMap { it.strokes }
+            claimed += joinedStrokes.map { it.id }
+            val members = inputs + joinedStrokes
+            if (glyphs(members, byId).none { it.label == EQUALS }) { dissolve(); continue }
+            removed += results
+            val made = resolve(strokes, members.mapTo(HashSet()) { it.id }, patterns, results.firstOrNull()?.color ?: color, ids, addEquals = false)
+                .singleOrNull()
+            if (made == null) {
+                val waiting = CalcTag(id, inputs = members.size, failed = true)
+                members.forEach { replaced[it.id] = it.copy(calc = waiting) }
+                continue
+            }
+            val (tags, ink) = tagged(made, id)
+            tags.forEach { replaced[it.id] = it }
+            fresh += ink
+        }
+        val original = strokes.associateBy { it.id }
+        val edit = StrokeEdit(removed + replaced.keys.map { original.getValue(it) }, replaced.values.toList() + fresh, StrokeEdit.Kind.INSERT)
+        return edit.takeIf { replaced.isNotEmpty() || removed.isNotEmpty() || fresh.isNotEmpty() }
+    }
+
     /**
      * Por qué «Calcular» no escribe nada para [selected], en palabras para el usuario. Se usa solo cuando
      * [materialize] vuelve vacío.
@@ -394,9 +582,10 @@ object MathNotes {
         }
         val lost = chosen.filter { it.patternId != null && it.patternId !in byId }
         if (lost.isNotEmpty()) return "Hay signos convertidos con un patrón que ya no existe: volvé a escribirlos."
-        val lines = lines(strokes, byId).filter { l -> l.glyphs.any { g -> g.ids.any { it in selected } } }
+        val pool = pool(strokes, selected)
+        val lines = lines(strokes, byId, only = pool)
         if (lines.isEmpty()) return "No hay una cuenta en la selección."
-        val values = evaluate(lines.map { it.text })
+        val values = evaluate((lines + lines(strokes.filter { it.id !in pool }, byId)).map { it.text })
         for ((line, result) in lines.zip(values)) {
             val read = line.glyphs.joinToString(" ") { it.label }
             if (line.blocked) return "Hay trazos a mano sin convertir (o patrones marcados «No usar en cuentas») dentro de la cuenta o justo después del = (leí: $read)."
@@ -413,7 +602,12 @@ object MathNotes {
             if (eqs > 0 && line.trailingEquals == null) return "Ya hay algo escrito después del = (leí: ${line.text})."
             when (result) {
                 is LineResult.Failure -> return "Leí «${line.text}», pero: ${result.error.message}."
-                is LineResult.Value -> if (shown(result.value) == null) return "El resultado de «${line.text}» es muy largo para escribirlo."
+                is LineResult.Value -> when {
+                    trivial(line.text, result.value) ->
+                        return "«${pretty(line.text)}» ya está lo más simplificado posible: las letras sin valor quedan como están."
+                    !result.value.hasLetters() && result.value !is TupleValue && shown(result.value) == null ->
+                        return "El resultado de «${line.text}» es muy largo para escribirlo."
+                }
                 else -> return "Leí «${line.text}»: no es una cuenta para resolver."
             }
         }
@@ -454,12 +648,89 @@ object MathNotes {
 
     private fun median(values: List<Float>): Float? = values.sorted().let { it.getOrNull(it.size / 2) }
 
+    /** Partes de un resultado con letras o de un par, para dibujarlo. */
+    private sealed interface Piece {
+        /** Cifras, coma decimal, π y letras. */
+        data class Text(val text: String) : Piece
+        /** Exponente: chico y arriba. */
+        data class Sup(val text: String) : Piece
+        data class Frac(val num: List<Piece>, val den: List<Piece>) : Piece
+        /** «+» o «−» entre términos; [unary] = el signo del primero, sin espacio antes. */
+        data class Sign(val plus: Boolean, val unary: Boolean = false) : Piece
+        data object Open : Piece
+        data object Close : Piece
+        /** La coma entre los elementos de un par. */
+        data object Sep : Piece
+    }
+
+    private fun pieces(v: MathValue): List<Piece>? = when (v) {
+        is TupleValue -> {
+            val out = mutableListOf<Piece>(Piece.Open)
+            for ((i, item) in v.items.withIndex()) {
+                if (i > 0) out += Piece.Sep
+                val p = pieces(item)
+                if (p == null) { out.clear(); break }
+                out += p
+            }
+            if (out.isEmpty()) null else out + Piece.Close
+        }
+        is SymbolicValue -> {
+            val out = mutableListOf<Piece>()
+            var ok = true
+            for ((i, t) in v.ordered.withIndex()) {
+                val negative = SymbolicValue.sign(t.second) < 0
+                if (i == 0 && negative) out += Piece.Sign(plus = false, unary = true)
+                if (i > 0) out += Piece.Sign(plus = !negative)
+                val p = term(t.first, SymbolicValue.magnitude(t.second))
+                if (p == null) { ok = false; break }
+                out += p
+            }
+            out.takeIf { ok }
+        }
+        else -> shown(v)?.let { n ->
+            val sign = if (n.negative) listOf(Piece.Sign(plus = false, unary = true)) else emptyList()
+            sign + if (n.denominator == null) Piece.Text(n.numerator) else Piece.Frac(listOf(Piece.Text(n.numerator)), listOf(Piece.Text(n.denominator)))
+        }
+    }
+
+    /** Un término con coeficiente positivo: «3x²», ½x (fracción apilada), 2 sobre x. */
+    private fun term(m: Map<String, Int>, c: MathValue): List<Piece>? {
+        fun letters(up: Boolean) = SymbolicValue.letters(m).filter { (it.second > 0) == up }.flatMap { (l, e) ->
+            listOf(Piece.Text(l)) + if (abs(e) > 1) listOf(Piece.Sup(abs(e).toString())) else emptyList()
+        }
+        val (num, den) = when (c) {
+            is ExactValue -> c.rational?.let { it.num.toString() to it.den.toString() } ?: return null
+            else -> (decimal(c)?.numerator ?: return null) to "1"
+        }
+        if (num.length > MAX_DIGITS || den.length > MAX_DIGITS) return null
+        val up = letters(true)
+        val top = (if (num != "1" || up.isEmpty()) listOf(Piece.Text(num)) else emptyList()) + up
+        val bottom = (if (den != "1") listOf(Piece.Text(den)) else emptyList()) + letters(false)
+        return if (bottom.isEmpty()) top else listOf(Piece.Frac(top, bottom))
+    }
+
     /** Dibuja con los patrones: los del usuario si tiene uno con ese nombre, si no los de la biblioteca. */
     private class Writer(patterns: List<InkPattern>, private val ids: IdGenerator) {
         private val user = patterns.filter { it.enabled && !PresetPatterns.isSign(it) }.associateBy { it.name.trim() }
         private val presets = (PresetPatterns.signs() + patterns.filter { it.id.startsWith(PresetPatterns.PREFIX) }).associateBy { it.name.trim() }
+        private val byId = patterns.associateBy { it.id }
+
+        /** Patrones de letras por la letra que escriben («Equis» → x, «alfa» → α); los del usuario primero. */
+        private val letters: Map<String, InkPattern> = (
+            patterns.filter { it.enabled && it.outputInk.isNotEmpty() && !PresetPatterns.isSign(it) } +
+                presets.values.filter { it.outputInk.isNotEmpty() }
+            ).mapNotNull { p -> letterOf(p)?.let { it to p } }.distinctBy { it.first }.toMap()
+
+        private fun letterOf(p: InkPattern): String? =
+            symbol(p)?.let { MathLayoutConverter.spelling(it) }?.takeIf { it.length == 1 && it[0].isLetter() && it != "π" }
 
         private fun pattern(name: String): InkPattern? = user[name]?.takeIf { it.outputInk.isNotEmpty() } ?: presets[name]
+
+        /** La letra como la escribió el usuario en este renglón; si no está, su patrón. */
+        private fun letter(l: String, row: List<Glyph>): InkPattern? =
+            row.firstNotNullOfOrNull { g ->
+                byId[g.strokes.first().patternId]?.takeIf { it.outputInk.isNotEmpty() && letterOf(it) == l }
+            } ?: letters[l]
 
         /** «=» después de la cuenta, con su estilo; null si no hay patrón de igual. */
         fun equals(row: List<Glyph>): List<InkStroke>? {
@@ -471,10 +742,14 @@ object MathNotes {
         }
 
         fun value(value: MathValue, eq: Glyph, row: List<Glyph>, color: Int): List<InkStroke> {
-            val shown = shown(value) ?: return emptyList()
             val h = height(row)
             val style = eq.strokes.first().style.copy(color = color)
             val cy = eq.bounds.centerY
+            if (value.hasLetters() || value is TupleValue) {
+                val pieces = pieces(value) ?: return emptyList()
+                return draw(pieces, eq.bounds.right + h * 0.35f, cy, h, style, row) ?: emptyList()
+            }
+            val shown = shown(value) ?: return emptyList()
             var x = eq.bounds.right + h * 0.35f
             val out = mutableListOf<InkStroke>()
             if (shown.negative) {
@@ -504,16 +779,70 @@ object MathNotes {
             return out
         }
 
+        /** [pieces] a partir de [left], con la línea media en [cy] y cifras de alto [h]; null si falta un patrón. */
+        private fun draw(pieces: List<Piece>, left: Float, cy: Float, h: Float, style: InkStyle, row: List<Glyph>): List<InkStroke>? {
+            val out = mutableListOf<InkStroke>()
+            var x = left
+            for (p in pieces) {
+                if (p is Piece.Sign && !p.unary) x += h * 0.2f
+                val part: List<InkStroke> = when (p) {
+                    is Piece.Text -> text(p.text, x, cy, h, style, row)
+                    is Piece.Sup -> text(p.text, x - h * 0.04f, cy - h * 0.45f, h * 0.55f, style, row)
+                    is Piece.Frac -> fraction(p, x, cy, h, style, row)
+                    is Piece.Sign -> if (p.plus) {
+                        pattern("Más")?.let { glyph(it, x, cy, if (it.id.startsWith(PresetPatterns.PREFIX)) h else h * 0.55f, style, ids.next()) }?.strokes
+                    } else {
+                        pattern("Menos")?.let { glyph(it, x, cy, h * 0.55f, style, ids.next(), flatWidth = h * 0.5f) }?.strokes
+                    }
+                    Piece.Open, Piece.Close -> pattern(if (p == Piece.Open) "Abre paréntesis" else "Cierra paréntesis")
+                        ?.let { glyph(it, x, cy, if (it.id.startsWith(PresetPatterns.PREFIX)) h * 1.15f else h * 1.2f, style, ids.next()) }?.strokes
+                    Piece.Sep -> comma(x, cy, h, style)
+                } ?: return null
+                if (part.isEmpty()) return null
+                out += part
+                x = part.bounds().right + h * when (p) {
+                    is Piece.Sign -> if (p.unary) 0.15f else 0.32f
+                    Piece.Sep -> 0.3f
+                    else -> 0.12f
+                }
+            }
+            return out
+        }
+
+        /** Fracción apilada: numerador y denominador más chicos, centrados sobre la barra. */
+        private fun fraction(f: Piece.Frac, x: Float, cy: Float, h: Float, style: InkStyle, row: List<Glyph>): List<InkStroke>? {
+            val small = h * 0.62f
+            val gap = h * 0.12f
+            val num = draw(f.num, x, cy - gap - small / 2f, small, style, row) ?: return null
+            val den = draw(f.den, x, cy + gap + small / 2f, small, style, row) ?: return null
+            val barRight = x + maxOf(num.bounds().width, den.bounds().width) + h * 0.2f
+            fun centered(part: List<InkStroke>): List<InkStroke> {
+                val dx = (x + barRight) / 2f - part.bounds().centerX
+                return part.map { it.transformed(Affine.translate(dx, 0f), scaleWidth = false) }
+            }
+            return centered(num) + centered(den) + InkStroke(ids.next(), listOf(InkPoint(x, cy), InkPoint(barRight, cy)), style.color, style.width,
+                groupId = ids.next(), patternId = PresetPatterns.PREFIX + "barra", brush = style.brush)
+        }
+
         /** Una cadena de cifras (y π o coma) a partir de [left], centrada en [cy]. */
-        private fun text(s: String, left: Float, cy: Float, h: Float, style: InkStyle): List<InkStroke>? {
+        private fun text(s: String, left: Float, cy: Float, h: Float, style: InkStyle, row: List<Glyph> = emptyList()): List<InkStroke>? {
             val out = mutableListOf<InkStroke>()
             var x = left
             for (c in s) {
-                val strokes = if (c == ',') {
-                    comma(x, cy, h, style)
-                } else {
-                    val p = pattern(if (c == 'π') "pi" else c.toString()) ?: return null
-                    glyph(p, x, cy, h, style, ids.next())?.strokes ?: return null
+                val strokes = when {
+                    c == ',' -> comma(x, cy, h, style)
+                    c.isLetter() && c != 'π' -> {
+                        // Una letra apoyada en la línea de las cifras, un poco más baja que ellas.
+                        val p = letter(c.toString(), row) ?: return null
+                        val preset = p.id.startsWith(PresetPatterns.PREFIX)
+                        val size = if (preset) h else h * 0.8f / AutoAlign.floor(p)
+                        val center = if (preset) cy else cy + h / 2f - size * AutoAlign.floor(p) + size / 2f
+                        glyph(p, x, center, size, style, ids.next())?.strokes ?: return null
+                    }
+                    else -> {
+                        val p = pattern(if (c == 'π') "pi" else c.toString()) ?: return null
+                        glyph(p, x, cy, h, style, ids.next())?.strokes ?: return null
+                    }
                 }
                 out += strokes
                 x = strokes.bounds().right + h * 0.12f
@@ -521,8 +850,15 @@ object MathNotes {
             return out
         }
 
+        /** La coma del usuario si tiene un patrón «Coma»; si no, un trazo corto. */
         private fun comma(x: Float, cy: Float, h: Float, style: InkStyle): List<InkStroke> {
             val top = cy + h * 0.38f
+            user["Coma"]?.takeIf { it.outputInk.isNotEmpty() }?.let { p ->
+                val src = p.outputInk.bounds()
+                val ch = h * 0.3f
+                val w = if (src.height > 0.5f) ch * src.width / src.height else ch * 0.4f
+                return InkReplacement.place(p, Bounds(x, top - ch * 0.3f, x + w, top + ch * 0.7f), ids, style = style, elastic = false)
+            }
             return listOf(InkStroke(ids.next(), listOf(InkPoint(x + h * 0.08f, top), InkPoint(x + h * 0.02f, top + h * 0.2f)),
                 style.color, style.width, groupId = ids.next(), brush = style.brush))
         }

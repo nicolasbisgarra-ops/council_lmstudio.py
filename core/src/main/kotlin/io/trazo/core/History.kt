@@ -130,14 +130,15 @@ class PageState(initial: List<InkStroke> = emptyList(), initialShapes: List<Para
 
 /** Deshacer/rehacer por página. */
 class History(private val limit: Int = 300) {
-    private class Entry(val edit: StrokeEdit, var positions: Map<String, Int>)
+    /** Un paso de deshacer: uno o más cambios aplicados en orden (el recálculo de una cuenta va con su edición). */
+    private class Entry(val edits: MutableList<StrokeEdit>, var positions: MutableList<Map<String, Int>>)
 
     private val undoStack = ArrayDeque<Entry>()
     private val redoStack = ArrayDeque<Entry>()
 
     val canUndo: Boolean get() = undoStack.isNotEmpty()
     val canRedo: Boolean get() = redoStack.isNotEmpty()
-    val lastEdit: StrokeEdit? get() = undoStack.lastOrNull()?.edit
+    val lastEdit: StrokeEdit? get() = undoStack.lastOrNull()?.edits?.first()
 
     /** Aplica y registra. */
     fun perform(page: PageState, edit: StrokeEdit) {
@@ -148,23 +149,32 @@ class History(private val limit: Int = 300) {
     /** Registra un cambio que ya se aplicó en vivo (borrador, arrastre del lazo). */
     fun record(edit: StrokeEdit, positions: Map<String, Int>) {
         if (edit.isEmpty) return
-        undoStack.addLast(Entry(edit, positions))
+        undoStack.addLast(Entry(mutableListOf(edit), mutableListOf(positions)))
         if (undoStack.size > limit) undoStack.removeFirst()
+        redoStack.clear()
+    }
+
+    /** Aplica [edit] como parte del último paso: un deshacer revierte los dos juntos. */
+    fun amendLast(page: PageState, edit: StrokeEdit) {
+        if (edit.isEmpty) return
+        val last = undoStack.lastOrNull() ?: return perform(page, edit)
+        last.edits += edit
+        last.positions += page.apply(edit)
         redoStack.clear()
     }
 
     fun undo(page: PageState): StrokeEdit? {
         val e = undoStack.removeLastOrNull() ?: return null
-        page.revert(e.edit, e.positions)
+        for (i in e.edits.indices.reversed()) page.revert(e.edits[i], e.positions[i])
         redoStack.addLast(e)
-        return e.edit
+        return e.edits.first()
     }
 
     fun redo(page: PageState): StrokeEdit? {
         val e = redoStack.removeLastOrNull() ?: return null
-        e.positions = page.apply(e.edit)
+        e.positions = e.edits.mapTo(mutableListOf()) { page.apply(it) }
         undoStack.addLast(e)
-        return e.edit
+        return e.edits.first()
     }
 
     fun clear() { undoStack.clear(); redoStack.clear() }

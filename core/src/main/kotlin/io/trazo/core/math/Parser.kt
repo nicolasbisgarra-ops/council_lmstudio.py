@@ -9,6 +9,8 @@ sealed interface Expr {
     data class Bin(val op: Char, val left: Expr, val right: Expr) : Expr
     data class Pow(val base: Expr, val exponent: Expr) : Expr
     data class Sqrt(val operand: Expr) : Expr
+    /** `(a, b, …)`: un par o una terna; las cuentas se hacen elemento a elemento. */
+    data class Tuple(val items: List<Expr>) : Expr
 }
 
 /** Lo que dice una línea del cuaderno. */
@@ -32,6 +34,7 @@ private fun collect(e: Expr, out: MutableSet<String>) {
         is Expr.Bin -> { collect(e.left, out); collect(e.right, out) }
         is Expr.Pow -> { collect(e.base, out); collect(e.exponent, out) }
         is Expr.Sqrt -> collect(e.operand, out)
+        is Expr.Tuple -> e.items.forEach { collect(it, out) }
         is Expr.Num, Expr.Pi -> Unit
     }
 }
@@ -45,7 +48,7 @@ private fun collect(e: Expr, out: MutableSet<String>) {
  * unary   = ('+' | '-') unary | power
  * power   = postfix ('^' unary)?                    asociativa a la derecha
  * postfix = primary (superíndice | '%')*               50% = 50/100
- * primary = número | identificador | π | '(' expr ')' | '√' postfix
+ * primary = número | identificador | π | '(' expr (';' expr)* ')' | '√' postfix    con ';', un par
  * ```
  * La multiplicación implícita nunca toma un número a la derecha: "2 3" es un error, no 6.
  * Lo escrito pegado es un solo término, más fuerte que × y ÷: "2x/5y" es (2x)/(5y), como se lee en la hoja.
@@ -148,10 +151,11 @@ object MathParser {
                 Kind.PI -> Expr.Pi
                 Kind.SQRT -> Expr.Sqrt(postfix())
                 Kind.LPAREN -> {
-                    val e = expr()
+                    val items = mutableListOf(expr())
+                    while (peek().kind == Kind.SEP) { next(); items += expr() }
                     val close = next()
                     if (close.kind != Kind.RPAREN) syntax("falta cerrar un paréntesis", close.pos)
-                    e
+                    items.singleOrNull() ?: Expr.Tuple(items)
                 }
                 Kind.EOF -> syntax("la expresión está incompleta", t.pos)
                 Kind.SUPERSCRIPT -> syntax("el exponente no tiene base", t.pos)
@@ -161,7 +165,7 @@ object MathParser {
         }
     }
 
-    private enum class Kind { NUMBER, IDENT, PI, PLUS, MINUS, TIMES, DIVIDE, CARET, SUPERSCRIPT, SQRT, LPAREN, RPAREN, EQUALS, PERCENT, EOF }
+    private enum class Kind { NUMBER, IDENT, PI, PLUS, MINUS, TIMES, DIVIDE, CARET, SUPERSCRIPT, SQRT, LPAREN, RPAREN, SEP, EQUALS, PERCENT, EOF }
 
     private data class Token(val kind: Kind, val text: String, val pos: Int)
 
@@ -209,6 +213,7 @@ object MathParser {
                     '√' -> Kind.SQRT
                     '(' -> Kind.LPAREN
                     ')' -> Kind.RPAREN
+                    ';' -> Kind.SEP
                     '=' -> Kind.EQUALS
                     else -> syntax("carácter inesperado '$c'", i)
                 }

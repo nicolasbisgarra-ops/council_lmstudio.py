@@ -44,6 +44,7 @@ enum class Brush {
  * @param startTime reloj monotónico de la sesión (o epoch al cargar); solo se usa para agrupar gestos.
  * @param groupId une los trazos insertados juntos (salida de un patrón, una forma) para moverlos juntos.
  * @param patternId patrón del que proviene la tinta (null = escrita a mano en la hoja).
+ * @param calc si el trazo es parte de una cuenta resuelta con «Calcular» (ver [CalcTag]).
  */
 @Serializable
 data class InkStroke(
@@ -55,6 +56,7 @@ data class InkStroke(
     val groupId: String? = null,
     val patternId: String? = null,
     val brush: Brush = Brush.PEN,
+    val calc: CalcTag? = null,
 ) {
     init {
         require(points.isNotEmpty()) { "A stroke needs at least one point" }
@@ -160,12 +162,19 @@ fun InkStroke.transformed(t: Affine, scaleWidth: Boolean = true): InkStroke = co
     width = if (scaleWidth) (width * t.scale).coerceIn(0.5f, 60f) else width,
 )
 
-/** Copia con ids nuevos; los [InkStroke.groupId] se reasignan de forma consistente (mismo grupo → mismo grupo nuevo). */
+/**
+ * Copia con ids nuevos; los [InkStroke.groupId] y las cuentas ([CalcTag.id]) se reasignan de forma
+ * consistente (mismo grupo → mismo grupo nuevo), así la copia de una cuenta es otra cuenta.
+ */
 internal fun List<InkStroke>.copiedWithNewIds(ids: IdGenerator, t: Affine = Affine.IDENTITY): List<InkStroke> {
     val groups = HashMap<String, String>()
+    val calcs = HashMap<String, String>()
     return map { s ->
         val moved = if (t == Affine.IDENTITY) s else s.transformed(t, scaleWidth = false)
-        moved.copy(id = ids.next(), groupId = s.groupId?.let { groups.getOrPut(it) { ids.next() } })
+        moved.copy(
+            id = ids.next(), groupId = s.groupId?.let { groups.getOrPut(it) { ids.next() } },
+            calc = s.calc?.let { c -> c.copy(id = calcs.getOrPut(c.id) { ids.next() }) },
+        )
     }
 }
 
@@ -181,3 +190,23 @@ fun interface IdGenerator {
         }
     }
 }
+
+/**
+ * Marca de una cuenta resuelta con «Calcular» en el lazo: sus trazos (la cuenta, [result] = false, y el
+ * resultado, [result] = true) comparten [id]. La cuenta queda guardada: moverla o cambiarle el tamaño no
+ * la recalcula ni la junta con lo que tenga cerca; solo borrar o agregar signos dentro de ella.
+ *
+ * @param inputs en la cuenta, cuántos trazos tenía al resolverla: si cambia (se borró o se agregó algo),
+ *   se vuelve a calcular. En el resultado, cuántos trazos tiene: si falta alguno, se borró el resultado.
+ * @param steps en el resultado, la explicación guardada (lo que se calculó y con qué valores).
+ * @param failed la cuenta quedó sin resultado tras editarla (por ejemplo, a medio corregir): espera a que
+ *   se le agreguen o borren signos.
+ */
+@Serializable
+data class CalcTag(
+    val id: String,
+    val result: Boolean = false,
+    val inputs: Int = 0,
+    val steps: List<String> = emptyList(),
+    val failed: Boolean = false,
+)

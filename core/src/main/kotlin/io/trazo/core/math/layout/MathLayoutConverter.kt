@@ -99,7 +99,7 @@ object MathLayoutConverter {
             val open = items.filter { it.kind == Kind.OPEN && it.box.right <= close.box.left + EPS && sameLevel(it, close) }
                 .maxByOrNull { it.box.left } ?: continue
             val inside = groupMembers(open, close, items)
-            val children = layout(inside).map(::sequence)
+            val children = layout(separators(open, inside)).map(::sequence)
             val box = inside.fold(open.box.union(close.box)) { bounds, node -> bounds.union(node.box) }
             items.removeAll((inside + open + close).toSet())
             items += Node(Kind.GROUP, box, open.y, median(inside.filter { it.canPower }.map { it.emX }).takeIf { inside.isNotEmpty() } ?: open.emX, open.emY, text = open.text, children = children)
@@ -113,6 +113,21 @@ object MathLayoutConverter {
             items += Node(Kind.ROOT, box, root.y, median(inside.map { it.emX }), median(inside.map { it.emY }), children = children)
         }
         return items
+    }
+
+    /**
+     * Dentro de «( )», una coma separa los elementos de un par: `(3,2)` es (3; 2), no 3,2. Se emite «;» a la
+     * altura media del contenido para que no la tomen por un subíndice ni por el renglón de abajo.
+     */
+    private fun separators(open: Node, inside: List<Node>): List<Node> {
+        if (open.text != "(" || inside.none { it.text == "," }) return inside
+        val plain = inside.filter { it.text != "," && it.kind != Kind.BAR }
+        val y = if (plain.isEmpty()) open.y else median(plain.map { it.y })
+        val height = if (plain.isEmpty()) open.emY else median(plain.map { it.emY })
+        return inside.map { node ->
+            if (node.text != ",") node
+            else Node(Kind.ATOM, node.box, y, node.emX, height * .3, text = ";", label = node.label)
+        }
     }
 
     /** La caja del delimitador fija el renglón. Sólo sus estructuras propias amplían la región. */
@@ -303,7 +318,7 @@ object MathLayoutConverter {
         candidate.box.left >= base.box.right - base.emX * .15 - EPS &&
         candidate.box.left - base.box.right <= max(base.emX, candidate.emX) * 2.5 + EPS
 
-    private fun isOperator(node: Node) = node.kind == Kind.BAR || node.kind == Kind.ATOM && node.text in setOf("+", "-", "*", "/", "=")
+    private fun isOperator(node: Node) = node.kind == Kind.BAR || node.kind == Kind.ATOM && node.text in setOf("+", "-", "*", "/", "=", ";")
 
     private fun sameLevel(a: Node, b: Node): Boolean {
         fun reach(node: Node) = if (node.kind == Kind.ROOT) node.box.height / 2 else node.emY * .31
@@ -402,7 +417,8 @@ object MathLayoutConverter {
         else -> Kind.ATOM
     }
 
-    private fun spelling(label: String): String? = when (label) {
+    /** Lo que vale una etiqueta de patrón en el texto de la cuenta: «Más» es «+», «alfa» es «α». */
+    internal fun spelling(label: String): String? = when (label) {
         "Más", "+" -> "+"; "Menos", "−", "-" -> "-"; "Por", "Multiplicación", "×", "·", "*" -> "*"
         "Dividido", "División", "÷", ":", "Barra", "Fracción", "Barra de fracción", "/" -> "/"
         "Porcentaje", "%" -> "%"

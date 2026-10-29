@@ -77,7 +77,7 @@ class MathNotesTest {
         val msg = MathNotes.problem(page, page.map { it.id }.toSet(), odd)
         assertTrue(msg, msg.contains("«suma rara»"))
         val inside = page + InkStroke("h", listOf(InkPoint(30f, 10f), InkPoint(34f, 30f)))
-        assertTrue(MathNotes.problem(inside, page.map { it.id }.toSet(), patterns).contains("sin convertir"))
+        assertTrue(MathNotes.problem(inside, inside.map { it.id }.toSet(), patterns).contains("sin convertir"))
     }
 
     @Test fun `dos cuentas a la misma altura separadas se calculan cada una`() {
@@ -208,6 +208,108 @@ class MathNotesTest {
         assertTrue(c.mathResults.isEmpty())
         c.undo()
         assertEquals(listOf(listOf("4", "Por", "2")), labels(page.strokes))
+    }
+
+    private fun custom(name: String, vararg pts: Pair<Float, Float>): InkPattern {
+        val ink = listOf(InkStroke("$name-o", pts.map { InkPoint(it.first, it.second) }))
+        return InkPattern("user-$name", name, listOf(ink), ink)
+    }
+
+    private val k = custom("k", 0f to 0f, 0f to 40f, 0f to 20f, 20f to 0f, 0f to 20f, 20f to 40f)
+    private val comma = custom("Coma", 4f to 0f, 4f to 6f, 0f to 12f)
+    private val withLetters = listOf(k, comma) + patterns
+    private val lettersById = withLetters.associateBy { it.id }
+
+    private fun calcLabels(ink: List<InkStroke>) = MathNotes.rows(MathNotes.glyphs(ink, lettersById)).map { r -> r.map { it.label } }
+
+    private fun controller(page: PageState, ps: List<InkPattern> = patterns) = InkController(page, History(), { ps }, IdGenerator.sequential("c"))
+
+    @Test fun `calcular con el lazo solo usa lo seleccionado`() {
+        val page = PageState(row(0f, "2", "Más", "3", "Por", "4"))
+        val c = controller(page)
+        // Solo «3 × 4»: el 2 y el + quedan afuera.
+        c.select(page.strokes.filter { s -> s.bounds.left > 60f }.map { it.id })
+        assertTrue(c.calculateSelection())
+        val results = page.strokes.filter { it.calc?.result == true }
+        assertEquals(listOf(listOf("1", "2")), labels(results))
+    }
+
+    @Test fun `una cuenta guardada no cambia al moverla ni al cambiarle el tamano`() {
+        val page = PageState(row(0f, "4", "Por", "2") + row(0f, "Más", "5").map { it.transformed(Affine.translate(400f, 0f)) })
+        val c = controller(page)
+        c.select(page.strokes.filter { it.bounds.left < 300f }.map { it.id })
+        assertTrue(c.calculateSelection())
+        val op = page.strokes.filter { it.calc != null }.map { it.id }.toSet()
+        // La cuenta se lleva al lado del «+ 5»: no lo toma ni se recalcula.
+        c.select(op.toList())
+        c.transformSelection(Affine.translate(150f, 0f))
+        c.scaleSelection(1.5f)
+        assertEquals(listOf("8"), labels(page.strokes.filter { it.calc?.result == true }).flatten())
+        assertTrue(page.strokes.filter { it.id !in op }.all { it.calc == null })
+        assertTrue(c.mathResults.isEmpty())
+    }
+
+    @Test fun `borrar o agregar un signo en la cuenta la recalcula en el mismo paso deshacible`() {
+        val page = PageState(row(0f, "4", "Por", "2"))
+        val c = controller(page)
+        c.select(page.strokes.map { it.id })
+        assertTrue(c.calculateSelection())
+        fun result() = labels(page.strokes.filter { it.calc?.result == true }).flatten()
+        assertEquals(listOf("8"), result())
+        // Se borra el 2 y se escribe un 3 en su lugar.
+        val two = page.strokes.first { it.calc?.result == false && byId[it.patternId]?.name == "2" }
+        val b = two.bounds
+        c.select(page.strokes.filter { it.groupId == two.groupId }.map { it.id }); c.deleteSelection()
+        assertTrue(result().isEmpty())
+        c.insertPattern((signs["3"] ?: user.getValue("3")), b.centerX, b.centerY, b.height)
+        assertEquals(listOf("1", "2"), result())
+        // Deshacer el 3 vuelve a la cuenta a medias; deshacer el borrado, al 8.
+        c.undo(); assertTrue(result().isEmpty())
+        c.undo(); assertEquals(listOf("8"), result())
+    }
+
+    @Test fun `borrar el resultado libera la cuenta`() {
+        val page = PageState(row(0f, "4", "Por", "2"))
+        val c = controller(page)
+        c.select(page.strokes.map { it.id })
+        assertTrue(c.calculateSelection())
+        c.select(page.strokes.filter { it.calc?.result == true }.map { it.id }); c.deleteSelection()
+        assertTrue(page.strokes.all { it.calc == null })
+        // Ya no es una cuenta guardada: vuelve el resultado automático.
+        assertEquals(listOf(listOf("8")), labels(c.mathResults))
+    }
+
+    @Test fun `una cuenta con letras deja la letra escrita`() {
+        val page = PageState(row(0f, "2").let { two ->
+            two + InkReplacement.place(k, Bounds(two.bounds().right + 6f, 10f, two.bounds().right + 26f, 40f), ids)
+        }.let { it + row(0f, "Más", "3").map { s -> s.transformed(Affine.translate(it.bounds().right + 12f, 0f)) } }
+            .let { it + InkReplacement.place(k, Bounds(it.bounds().right + 6f, 10f, it.bounds().right + 26f, 40f), ids) })
+        val c = controller(page, withLetters)
+        c.select(page.strokes.map { it.id })
+        assertTrue(c.calculateSelection())
+        assertEquals(listOf("5", "k"), calcLabels(page.strokes.filter { it.calc?.result == true }).flatten())
+    }
+
+    @Test fun `un par por un par se escribe elemento a elemento`() {
+        // (3, 2) × (5, k) = (15, 2k)
+        var x = 0f
+        val ink = mutableListOf<InkStroke>()
+        fun put(p: InkPattern, top: Float = 0f, bottom: Float = 40f, w: Float = 22f) {
+            ink += InkReplacement.place(p, Bounds(x, top, x + w, bottom), ids).also { x = it.bounds().right + 10f }
+        }
+        val open = signs["Abre paréntesis"] ?: patterns.first { it.name == "Abre paréntesis" }
+        val close = signs["Cierra paréntesis"] ?: patterns.first { it.name == "Cierra paréntesis" }
+        put(open, -6f, 46f, 12f); put(signs["3"] ?: user.getValue("3")); put(comma, 32f, 46f, 6f); put(signs["2"] ?: user.getValue("2")); put(close, -6f, 46f, 12f)
+        put(signs.getValue("Por"), 12f, 28f, 16f)
+        put(open, -6f, 46f, 12f); put(signs["5"] ?: user.getValue("5")); put(comma, 32f, 46f, 6f); put(k, 10f, 40f, 18f); put(close, -6f, 46f, 12f)
+        val page = PageState(ink)
+        val c = controller(page, withLetters)
+        c.select(page.strokes.map { it.id })
+        assertTrue(c.calculationProblem(), c.calculateSelection())
+        assertEquals(
+            listOf("Abre paréntesis", "1", "5", "Coma", "2", "k", "Cierra paréntesis"),
+            calcLabels(page.strokes.filter { it.calc?.result == true }).flatten(),
+        )
     }
 
     @Test fun `el controlador recalcula al cambiar la pagina y se puede apagar`() {

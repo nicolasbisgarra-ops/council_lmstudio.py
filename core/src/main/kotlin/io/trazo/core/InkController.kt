@@ -348,7 +348,9 @@ class InkController(
             }
             Mode.ERASE, Mode.STROKE_ERASE -> {
                 penMove(x, y, pressure, timeMs)
-                history.record(eraseEdit(), erasePositions)
+                val erased = eraseEdit()
+                history.record(erased, erasePositions)
+                if (!erased.isEmpty) refreshCalcs(erased.added)
                 resetContact()
             }
             Mode.LASSO_PATH -> {
@@ -501,6 +503,7 @@ class InkController(
         val anchor = alignedAnchor(pattern, gesture.bounds(), gestureIds.toSet())
         val output = InkReplacement.place(pattern, anchor, ids, start, style = gesture.last().style)
         history.perform(page, StrokeEdit(gesture, output, StrokeEdit.Kind.CONVERT))
+        refreshCalcs(output)
         if (selection.any { it in gestureIds }) clearSelection()
         emit(InkEvent.Converted(pattern, 1f, gesture, output))
         emit(InkEvent.PageChanged)
@@ -516,6 +519,7 @@ class InkController(
         val anchor = Bounds(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
         val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style, elastic = false)
         history.perform(page, StrokeEdit(emptyList(), output, StrokeEdit.Kind.INSERT))
+        refreshCalcs(output)
         emit(InkEvent.PageChanged)
         return output
     }
@@ -561,22 +565,32 @@ class InkController(
         val strokes = selection.mapNotNull { page.find(it) }
         if (strokes.isEmpty()) return
         history.perform(page, StrokeEdit(strokes, emptyList(), StrokeEdit.Kind.DELETE))
+        refreshCalcs(emptyList())
         selection = emptyList()
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
     }
 
     /**
-     * Calcula las cuentas de la selección y escribe el resultado en la página (con «=» si faltaba), en un
-     * solo paso deshacible. Devuelve false si no había nada que calcular.
+     * Calcula solo lo que está en la selección y escribe el resultado en la página (con «=» si faltaba), en
+     * un solo paso deshacible. La cuenta queda guardada: moverla o cambiarle el tamaño no la recalcula;
+     * borrarle o agregarle signos sí (ver [MathNotes.refresh]). Devuelve false si no había nada que calcular.
      */
     fun calculateSelection(): Boolean {
         if (mode != Mode.NONE || selection.isEmpty()) return false
-        val added = MathNotes.materialize(page.strokes, selection.toSet(), patterns(), mathColor, ids)
-        if (added.isEmpty()) return false
-        history.perform(page, StrokeEdit(emptyList(), added, StrokeEdit.Kind.INSERT))
-        selection = selection + added.map { it.id }
+        val edit = MathNotes.calculate(page.strokes, selection.toSet(), patterns(), mathColor, ids) ?: return false
+        history.perform(page, edit)
+        val gone = edit.removed.mapTo(HashSet()) { it.id }
+        selection = (selection.filter { it !in gone || page.contains(it) } + edit.added.map { it.id }).distinct()
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
         return true
+    }
+
+    /** Pone al día las cuentas guardadas tras borrar o agregar signos, dentro del mismo paso deshacible. */
+    private fun refreshCalcs(added: Collection<InkStroke>) {
+        val edit = MathNotes.refresh(page.strokes, patterns(), added.mapTo(HashSet()) { it.id }, ids, mathColor) ?: return
+        history.amendLast(page, edit)
+        if (selection.isNotEmpty()) selection = selection.filter { page.contains(it) }
+        emit(InkEvent.PageChanged)
     }
 
     /** Por qué [calculateSelection] no pudo calcular, para mostrarlo. */
@@ -812,6 +826,7 @@ class InkController(
         // Un solo comando: deshacer restaura todo el gesto (incluido el trazo en curso).
         val edit = StrokeEdit(r.gesture, output, StrokeEdit.Kind.CONVERT)
         history.perform(page, edit)
+        refreshCalcs(output)
         mode = Mode.CONSUMED
         points.clear()
         emit(InkEvent.Converted(r.match.pattern, r.match.score, r.gesture, output))

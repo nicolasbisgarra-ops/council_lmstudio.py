@@ -106,6 +106,7 @@ data class ApproxValue(val value: Double) : MathValue {
 
 /** Igualdad para comprobar "a = b": exacta entre exactos, con tolerancia relativa si hay aproximados. */
 fun MathValue.sameAs(other: MathValue): Boolean {
+    if (hasLetters() || other.hasLetters() || this is TupleValue || other is TupleValue) return sameSymbolic(this, other)
     if (this is ExactValue && other is ExactValue) return this == other
     val a = toDouble()
     val b = other.toDouble()

@@ -16,7 +16,12 @@ sealed interface LineResult {
  */
 object VariableGraph {
 
-    fun evaluate(lines: List<String>): List<LineResult> {
+    /**
+     * Con [symbolic], una variable sin definir no es un error: queda como letra en el resultado
+     * (`2x + 3x` da `5x`). Una igualdad que sigue teniendo letras de los dos lados y no es una identidad
+     * informa la letra sin definir, como antes.
+     */
+    fun evaluate(lines: List<String>, symbolic: Boolean = false): List<LineResult> {
         val statements: List<Result<Statement>> = lines.map { line ->
             try {
                 Result.success(MathParser.parseStatement(line))
@@ -41,7 +46,8 @@ object VariableGraph {
 
         val cache = mutableMapOf<String, Result<MathValue>>()
         fun valueOf(name: String): Result<MathValue> = cache.getOrPut(name) {
-            val line = definedAt[name] ?: return@getOrPut Result.failure(MathException(MathError.Undefined(name)))
+            val line = definedAt[name] ?: return@getOrPut if (symbolic) Result.success(SymbolicValue.variable(name))
+                else Result.failure(MathException(MathError.Undefined(name)))
             cycleOf[name]?.let { return@getOrPut Result.failure(MathException(MathError.Cycle(it))) }
             val s = statements[line].getOrThrow() as Statement.Assign
             compute(s.expr, ::valueOf)
@@ -60,7 +66,13 @@ object VariableGraph {
                     when {
                         left.isFailure -> failure(left.exceptionOrNull()!!)
                         right.isFailure -> failure(right.exceptionOrNull()!!)
-                        else -> LineResult.Check(left.getOrThrow().sameAs(right.getOrThrow()), left.getOrThrow(), right.getOrThrow())
+                        else -> {
+                            val (a, b) = left.getOrThrow() to right.getOrThrow()
+                            val holds = a.sameAs(b)
+                            val free = (s.left.variables() + s.right.variables()).firstOrNull { it !in definedAt }
+                            if (!holds && free != null && (a.hasLetters() || b.hasLetters())) LineResult.Failure(MathError.Undefined(free))
+                            else LineResult.Check(holds, a, b)
+                        }
                     }
                 }
             }
