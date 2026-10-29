@@ -2,6 +2,7 @@
 
 package io.trazo.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,12 +28,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,8 +45,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -78,132 +84,75 @@ private sealed interface PrefColor {
     data object MathResult : PrefColor
 }
 
-/** Preferencias agrupadas como en las apps de notas: apariencia, lápiz y gestos, S Pen y cuadernos. */
+/** Lista de secciones con páginas internas; volver desde una página conserva la búsqueda. */
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val store = LocalContext.current.trazo.settings
     val s by store.settings.collectAsState()
     val stylus = remember { hasStylusDevice() }
     var picking by remember { mutableStateOf<PrefColor?>(null) }
-    var confirmReset by remember { mutableStateOf(false) }
+    var page by rememberSaveable { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var resetTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    val section = PreferenceSection.entries.firstOrNull { it.name == page }
     val update = store::update
+    val back: () -> Unit = {
+        if (section == null) onBack() else { page = null; picking = null }
+    }
+    BackHandler(enabled = section != null) { back() }
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Preferencias") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver") } },
+                title = { Text(section?.title ?: "Preferencias") },
+                navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver") } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            Column(
-                Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                PrefCard("Apariencia") {
-                    Text("Tema", style = MaterialTheme.typography.bodyMedium)
-                    ChoiceRow(ThemeMode.entries, s.themeMode, { it.label }, { m -> update { it.copy(themeMode = m) } })
-                    Text("Color de acento", style = MaterialTheme.typography.bodyMedium)
-                    AccentGrid(s, onPick = { p -> update { it.copy(accent = p.accent, accent2 = p.second) } }, onCustom = { picking = PrefColor.Accent })
-                    Text("Hoja", style = MaterialTheme.typography.bodyMedium)
-                    ChoiceRow(PaperTone.entries, s.paperTone, { it.label }, { t -> update { it.copy(paperTone = t) } })
-                    Hint("En hoja oscura las tintas oscuras se ven claras; el color guardado de cada trazo no cambia.")
-                }
-
-                PrefCard("Lápiz y gestos") {
-                    SwitchRow(
-                        "Gestos con pausa del lápiz", s.gesturesEnabled, { on -> update { it.copy(gesturesEnabled = on) } },
-                        subtitle = "Sostené la punta quieta al terminar un gesto y se reemplaza por tu tinta.",
-                    )
-                    SwitchRow(
-                        "Auto-alinear lo reconocido", s.autoAlign, { on -> update { it.copy(autoAlign = on) } },
-                        subtitle = "Lo nuevo toma la altura y la línea de la forma más cercana del renglón; un ), ] o } se iguala con su apertura. " +
-                            "También se cambia con 2 dedos apoyados y un tercero tocando 2 veces.",
-                    )
-                    LabeledSlider(
-                        "Pausa para convertir", "${s.holdMillis} ms", s.holdMillis.toFloat(), 100f..1000f,
-                        onChange = { v -> update { it.copy(holdMillis = Math.round(v / 100) * 100L) } }, steps = 8,
-                    )
-                    LabeledSlider(
-                        "Temblor tolerado", "${"%.0f".format(s.tremorRadiusDp)} dp", s.tremorRadiusDp, 2f..16f,
-                        onChange = { v -> update { it.copy(tremorRadiusDp = v.toInt().toFloat()) } },
-                    )
-                    SwitchRow("Mostrar el anillo de pausa", s.showHoldIndicator, { on -> update { it.copy(showHoldIndicator = on) } })
-                    SwitchRow("Vibrar al reemplazar un gesto", s.haptics, { on -> update { it.copy(haptics = on) } })
-                    SwitchRow(
-                        "Aprender de mis correcciones", s.learnFromCorrections, { on -> update { it.copy(learnFromCorrections = on) } },
-                        subtitle = "Al enseñar o corregir un gesto en la hoja, se guarda como ejemplo del patrón.",
-                    )
-                }
-
-                PrefCard("Cuentas en la hoja") {
-                    SwitchRow(
-                        "Resolver las cuentas", s.mathNotes, { on -> update { it.copy(mathNotes = on) } },
-                        subtitle = "Al terminar un renglón con = aparece el resultado con tus patrones, usando los valores " +
-                            "escritos en otros renglones de la misma hoja (x = 3); cada hoja es independiente. " +
-                            "Con el lazo también podés elegir «Calcular».",
-                    )
-                    Text("Color de lo autocompletado", style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ColorDot(s.mathResultColor, selected = false, onClick = { picking = PrefColor.MathResult }, size = 32.dp, description = "Cambiar el color de lo autocompletado")
-                        TextButton(onClick = { update { it.copy(mathResultColor = MathNotes.DEFAULT_RESULT_COLOR) } }) { Text("Volver al verde") }
+            key(section) {
+                Column(
+                    Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    if (section == null) {
+                        OutlinedTextField(
+                            value = query, onValueChange = { query = it }, label = { Text("Buscar ajustes") },
+                            singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (query.isBlank()) {
+                            PreferenceSection.entries.forEach { item ->
+                                PreferenceLink(item.icon(), item.title, item.summary) { page = item.name }
+                            }
+                        } else {
+                            val search = query.preferenceSearchKey()
+                            val matches = PreferenceSection.entries.flatMap { item ->
+                                item.settingNames.filter { name ->
+                                    name.preferenceSearchKey().contains(search) || item.title.preferenceSearchKey().contains(search)
+                                }.map { name -> item to name }
+                            }
+                            if (matches.isEmpty()) Hint("No encontramos ajustes con ese nombre.")
+                            matches.forEach { (item, name) ->
+                                PreferenceLink(item.icon(), name, item.title) { page = item.name }
+                            }
+                        }
+                    } else {
+                        SettingsPage(section, s, stylus, update) { picking = it }
                     }
-                    Hint("Lo autocompletado no se guarda como tinta: se recalcula al cambiar la cuenta. «Calcular» con el lazo sí lo escribe en la hoja.")
-                }
 
-                PrefCard("S Pen") {
+                    OutlinedButton(onClick = { resetTarget = section?.name ?: "ALL" }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                        Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (section == null) "Restablecer preferencias" else "Volver a fábrica")
+                    }
                     Text(
-                        if (stylus) "Lápiz detectado en este dispositivo." else "No se detectó lápiz: podés habilitar el dedo para escribir.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        "Todo funciona sin conexión. Los cuadernos se guardan como trazos editables en este dispositivo.",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text("Botón lateral (mantener apretado)", style = MaterialTheme.typography.bodyMedium)
-                    ChoiceRow(SideButtonAction.entries, s.sideButton, { it.label }, { a -> update { it.copy(sideButton = a) } })
-                    Hint("Con «Goma», mientras tengas apretado el botón del S Pen borrás; al soltarlo seguís con la herramienta de antes.")
-                    Text("Botón en el aire (sin tocar la pantalla)", style = MaterialTheme.typography.bodyMedium)
-                    Hint(
-                        "1 clic abre la ruleta de herramientas y colores; 2 clics alternan entre estos dos colores; " +
-                            "3 clics prenden o apagan el modo formas. En Galaxy, si se abre Air command, desactivá " +
-                            "«Abrir Air command con el botón del lápiz» en los ajustes del S Pen.",
-                    )
-                    Row5(s.swapColors, onPick = { i -> picking = PrefColor.Swap(i) }, label = "Cambiar el color del doble clic")
-                    Text("Goma", style = MaterialTheme.typography.bodyMedium)
-                    ChoiceRow(EraserMode.entries, s.eraserMode, { it.label }, { m -> update { it.copy(eraserMode = m) } })
-                    LabeledSlider(
-                        "Tamaño de la goma", "${s.eraserRadiusDp.toInt()} dp", s.eraserRadiusDp, 4f..40f,
-                        onChange = { v -> update { it.copy(eraserRadiusDp = v.toInt().toFloat()) } },
-                    )
-                    SwitchRow(
-                        "Escribir también con el dedo", s.fingerDraws, { on -> update { it.copy(fingerDraws = on) } },
-                        subtitle = "Si está activo, el dedo deja de desplazar la hoja (usá dos dedos o la mano de la barra).",
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
                     )
                 }
-
-                PrefCard("Colores rápidos") {
-                    Hint("Los cinco colores de la barra del editor. Tocá uno para cambiarlo.")
-                    Row5(s.quickColors, onPick = { i -> picking = PrefColor.Quick(i) })
-                    TextButton(onClick = { update { it.copy(quickColors = DEFAULT_QUICK_COLORS) } }) { Text("Volver a los colores de fábrica") }
-                }
-
-                PrefCard("Cuadernos nuevos") {
-                    Text("Papel", style = MaterialTheme.typography.bodyMedium)
-                    ChoiceRow(Paper.entries, s.paper, ::paperName, { p -> update { it.copy(paper = p) } })
-                    Hint("Cada cuaderno puede cambiar su papel desde la barra del editor.")
-                }
-
-                OutlinedButton(onClick = { confirmReset = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Restablecer preferencias")
-                }
-                Text(
-                    "Todo funciona sin conexión. Los cuadernos se guardan como trazos editables en este dispositivo.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
-                )
             }
         }
     }
@@ -236,14 +185,152 @@ fun SettingsScreen(onBack: () -> Unit) {
         )
     }
 
-    if (confirmReset) {
+    resetTarget?.let { target ->
+        val targetSection = PreferenceSection.entries.firstOrNull { it.name == target }
         AlertDialog(
-            onDismissRequest = { confirmReset = false },
-            title = { Text("¿Restablecer las preferencias?") },
-            text = { Text("Vuelven los valores de fábrica (tema, colores, lápiz y goma). Tus cuadernos y patrones no cambian.") },
-            confirmButton = { TextButton(onClick = { confirmReset = false; update { TrazoSettings() } }) { Text("Restablecer") } },
-            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancelar") } },
+            onDismissRequest = { resetTarget = null },
+            title = { Text(targetSection?.let { "¿Restablecer ${it.title}?" } ?: "¿Restablecer las preferencias?") },
+            text = { Text(
+                if (targetSection == null) "Vuelven todas las preferencias a sus valores de fábrica. Tus cuadernos y patrones no cambian."
+                else "Vuelven los valores de fábrica de ${targetSection.title}. Las otras secciones, tus cuadernos y tus patrones no cambian.",
+            ) },
+            confirmButton = { TextButton(onClick = {
+                resetTarget = null
+                update { if (targetSection == null) TrazoSettings() else it.resetSection(targetSection) }
+            }) { Text("Restablecer") } },
+            dismissButton = { TextButton(onClick = { resetTarget = null }) { Text("Cancelar") } },
         )
+    }
+}
+
+private fun PreferenceSection.icon(): ImageVector = when (this) {
+    PreferenceSection.APPEARANCE -> TrazoIcons.Palette
+    PreferenceSection.PEN -> TrazoIcons.Pen
+    PreferenceSection.PAPER -> TrazoIcons.Paper
+    PreferenceSection.TOOLS -> TrazoIcons.Eraser
+    PreferenceSection.RECOGNITION -> TrazoIcons.Wand
+    PreferenceSection.MATH -> TrazoIcons.Calculate
+    PreferenceSection.GENERAL -> Icons.Filled.Settings
+}
+
+@Composable
+private fun PreferenceLink(icon: ImageVector, title: String, summary: String, onClick: () -> Unit) {
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.clickable(role = Role.Button, onClick = onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(24.dp))
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Hint(summary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsPage(
+    section: PreferenceSection,
+    s: TrazoSettings,
+    stylus: Boolean,
+    update: ((TrazoSettings) -> TrazoSettings) -> Unit,
+    pick: (PrefColor) -> Unit,
+) {
+    when (section) {
+        PreferenceSection.APPEARANCE -> PrefCard("Apariencia") {
+            Text("Tema", style = MaterialTheme.typography.bodyMedium)
+            ChoiceRow(ThemeMode.entries, s.themeMode, { it.label }, { m -> update { it.copy(themeMode = m) } })
+            Text("Color de acento", style = MaterialTheme.typography.bodyMedium)
+            AccentGrid(s, onPick = { p -> update { it.copy(accent = p.accent, accent2 = p.second) } }, onCustom = { pick(PrefColor.Accent) })
+            Text("Tono de hoja", style = MaterialTheme.typography.bodyMedium)
+            ChoiceRow(PaperTone.entries, s.paperTone, { it.label }, { t -> update { it.copy(paperTone = t) } })
+            Hint("OLED usa negro puro. En hoja oscura las tintas oscuras se ven claras; el color guardado de cada trazo no cambia.")
+        }
+        PreferenceSection.PEN -> {
+            PrefCard("Botones del lápiz") {
+                Text(
+                    if (stylus) "Lápiz detectado en este dispositivo." else "No se detectó lápiz: podés habilitar el dedo para escribir en General.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Botón lateral (mantener apretado)", style = MaterialTheme.typography.bodyMedium)
+                ChoiceRow(SideButtonAction.entries, s.sideButton, { it.label }, { a -> update { it.copy(sideButton = a) } })
+                Hint("Con «Goma», mientras tengas apretado el botón del S Pen borrás; al soltarlo seguís con la herramienta de antes.")
+                Text("Botón en el aire (sin tocar la pantalla)", style = MaterialTheme.typography.bodyMedium)
+                Hint(
+                    "1 clic abre la ruleta de herramientas y colores; 2 clics alternan entre estos dos colores; " +
+                        "3 clics prenden o apagan el modo formas. En Galaxy, si se abre Air command, desactivá " +
+                        "«Abrir Air command con el botón del lápiz» en los ajustes del S Pen.",
+                )
+                Text("Colores del doble clic", style = MaterialTheme.typography.bodyMedium)
+                Row5(s.swapColors, onPick = { pick(PrefColor.Swap(it)) }, label = "Cambiar el color del doble clic")
+            }
+            PrefCard("Colores rápidos") {
+                Hint("Los cinco colores de la barra del editor. Tocá uno para cambiarlo.")
+                Row5(s.quickColors, onPick = { pick(PrefColor.Quick(it)) })
+                TextButton(onClick = { update { it.copy(quickColors = DEFAULT_QUICK_COLORS) } }) { Text("Volver a los colores de fábrica") }
+            }
+        }
+        PreferenceSection.PAPER -> PrefCard("Cuadernos nuevos") {
+            Text("Papel", style = MaterialTheme.typography.bodyMedium)
+            ChoiceRow(Paper.entries, s.paper, ::paperName, { p -> update { it.copy(paper = p) } })
+            Hint("Cada cuaderno puede cambiar su papel desde la barra del editor.")
+        }
+        PreferenceSection.TOOLS -> {
+            PrefCard("Goma") {
+                Text("Modo de la goma", style = MaterialTheme.typography.bodyMedium)
+                ChoiceRow(EraserMode.entries, s.eraserMode, { it.label }, { m -> update { it.copy(eraserMode = m) } })
+                LabeledSlider(
+                    "Tamaño de la goma", "${s.eraserRadiusDp.toInt()} dp", s.eraserRadiusDp, 4f..40f,
+                    onChange = { v -> update { it.copy(eraserRadiusDp = v.toInt().toFloat()) } },
+                )
+            }
+            PrefCard("Herramientas de la barra") { ToolbarPreferences(s, update) }
+            PrefCard("Entradas de la ruleta") { WheelPreferences(s, update) }
+        }
+        PreferenceSection.RECOGNITION -> PrefCard("Reconocimiento") {
+            SwitchRow(
+                "Auto-alinear lo reconocido", s.autoAlign, { on -> update { it.copy(autoAlign = on) } },
+                subtitle = "Lo nuevo toma la altura y la línea de la forma más cercana del renglón; un ), ] o } se iguala con su apertura. " +
+                    "También se cambia con 2 dedos apoyados y un tercero tocando 2 veces.",
+            )
+            LabeledSlider(
+                "Pausa para convertir", "${s.holdMillis} ms", s.holdMillis.toFloat(), 100f..1000f,
+                onChange = { v -> update { it.copy(holdMillis = Math.round(v / 100) * 100L) } }, steps = 8,
+            )
+            LabeledSlider(
+                "Temblor tolerado", "${"%.0f".format(s.tremorRadiusDp)} dp", s.tremorRadiusDp, 2f..16f,
+                onChange = { v -> update { it.copy(tremorRadiusDp = v.toInt().toFloat()) } },
+            )
+            SwitchRow("Mostrar el anillo de pausa", s.showHoldIndicator, { on -> update { it.copy(showHoldIndicator = on) } })
+            SwitchRow(
+                "Aprender de mis correcciones", s.learnFromCorrections, { on -> update { it.copy(learnFromCorrections = on) } },
+                subtitle = "Al enseñar o corregir un gesto en la hoja, se guarda como ejemplo del patrón.",
+            )
+        }
+        PreferenceSection.MATH -> PrefCard("Cuentas en la hoja") {
+            SwitchRow(
+                "Resolver las cuentas", s.mathNotes, { on -> update { it.copy(mathNotes = on) } },
+                subtitle = "Al terminar un renglón con = aparece el resultado con tus patrones, usando los valores " +
+                    "escritos en otros renglones de la misma hoja (x = 3); cada hoja es independiente. " +
+                    "Con el lazo también podés elegir «Calcular».",
+            )
+            Text("Color de lo autocompletado", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                ColorDot(s.mathResultColor, selected = false, onClick = { pick(PrefColor.MathResult) }, size = 32.dp, description = "Cambiar el color de lo autocompletado")
+                TextButton(onClick = { update { it.copy(mathResultColor = MathNotes.DEFAULT_RESULT_COLOR) } }) { Text("Volver al verde") }
+            }
+            Hint("Lo autocompletado no se guarda como tinta: se recalcula al cambiar la cuenta. «Calcular» con el lazo sí lo escribe en la hoja.")
+        }
+        PreferenceSection.GENERAL -> PrefCard("General") {
+            SwitchRow("Vibrar al reemplazar un gesto", s.haptics, { on -> update { it.copy(haptics = on) } })
+            SwitchRow(
+                "Escribir también con el dedo", s.fingerDraws, { on -> update { it.copy(fingerDraws = on) } },
+                subtitle = "Si está activo, el dedo deja de desplazar la hoja (usá dos dedos o la mano de la barra).",
+            )
+            SwitchRow(
+                "Gestos con pausa del lápiz", s.gesturesEnabled, { on -> update { it.copy(gesturesEnabled = on) } },
+                subtitle = "Sostené la punta quieta al terminar un gesto y se reemplaza por tu tinta.",
+            )
+        }
     }
 }
 
