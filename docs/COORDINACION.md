@@ -42,7 +42,7 @@ Reglas por agente para pegar en cada proyecto: `docs/REGLAS_AGENTES.md`.
 ## En curso
 | Quién | Qué | Archivos |
 |---|---|---|
-| Codex P-PREF | Preferencias por sección y configuración de barra/ruleta (base `6d7140b`, VM ib3; entrega local sin push) | `SettingsScreen.kt`, `SettingsStore.kt`, archivos nuevos de preferencias, cambios mínimos en `EditorToolbar.kt` y `ToolWheel.kt`, pruebas JVM e informe |
+| Codex P-PREF | Listo para integrar en `codex/p-pref`: preferencias por sección y barra/ruleta; core verde en ib3, autorrevisión cerrada, sin push. Informe: `docs/informes/codex-p-pref.md` | `SettingsScreen.kt`, `SettingsStore.kt`, archivos nuevos de preferencias, cambios mínimos en `EditorToolbar.kt` y `ToolWheel.kt`, pruebas JVM e informe |
 | Claude | Revisión de capturas de la interfaz y pulido visual | `app/src/main/kotlin/io/trazo/app/ui/*`, `docs/test-results.md` |
 | Claude | El recorrido de la interfaz ahora hace fallar la CI (aviso de ChatGPT) | `scripts/ci-emulator.sh` |
 | Claude | Orquestación, revisión y merge de ramas de agentes | `docs/COORDINACION.md`, `docs/DECISIONES.md` |
