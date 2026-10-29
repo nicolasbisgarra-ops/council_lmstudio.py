@@ -201,6 +201,7 @@ fun interface IdGenerator {
  * @param steps en el resultado, la explicación guardada (lo que se calculó y con qué valores).
  * @param failed la cuenta quedó sin resultado tras editarla (por ejemplo, a medio corregir): espera a que
  *   se le agreguen o borren signos.
+ * @param complex en el resultado de una ecuación: se resolvió también con números imaginarios.
  */
 @Serializable
 data class CalcTag(
@@ -209,4 +210,5 @@ data class CalcTag(
     val inputs: Int = 0,
     val steps: List<String> = emptyList(),
     val failed: Boolean = false,
+    val complex: Boolean = false,
 )

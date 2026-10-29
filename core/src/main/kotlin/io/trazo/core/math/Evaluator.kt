@@ -28,9 +28,11 @@ object Evaluator {
         is ApproxValue -> ApproxValue(-v.value)
         is SymbolicValue -> SymbolicValue.negate(v)
         is TupleValue -> TupleValue(v.items.map(::negate))
+        is QuotientValue -> domain(QuotientValue.STOP)
     }
 
     private fun binary(op: Char, a: MathValue, b: MathValue): MathValue {
+        if (a is QuotientValue || b is QuotientValue) domain(QuotientValue.STOP)
         if (a is TupleValue || b is TupleValue) return TupleValue.binary(op, a, b, ::binary)
         if (a is SymbolicValue || b is SymbolicValue) return when (op) {
             '+' -> SymbolicValue.add(a, b)
@@ -60,6 +62,7 @@ object Evaluator {
     }
 
     private fun power(base: MathValue, exponent: MathValue): MathValue {
+        if (base is QuotientValue || exponent is QuotientValue) domain(QuotientValue.STOP)
         if (exponent is TupleValue) domain("El exponente no puede ser un par")
         if (base is TupleValue) return TupleValue(base.items.map { power(it, exponent) })
         if (base is SymbolicValue || exponent is SymbolicValue) return SymbolicValue.power(base, exponent)
@@ -93,7 +96,7 @@ object Evaluator {
 
     private fun squareRoot(v: MathValue): MathValue {
         if (v is TupleValue) return TupleValue(v.items.map(::squareRoot))
-        if (v is SymbolicValue) domain("No se puede sacar la raíz de una cuenta con letras")
+        if (v is SymbolicValue || v is QuotientValue) domain("No se puede sacar la raíz de una cuenta con letras")
         if (v is ExactValue) {
             if (v.isZero) return v
             val (p, c) = v.monomial ?: return approxSqrt(v.toDouble())
@@ -112,7 +115,7 @@ object Evaluator {
     private fun MathValue.isZeroValue() = when (this) {
         is ExactValue -> isZero
         is ApproxValue -> value == 0.0
-        is SymbolicValue, is TupleValue -> false
+        is SymbolicValue, is TupleValue, is QuotientValue -> false
     }
 
     private fun approx(x: Double): ApproxValue {

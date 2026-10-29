@@ -322,4 +322,51 @@ class MathNotesTest {
         c.selectAll(); c.deleteSelection()
         assertTrue(c.mathResults.isEmpty())
     }
+
+    @Test fun `un patron con cualquier nombre es una letra con su propia tinta`() {
+        // 3 × 2 + K × 5 con la K guardada como «Patrón».
+        val raro = k.copy(id = "user-raro", name = "Patrón")
+        val ps = listOf(raro) + patterns
+        val page = PageState(row(0f, "3", "Por", "2", "Más").let { a ->
+            a + InkReplacement.place(raro, Bounds(a.bounds().right + 8f, 0f, a.bounds().right + 28f, 40f), ids)
+        }.let { a -> a + row(0f, "Por", "5").map { s -> s.transformed(Affine.translate(a.bounds().right + 12f, 0f)) } })
+        val c = controller(page, ps)
+        c.select(page.strokes.map { it.id })
+        assertTrue(c.calculationProblem(), c.calculateSelection())
+        val res = page.strokes.filter { it.calc?.result == true }
+        assertTrue(res.any { it.patternId == "user-raro" })
+        assertEquals(setOf("6", "5", "Más"), labels(res.filter { it.patternId != "user-raro" }).flatten().toSet())
+        val e = MathNotes.explain(page.strokes, ps, res.bounds().centerX, res.bounds().centerY)
+        assertTrue(e?.steps.toString(), e == null || e.steps.none { st -> st.any { it.code in 0x4E00..0x9DFF } })
+    }
+
+    @Test fun `una ecuacion se resuelve en el renglon de abajo`() {
+        // 2x + 3 = 7 → x = 2
+        val page = PageState(row(0f, "2", "x", "Más", "3", "Igual", "7"))
+        val c = controller(page)
+        c.select(page.strokes.map { it.id })
+        assertTrue(c.calculationProblem(), c.calculateSelection())
+        val res = page.strokes.filter { it.calc?.result == true }
+        assertEquals(listOf(listOf("x", "Igual", "2")), labels(res))
+        assertTrue(res.bounds().top > 40f)
+    }
+
+    @Test fun `sin raices reales pregunta y resuelve con imaginarios`() {
+        // x · x + 1 = 0
+        val page = PageState(row(0f, "x", "Por", "x", "Más", "1", "Igual", "0"))
+        val c = controller(page)
+        c.select(page.strokes.map { it.id })
+        assertTrue(!c.calculateSelection())
+        assertTrue(c.calculationOnlyComplex())
+        assertTrue(c.calculationProblem().contains("no tiene solución real"))
+        assertTrue(c.calculateSelection(complex = true))
+        val res = page.strokes.filter { it.calc?.result == true }
+        assertTrue(res.isNotEmpty() && res.all { it.calc?.complex == true })
+        // Una que sí tiene reales no pregunta.
+        val real = PageState(row(0f, "x", "Por", "x", "Igual", "4"))
+        val r = controller(real)
+        r.select(real.strokes.map { it.id })
+        assertTrue(!r.calculationOnlyComplex())
+        assertTrue(r.calculateSelection())
+    }
 }

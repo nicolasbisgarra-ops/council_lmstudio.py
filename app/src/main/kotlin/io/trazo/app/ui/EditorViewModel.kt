@@ -255,7 +255,22 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     /** Calcula lo seleccionado y escribe el resultado (con «=» si faltaba); false si no había una cuenta. */
     /** Calcula la selección; si no se puede, devuelve el motivo para mostrarlo. */
-    fun calculateSelection(): String? = if (controller.calculateSelection()) null else controller.calculationProblem()
+    /** Aviso pendiente cuando la ecuación solo tiene raíces imaginarias: el usuario decide si resolverla igual. */
+    var complexPrompt by mutableStateOf<String?>(null)
+
+    fun calculateSelection(): String? {
+        if (controller.calculateSelection()) return null
+        if (controller.calculationOnlyComplex()) {
+            complexPrompt = controller.calculationProblem()
+            return null
+        }
+        return controller.calculationProblem()
+    }
+
+    fun calculateWithImaginaries() {
+        complexPrompt = null
+        controller.calculateSelection(complex = true)
+    }
 
     fun duplicateSelection() { controller.duplicateSelection() }
     fun recolorSelection(color: Int) { controller.recolorSelection(color) }

@@ -341,6 +341,15 @@ fun EditorScreen(
     }
 
     // Los diálogos esperan a que se levante el lápiz para no interrumpir el trazo.
+    vm.complexPrompt?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { vm.complexPrompt = null },
+            title = { Text("No tiene solución real") },
+            text = { Text("$msg Sus raíces son imaginarias. ¿Querés resolverla con números imaginarios?") },
+            confirmButton = { TextButton(onClick = { vm.calculateWithImaginaries() }) { Text("Resolver con imaginarios") } },
+            dismissButton = { TextButton(onClick = { vm.complexPrompt = null }) { Text("No") } },
+        )
+    }
     vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
         AlertDialog(
             onDismissRequest = { vm.chooseAmbiguous(null) },

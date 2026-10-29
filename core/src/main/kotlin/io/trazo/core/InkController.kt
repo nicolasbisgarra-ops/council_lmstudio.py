@@ -575,9 +575,9 @@ class InkController(
      * un solo paso deshacible. La cuenta queda guardada: moverla o cambiarle el tamaño no la recalcula;
      * borrarle o agregarle signos sí (ver [MathNotes.refresh]). Devuelve false si no había nada que calcular.
      */
-    fun calculateSelection(): Boolean {
+    fun calculateSelection(complex: Boolean = false): Boolean {
         if (mode != Mode.NONE || selection.isEmpty()) return false
-        val edit = MathNotes.calculate(page.strokes, selection.toSet(), patterns(), mathColor, ids) ?: return false
+        val edit = MathNotes.calculate(page.strokes, selection.toSet(), patterns(), mathColor, ids, complex) ?: return false
         history.perform(page, edit)
         val gone = edit.removed.mapTo(HashSet()) { it.id }
         selection = (selection.filter { it !in gone || page.contains(it) } + edit.added.map { it.id }).distinct()
@@ -607,6 +607,9 @@ class InkController(
     }
 
     fun calculationProblem(): String = MathNotes.problem(page.strokes, selection.toSet(), patterns())
+
+    /** Si la ecuación seleccionada solo tiene soluciones imaginarias (para ofrecer resolverla con ellas). */
+    fun calculationOnlyComplex(): Boolean = MathNotes.onlyComplex(page.strokes, selection.toSet(), patterns())
 
     /** Vacía la página entera (trazos y formas) en un solo paso deshacible. */
     fun clearPage() {

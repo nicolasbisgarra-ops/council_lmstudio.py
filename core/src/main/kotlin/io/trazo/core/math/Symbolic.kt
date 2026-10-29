@@ -66,6 +66,7 @@ class SymbolicValue private constructor(val terms: Map<Map<String, Int>, MathVal
             is ExactValue -> v.terms.entries.associate { (k, c) -> (if (k == 0) emptyMap() else mapOf(PI_LETTER to k)) to ExactValue.of(c) }
             is ApproxValue -> if (v.value == 0.0) emptyMap() else mapOf(emptyMap<String, Int>() to v)
             is TupleValue -> domain("Un par no se puede usar como número")
+            is QuotientValue -> domain(QuotientValue.STOP)
         }
 
         /** Junta términos iguales, quita los nulos y, si no quedan letras, devuelve el número. */
@@ -98,8 +99,27 @@ class SymbolicValue private constructor(val terms: Map<Map<String, Int>, MathVal
             return of(out)
         }
 
-        /** Dividir solo por un término (`6xy / 2x = 3y`) o por un número; por una suma con letras no se puede. */
-        fun divide(a: MathValue, b: MathValue): MathValue = multiply(a, inverse(b))
+        /**
+         * Dividir por un término (`6xy / 2x = 3y`), por un número, o un polinomio por otro de la misma letra:
+         * `(x² − 1)/(x − 1) = x + 1`; si no da exacto, cociente y resto ([QuotientValue]).
+         */
+        fun divide(a: MathValue, b: MathValue): MathValue {
+            if (b is SymbolicValue && b.terms.size > 1) return polynomialDivision(a, b)
+            return multiply(a, inverse(b))
+        }
+
+        private fun polynomialDivision(a: MathValue, b: SymbolicValue): MathValue {
+            val letter = b.terms.keys.flatMap { it.keys }.filter { it != PI_LETTER }.distinct().singleOrNull()
+                ?: domain("Solo se divide por un polinomio de una sola letra")
+            val num = Poly.of(a, letter)
+            val den = Poly.of(b, letter)
+            if (num == null || den == null) domain("No se puede dividir por una suma con letras")
+            if (num.degree > Polynomials.MAX_DEGREE || den.degree > Polynomials.MAX_DEGREE) domain("El polinomio es de grado demasiado alto")
+            val (q, r) = num.divide(den)
+            if (r.isZero) return q.toValue(letter)
+            if (q.isZero) domain("No se puede dividir por una suma con letras")
+            return QuotientValue(q.toValue(letter), r.toValue(letter), b)
+        }
 
         fun power(base: MathValue, exponent: MathValue): MathValue {
             if (exponent is SymbolicValue) domain("Un exponente con letras no se puede calcular")
@@ -185,14 +205,32 @@ data class TupleValue(val items: List<MathValue>) : MathValue {
     }
 }
 
+/**
+ * Una división de polinomios que no da exacta: [quotient] + [remainder] / [divisor], como
+ * `(x² + 1)/(x − 1) = x + 1 + 2/(x − 1)`. Es un resultado para escribir: no se sigue operando con él.
+ */
+data class QuotientValue(val quotient: MathValue, val remainder: MathValue, val divisor: MathValue) : MathValue {
+    override fun toDouble(): Double = Double.NaN
+    override fun display(): String {
+        val q = if (quotient.sameAs(ExactValue.ZERO)) "" else quotient.display() + " + "
+        val r = remainder.display().let { if (it.contains(' ')) "($it)" else it }
+        return "$q$r/(${divisor.display()})"
+    }
+
+    companion object {
+        const val STOP = "Una división con resto no se puede seguir operando: calculala sola"
+    }
+}
+
 /** Si el valor tiene letras sin valor (también dentro de un par). */
 fun MathValue.hasLetters(): Boolean = when (this) {
-    is SymbolicValue -> true
+    is SymbolicValue, is QuotientValue -> true
     is TupleValue -> items.any { it.hasLetters() }
     else -> false
 }
 
 internal fun sameSymbolic(a: MathValue, b: MathValue): Boolean {
+    if (a is QuotientValue || b is QuotientValue) return a == b
     if (a is TupleValue || b is TupleValue) {
         return a is TupleValue && b is TupleValue && a.items.size == b.items.size && a.items.zip(b.items).all { (x, y) -> x.sameAs(y) }
     }
