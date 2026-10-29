@@ -27,6 +27,9 @@ object PresetPatterns {
     const val VERSION = 5
     const val PREFIX = "preset-"
 
+    /** Línea de escritura de las salidas de la biblioteca: los números van de y = 0 a 100 y las colas bajan de ahí. */
+    const val BASELINE = 100f
+
     /** Puntaje entre ejemplos desde el que dos patrones se consideran confundibles. */
     const val CONFLICT_SCORE = 0.84f
 

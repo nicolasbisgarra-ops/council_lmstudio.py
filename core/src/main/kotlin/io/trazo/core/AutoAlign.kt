@@ -17,6 +17,8 @@ import kotlin.math.min
  *   para las demás formas: un número dentro de una matriz no se centra en el corchete.
  * - Los signos de operación (+, −, ×, ÷, =, <…) tampoco: no marcan la altura del renglón. Ellos se
  *   centran en la línea de las letras y números más cercanos, sin cambiar de tamaño.
+ * - Las variables (x, y, letras griegas…) nunca cambian de tamaño: solo bajan o suben hasta el piso
+ *   de la forma de al lado. Un número toma la altura de otro número, no la de una letra.
  * - Lo escrito claramente más arriba o más abajo que la referencia (más de [OFFSET] de su alto: un
  *   exponente, un numerador, un denominador) queda donde se escribió. Una raya con algo justo encima
  *   (la barra de una fracción) tampoco se mueve.
@@ -75,12 +77,24 @@ object AutoAlign {
 
         if (gesture.height < gesture.width * 0.4f && items.any { stacked(it.bounds, gesture) }) return gesture
         val sign = isSign(pattern)
+        val variable = isVariable(pattern)
         val refs = if (isContainer(pattern)) row else row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
+            .let { all -> if (variable) all else all.filter { r -> lookup(r.patternId)?.let(::isVariable) != true }.ifEmpty { all } }
         // Un signo sin letras ni números al lado se centra en otro signo; lo demás nunca toma su altura.
         val ref = (refs.takeIf { it.isNotEmpty() || !sign } ?: row.filter { r -> lookup(r.patternId)?.let(::isSign) == true })
             .minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
-        if (ref in refs && abs(ref.bounds.centerY - gesture.centerY) > OFFSET * ref.bounds.height) return gesture
         val predicted = gesture.height * scale
+        val refPattern = lookup(ref.patternId)
+        val byFloor = variable || refPattern?.let(::isVariable) == true
+        // Entre una letra y un número de distinto alto, el desvío se mide con el más alto de los dos.
+        val reach = if (byFloor) max(ref.bounds.height, predicted) else ref.bounds.height
+        if (ref in refs && abs(ref.bounds.centerY - gesture.centerY) > OFFSET * reach) return gesture
+        if (ref in refs && byFloor) {
+            // La salida se dibuja centrada en el gesto y mide predicted de alto: su piso queda a floor(pattern) de su arriba.
+            val refFloor = ref.bounds.top + ref.bounds.height * (refPattern?.let(::floor) ?: 1f)
+            val dy = refFloor - (gesture.centerY - predicted / 2f + predicted * floor(pattern))
+            return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
+        }
         val ratio = predicted / ref.bounds.height.coerceAtLeast(0.5f)
         return if (!sign && ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) {
             resized(gesture, ref.bounds, scale)
@@ -121,6 +135,41 @@ object AutoAlign {
         if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) return p.category == PatternCategory.OPERATORS && key !in TALL_OPERATORS
         return isSignName(p.name)
     }
+
+    /**
+     * Variable: una letra que se usa como incógnita (x, y, a…) o una letra de la biblioteca (griegas,
+     * letras y funciones). No cambia de tamaño al alinearse.
+     */
+    fun isVariable(p: InkPattern): Boolean {
+        if (p.stretch != null) return false
+        val u = p.unknown?.trim()
+        if (u != null) return u.isNotEmpty()
+        if (p.category == PatternCategory.GREEK || p.category == PatternCategory.LETTERS) return true
+        return letterOf(p) != null
+    }
+
+    private fun letterOf(p: InkPattern): Char? =
+        (p.unknown?.trim()?.takeIf { it.isNotEmpty() } ?: MathNotes.label(p.name)).singleOrNull()?.takeIf { it.isLetter() && it != 'π' }
+
+    /**
+     * Dónde está el piso (la línea de escritura) de la salida de [p], en fracción de su alto desde arriba.
+     * Los patrones de la biblioteca se dibujan con la línea en y = 100; los del usuario apoyan su borde de
+     * abajo, salvo las minúsculas con cola (g, j, p, q, y…), que bajan [DESCENDER] de su alto.
+     */
+    fun floor(p: InkPattern): Float {
+        if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) {
+            val src = p.outputInk.bounds()
+            // Si el usuario la redibujó, ya no está en el marco de la biblioteca.
+            if (src.height > 0.5f && src.top >= -10f && src.bottom in 95f..150f) {
+                return ((PresetPatterns.BASELINE - src.top) / src.height).coerceIn(0.3f, 1f)
+            }
+        }
+        return if (letterOf(p)?.let { it in DESCENDERS } == true) 1f - DESCENDER else 1f
+    }
+
+    /** Parte del alto de una minúscula con cola que queda debajo de la línea. */
+    const val DESCENDER = 0.35f
+    private const val DESCENDERS = "gjpqyβγζημξρφχψ"
 
     /** Un nombre de signo centrado («Más», «+», «igual»…), sin importar tildes ni mayúsculas. */
     fun isSignName(name: String): Boolean = fold(name) in SIGN_NAMES

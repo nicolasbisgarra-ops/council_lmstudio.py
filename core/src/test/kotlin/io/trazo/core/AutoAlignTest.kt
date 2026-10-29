@@ -62,6 +62,55 @@ class AutoAlignTest {
         assertSame(bar, AutoAlign.anchor(fraction, bar, listOf(item("3", 100f, 100f, 140f, 180f), item("1", 300f, 70f, 330f, 125f)), lookup))
     }
 
+    private fun letter(name: String, unknown: String? = null): InkPattern {
+        val ink = listOf(InkStroke("$name-o", listOf(InkPoint(0f, 0f), InkPoint(40f, 40f))))
+        return InkPattern("user-$name", name, listOf(ink), ink, unknown = unknown)
+    }
+
+    private fun alignUser(p: InkPattern, gesture: Bounds, vararg items: AutoAlign.Item) =
+        AutoAlign.anchor(p, gesture, items.toList()) { presets[it] ?: if (it == "user-x") letter("x") else null }
+
+    @Test fun `una variable no toma la altura del numero, solo baja a su piso`() {
+        // «5x»: la x queda de su tamaño, apoyada en el piso del 5.
+        val g = Bounds(160f, 130f, 190f, 165f)
+        val out = alignUser(letter("x"), g, item("5", 100f, 100f, 140f, 180f))
+        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(180f, out.bottom, 0.5f)
+        // «Equis» y una incógnita con otro nombre también son variables.
+        assertEquals(180f, alignUser(letter("Equis"), g, item("5", 100f, 100f, 140f, 180f)).bottom, 0.5f)
+        assertEquals(180f, alignUser(letter("Mi letra", unknown = "a"), g, item("5", 100f, 100f, 140f, 180f)).bottom, 0.5f)
+    }
+
+    @Test fun `la cola de la y baja del piso`() {
+        val g = Bounds(160f, 130f, 190f, 190f)
+        val out = alignUser(letter("y"), g, item("5", 100f, 100f, 140f, 180f))
+        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(180f, out.top + out.height * (1f - AutoAlign.DESCENDER), 0.5f)
+    }
+
+    @Test fun `una letra griega de la biblioteca se apoya en su linea sin cambiar de tamano`() {
+        val g = Bounds(160f, 120f, 200f, 160f)
+        val out = align("pi", g, item("5", 100f, 100f, 140f, 180f))
+        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(180f, out.top + out.height * AutoAlign.floor(preset("pi")), 0.5f)
+    }
+
+    @Test fun `un numero toma la altura de otro numero, no la de una letra`() {
+        // «5x + 3»: el 3 iguala al 5 aunque la x esté más cerca.
+        val out = alignUser(preset("3"), Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
+        assertEquals(80f / preset("3").outputScale, out.height, 0.5f)
+        // Solo una letra al lado: no cambia de tamaño, apoya en su piso.
+        val g = Bounds(260f, 120f, 290f, 170f)
+        val alone = alignUser(preset("3"), g, AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
+        assertEquals(g.height, alone.height, 0.01f)
+        assertEquals(180f, alone.top + alone.height * AutoAlign.floor(preset("3")), 0.5f)
+    }
+
+    @Test fun `una variable de exponente queda donde se escribio`() {
+        val g = Bounds(145f, 60f, 165f, 85f)
+        assertSame(g, alignUser(letter("x"), g, item("2", 100f, 100f, 140f, 180f)))
+    }
+
     @Test fun `closing bracket copies the height and level of its opening`() {
         val p = preset("parentesis-cierra")
         val out = align(
