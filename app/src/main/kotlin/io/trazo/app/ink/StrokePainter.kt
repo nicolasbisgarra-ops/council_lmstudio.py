@@ -56,7 +56,14 @@ object StrokePainter {
     fun draw(canvas: Canvas, stroke: InkStroke, darkPaper: Boolean = false) {
         val color = InkLook.displayColor(stroke.color, darkPaper, stroke.brush)
         when (stroke.brush) {
-            Brush.HIGHLIGHTER -> drawPath(canvas, stroke, InkLook.withAlpha(color, InkLook.HIGHLIGHTER_ALPHA), uniform = true)
+            Brush.HIGHLIGHTER -> {
+                // En una capa opaca que se compone con su opacidad: al repasar no se oscurece.
+                val b = stroke.bounds
+                val pad = stroke.width
+                val saved = canvas.saveLayerAlpha(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad, InkLook.highlighterAlpha(color))
+                drawPath(canvas, stroke, color or 0xFF000000.toInt(), uniform = true)
+                canvas.restoreToCount(saved)
+            }
             Brush.PENCIL -> {
                 // En una capa: los tramos que se superponen no se ven más oscuros.
                 val b = stroke.bounds
@@ -106,7 +113,16 @@ object StrokePainter {
 
     /** Dibuja los trazos de una página: primero los resaltadores, así quedan debajo de la tinta. */
     fun drawAll(canvas: Canvas, strokes: List<InkStroke>, darkPaper: Boolean = false) {
+        drawHighlighters(canvas, strokes, darkPaper)
+        drawInkOnly(canvas, strokes, darkPaper)
+    }
+
+    fun drawHighlighters(canvas: Canvas, strokes: List<InkStroke>, darkPaper: Boolean = false) {
         for (s in strokes) if (s.brush == Brush.HIGHLIGHTER) draw(canvas, s, darkPaper)
+    }
+
+    /** Solo la tinta (sin resaltadores). */
+    fun drawInkOnly(canvas: Canvas, strokes: List<InkStroke>, darkPaper: Boolean = false) {
         for (s in strokes) if (s.brush != Brush.HIGHLIGHTER) draw(canvas, s, darkPaper)
     }
 }

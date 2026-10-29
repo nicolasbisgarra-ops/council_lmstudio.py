@@ -38,8 +38,17 @@ data class PaperColors(
  * (y sobre hoja clara las muy claras se oscurecen), como hacen las apps de notas en modo oscuro.
  */
 object InkLook {
-    /** Opacidad del resaltador (0..255). */
+    /** Opacidad por omisión del resaltador (0..255). */
     const val HIGHLIGHTER_ALPHA = 0x66
+
+    /**
+     * Opacidad de un trazo de resaltador: va en el canal alfa de su color. Un color opaco (FF, como
+     * guardaban las versiones anteriores) usa la opacidad por omisión.
+     */
+    fun highlighterAlpha(color: Int): Int = (color ushr 24).let { if (it == 0xFF || it == 0) HIGHLIGHTER_ALPHA else it }
+
+    /** Color con el que se pinta un resaltador (color con su opacidad). */
+    fun highlighterPaint(color: Int): Int = withAlpha(color, highlighterAlpha(color))
 
     fun displayColor(color: Int, darkPaper: Boolean, brush: Brush = Brush.PEN): Int {
         if (brush == Brush.HIGHLIGHTER) return color

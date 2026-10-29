@@ -60,6 +60,7 @@ import io.trazo.app.data.EraserMode
 import io.trazo.app.data.PaperTone
 import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.TrazoSettings
+import io.trazo.app.data.highlighterInk
 import io.trazo.core.Paper
 import io.trazo.core.ShapeKind
 import io.trazo.core.Brush as InkBrush
@@ -344,12 +345,16 @@ private fun HighlighterPanel(settings: TrazoSettings, update: ((TrazoSettings) -
             onPick = { c -> update { it.copy(highlighterColor = c) } },
             onCustom = { actions.onPickColor(ColorTarget.Highlighter) },
         )
-        BrushSample(InkBrush.HIGHLIGHTER, settings.highlighterColor, settings.highlighterWidth, Modifier.fillMaxWidth().height(40.dp))
+        BrushSample(InkBrush.HIGHLIGHTER, settings.highlighterInk(), settings.highlighterWidth, Modifier.fillMaxWidth().height(40.dp))
         LabeledSlider(
             "Grosor", "%.0f".format(settings.highlighterWidth), settings.highlighterWidth, 6f..30f,
             onChange = { w -> update { it.copy(highlighterWidth = w.toInt().toFloat()) } },
         )
-        Hint("El resaltador queda debajo de la tinta y nunca se toma como gesto.")
+        LabeledSlider(
+            "Opacidad", "${settings.highlighterOpacity} %", settings.highlighterOpacity.toFloat(), 10f..90f,
+            onChange = { o -> update { it.copy(highlighterOpacity = o.toInt()) } },
+        )
+        Hint("El resaltador queda siempre debajo de la tinta, también mientras lo pasás, y al repasar no se oscurece. Nunca se toma como gesto.")
     }
 }
 

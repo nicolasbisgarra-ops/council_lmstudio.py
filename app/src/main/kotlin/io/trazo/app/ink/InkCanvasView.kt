@@ -18,6 +18,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
+import io.trazo.core.Brush
 import io.trazo.core.InkController
 import io.trazo.core.InkEvent
 import io.trazo.core.Notebook
@@ -181,6 +182,10 @@ class InkCanvasView @JvmOverloads constructor(
     private var cacheVersion = -1L
     private val cacheMatrixValues = FloatArray(9)
     private val currentMatrixValues = FloatArray(9)
+    // Solo la tinta de la página, transparente: va encima de un resaltador en vivo para que no la tape.
+    private var inkOverlay: Bitmap? = null
+    private var inkOverlayVersion = -1L
+    private val inkOverlayMatrixValues = FloatArray(9)
     private val deskColor get() = paperColors.desk
     private val holdPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeWidth = 3f * density
@@ -253,6 +258,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun invalidateContent() {
         cacheValid = false
+        inkOverlayVersion = -1L
         invalidate()
     }
 
@@ -600,9 +606,18 @@ class InkCanvasView @JvmOverloads constructor(
         drawDryLayer(canvas)
         if (c == null) return
 
+        val wet = c.wetInk
+        if (wet.any { it.brush == Brush.HIGHLIGHTER }) {
+            // El resaltador en vivo va debajo de la tinta igual que el ya guardado.
+            canvas.save()
+            canvas.concat(docToScreen)
+            StrokePainter.drawHighlighters(canvas, wet, paperColors.dark)
+            canvas.restore()
+            drawInkOverlay(canvas)
+        }
         canvas.save()
         canvas.concat(docToScreen)
-        c.wetInk.forEach { StrokePainter.draw(canvas, it, paperColors.dark) }
+        StrokePainter.drawInkOnly(canvas, wet, paperColors.dark)
         val lasso = c.lassoPath
         if (lasso.size > 1) {
             lassoPath.rewind()
@@ -679,6 +694,27 @@ class InkCanvasView @JvmOverloads constructor(
             System.arraycopy(currentMatrixValues, 0, cacheMatrixValues, 0, 9)
             cacheVersion = version
             cacheValid = true
+        }
+        canvas.drawBitmap(bmp, 0f, 0f, null)
+    }
+
+    private fun drawInkOverlay(canvas: Canvas) {
+        val page = controller?.page ?: return
+        var bmp = inkOverlay
+        if (bmp == null || bmp.width != width || bmp.height != height) {
+            bmp?.recycle()
+            if (width <= 0 || height <= 0) return
+            bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            inkOverlay = bmp
+            inkOverlayVersion = -1L
+        }
+        if (page.version != inkOverlayVersion || !currentMatrixValues.contentEquals(inkOverlayMatrixValues)) {
+            bmp.eraseColor(0)
+            val oc = Canvas(bmp)
+            oc.concat(docToScreen)
+            StrokePainter.drawInkOnly(oc, page.allInk, paperColors.dark)
+            System.arraycopy(currentMatrixValues, 0, inkOverlayMatrixValues, 0, 9)
+            inkOverlayVersion = page.version
         }
         canvas.drawBitmap(bmp, 0f, 0f, null)
     }

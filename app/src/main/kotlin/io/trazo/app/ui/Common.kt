@@ -81,7 +81,7 @@ private fun DrawScope.drawInk(strokes: List<InkStroke>, s: Float, ox: Float, oy:
     val ordered = strokes.filter { it.brush == Brush.HIGHLIGHTER } + strokes.filter { it.brush != Brush.HIGHLIGHTER }
     for (st in ordered) {
         val shown = InkLook.displayColor(st.color, dark, st.brush)
-        val c = color ?: if (st.brush == Brush.HIGHLIGHTER) Color(InkLook.withAlpha(shown, InkLook.HIGHLIGHTER_ALPHA)) else Color(shown)
+        val c = color ?: if (st.brush == Brush.HIGHLIGHTER) Color(InkLook.highlighterPaint(shown)) else Color(shown)
         val w = (st.width * s).coerceIn(1.2f, if (st.brush == Brush.HIGHLIGHTER) 10.dp.toPx() else 3.5.dp.toPx())
         if (st.points.size == 1) {
             drawCircle(c, w / 2f, Offset(ox + st.points[0].x * s, oy + st.points[0].y * s))

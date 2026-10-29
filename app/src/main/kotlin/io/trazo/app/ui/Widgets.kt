@@ -368,7 +368,7 @@ fun BrushSample(brush: InkBrush, color: Int, width: Float, modifier: Modifier = 
         val ox = (size.width - 100f * s) / 2f
         val oy = (size.height - 40f * s) / 2f
         val shown = InkLook.displayColor(color, dark, brush)
-        val c = if (brush == InkBrush.HIGHLIGHTER) Color(InkLook.withAlpha(shown, InkLook.HIGHLIGHTER_ALPHA)) else Color(shown)
+        val c = if (brush == InkBrush.HIGHLIGHTER) Color(InkLook.highlighterPaint(shown)) else Color(shown)
         val pts = stroke.points
         for (i in 1 until pts.size) {
             val w = max(1f, StrokePainter.widthAt(stroke, i) * s * 0.9f)

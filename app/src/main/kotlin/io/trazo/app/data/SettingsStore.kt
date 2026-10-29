@@ -27,6 +27,10 @@ const val DEFAULT_ACCENT: Int = 0xFF9A7C42.toInt()
 const val DEFAULT_ACCENT_2: Int = 0xFF3D75E6.toInt()
 const val DEFAULT_HIGHLIGHTER: Int = 0xFFFFE066.toInt()
 
+/** Color del resaltador con la opacidad elegida en el canal alfa (nunca FF: FF es "por omisión"). */
+fun TrazoSettings.highlighterInk(): Int =
+    (highlighterColor and 0xFFFFFF) or ((highlighterOpacity * 255 / 100).coerceIn(1, 0xFE) shl 24)
+
 /** Colores rápidos de la barra: tinta, azul, rojo, verde y violeta. */
 val DEFAULT_QUICK_COLORS: List<Int> = listOf(
     DEFAULT_INK_COLOR, 0xFF1E4FA0.toInt(), 0xFFB3261E.toInt(), 0xFF2E7D32.toInt(), 0xFF6A3FA0.toInt(),
@@ -56,6 +60,8 @@ data class TrazoSettings(
     val brush: Brush = Brush.PEN,
     val highlighterColor: Int = DEFAULT_HIGHLIGHTER,
     val highlighterWidth: Float = 14f,
+    /** Opacidad del resaltador en %: va en el canal alfa del color de cada trazo. */
+    val highlighterOpacity: Int = 40,
     val shape: ShapeKind = ShapeKind.LINE,
     val eraserMode: EraserMode = EraserMode.AREA,
     val sideButton: SideButtonAction = SideButtonAction.ERASER,
@@ -87,6 +93,7 @@ class SettingsStore(context: Context) {
         brush = prefs.enum("brush", Brush.PEN).takeIf { it != Brush.HIGHLIGHTER } ?: Brush.PEN,
         highlighterColor = prefs.getInt("highlighterColor", DEFAULT_HIGHLIGHTER),
         highlighterWidth = prefs.getFloat("highlighterWidth", 14f),
+        highlighterOpacity = prefs.getInt("highlighterOpacity", 40).coerceIn(10, 90),
         shape = prefs.enum("shape", ShapeKind.LINE),
         eraserMode = prefs.enum("eraserMode", EraserMode.AREA),
         sideButton = prefs.enum("sideButton", SideButtonAction.ERASER),
@@ -116,6 +123,7 @@ class SettingsStore(context: Context) {
             .putString("brush", s.brush.name)
             .putInt("highlighterColor", s.highlighterColor)
             .putFloat("highlighterWidth", s.highlighterWidth)
+            .putInt("highlighterOpacity", s.highlighterOpacity)
             .putString("shape", s.shape.name)
             .putString("eraserMode", s.eraserMode.name)
             .putString("sideButton", s.sideButton.name)

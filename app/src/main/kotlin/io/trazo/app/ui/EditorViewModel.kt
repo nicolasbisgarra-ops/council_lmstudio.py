@@ -13,6 +13,7 @@ import io.trazo.app.data.EraserMode
 import io.trazo.app.data.PageExporter
 import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.TrazoSettings
+import io.trazo.app.data.highlighterInk
 import io.trazo.app.ink.Viewport
 import io.trazo.app.trazo
 import io.trazo.core.Brush
@@ -139,7 +140,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private fun applyToolStyle(s: TrazoSettings) {
         if (editorTool == EditorTool.HIGHLIGHTER) {
             controller.brush = Brush.HIGHLIGHTER
-            controller.color = s.highlighterColor
+            controller.color = s.highlighterInk()
             controller.width = s.highlighterWidth
         } else {
             controller.brush = s.brush
