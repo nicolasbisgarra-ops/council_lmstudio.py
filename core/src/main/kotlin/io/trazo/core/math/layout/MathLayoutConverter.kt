@@ -22,7 +22,14 @@ object MathLayoutConverter {
         if (symbols.isEmpty()) return ""
         if (symbols.any { !it.minX.isFinite() || !it.minY.isFinite() || !it.maxX.isFinite() || !it.maxY.isFinite() || it.width < 0f || it.height < 0f })
             fail("la caja del símbolo no es válida", 0)
-        return rows(symbols).joinToString("\n") { render(it) }
+        val output = StringBuilder()
+        for (row in rows(symbols)) {
+            if (output.isNotEmpty()) output.append('\n')
+            val offset = output.length
+            val text = shifted(row, offset) { render(it) }
+            output.append(text)
+        }
+        return output.toString()
     }
 
     private fun render(input: List<LayoutSymbol>): String {
@@ -37,17 +44,20 @@ object MathLayoutConverter {
             val inside = items.filter { it !== root && it.minX >= root.minX + scale * .12f &&
                 it.centerX <= root.maxX + scale * .12f && abs(it.centerY - root.centerY) <= max(root.height * .85f, scale * .8f) }
             if (inside.isEmpty()) continue
-            val text = "√(${render(inside)})"
+            val prefixLength = input.filter { it.maxX <= root.minX }.sumOf { symbol ->
+                when (symbol.label.trim()) { "Más", "+", "Menos", "−", "-", "Igual", "=" -> 1; else -> symbol.label.trim().length }
+            }
+            val text = "√(${shifted(inside, prefixLength + 2) { render(it) }})"
             tokens += Token(root.minX, inside.maxOf { it.maxX }, root.centerY, text)
             items.removeAll(inside.toSet()); items.remove(root)
         }
 
         // Una barra agrupa todos los elementos de arriba y abajo que la atraviesan. Barras anidadas
         // se procesan de mayor extensión a menor; sus operandos se vuelven a analizar recursivamente.
-        for (bar in input.filter(::isBar).sortedByDescending { it.width }) {
+        for (bar in input.filter(::isBar).sortedWith(compareByDescending<LayoutSymbol> { it.width }.thenByDescending { it.centerY })) {
             if (bar !in items) continue
             val margin = scale * .05f
-            val reach = max(bar.width * 1.3f, scale * 2.2f)
+            val reach = scale * 3.2f
             val above = items.filter { it !== bar && it.centerY < bar.centerY && bar.centerY - it.centerY <= reach && overlapsX(it, bar, margin) }
             val below = items.filter { it !== bar && it.centerY > bar.centerY && it.centerY - bar.centerY <= reach && overlapsX(it, bar, margin) }
             if (above.isEmpty() || below.isEmpty()) continue
@@ -64,21 +74,47 @@ object MathLayoutConverter {
             val inside = items.filter { it !== root && it.minX >= root.minX + scale * .12f &&
                 it.centerX <= root.maxX + scale * .12f && abs(it.centerY - root.centerY) <= max(root.height * .85f, scale * .8f) }
             if (inside.isEmpty()) continue
-            val radicand = shifted(inside, 2) { render(it) }
+            val prefixLength = input.filter { it.maxX <= root.minX }.sumOf { symbol ->
+                when (symbol.label.trim()) { "Más", "+", "Menos", "−", "-", "Igual", "=" -> 1; else -> symbol.label.trim().length }
+            }
+            val radicand = shifted(inside, prefixLength + 2) { render(it) }
             tokens += Token(root.minX, inside.maxOf { it.maxX }, root.centerY, "√($radicand)")
             items.removeAll(inside.toSet()); items.remove(root)
         }
 
+        val opens = items.filter { it.label.trim() in setOf("(", "Abre paréntesis", "Paréntesis abre") }.sortedBy { it.minX }
+        val closes = items.filter { it.label.trim() in setOf(")", "Cierra paréntesis", "Paréntesis cierra") }.sortedBy { it.minX }
+        for (close in closes) {
+            val open = opens.filter { it in items && it.minX < close.minX }.maxByOrNull { it.minX } ?: continue
+            val inside = items.filter { it !== open && it !== close && it.minX >= open.maxX && it.maxX <= close.minX }
+            val innerTokens = tokens.filter { it.x >= open.maxX && it.right <= close.minX }
+            val inner = if (inside.isNotEmpty()) render(inside) else innerTokens.sortedBy { it.x }.joinToString("") { it.text }
+            tokens.removeAll(innerTokens.toSet())
+            tokens += Token(open.minX, close.maxX, open.centerY, "($inner)")
+            items.remove(open); items.remove(close); items.removeAll(inside.toSet())
+        }
+
         // Exponentes son subárboles completos y mantienen sus paréntesis si contienen operadores.
-        for (candidate in items.toList()) {
-            val baseToken = tokens.filter { candidate.label !in setOf("Más", "+", "Menos", "−", "-", "Igual", "=") && candidate.minX >= it.x && candidate.minX - it.right <= scale * 1.5f &&
-                candidate.centerY < it.y - scale * .18f && it.y - candidate.centerY <= scale * 2.2f }
-                .maxByOrNull { it.right } ?: continue
-            tokens.remove(baseToken)
-            val suffix = atom(candidate, tokens, input)
+        for (baseToken in tokens.toList()) {
+            val exponent = items.filter { candidate -> candidate.label !in setOf("Más", "+", "Menos", "−", "-", "Igual", "=") &&
+                candidate.minX >= baseToken.x && candidate.minX - baseToken.right <= scale * 1.5f &&
+                candidate.centerY < baseToken.y - scale * .18f && baseToken.y - candidate.centerY <= scale * 2.2f }
+            if (exponent.isEmpty()) continue
+            val suffix = render(exponent)
             val baseText = if ('/' in baseToken.text) "(${baseToken.text})" else baseToken.text
-            tokens += baseToken.copy(right = candidate.maxX, text = "$baseText^$suffix")
-            items.remove(candidate)
+            val grouped = exponent.any { isBar(it) || isRoot(it) } || suffix.any { it in "+-*/" }
+            tokens.remove(baseToken)
+            tokens += baseToken.copy(right = exponent.maxOf { it.maxX }, text = "$baseText^${if (grouped) "($suffix)" else suffix}")
+            items.removeAll(exponent.toSet())
+        }
+
+        for (exponentToken in tokens.toList()) {
+            val baseToken = tokens.filter { it !== exponentToken && it.right <= exponentToken.x + scale * 1.5f &&
+                exponentToken.x - it.right >= -scale * .15f && exponentToken.y < it.y - scale * .18f &&
+                it.y - exponentToken.y <= scale * 2.2f }.maxByOrNull { it.right } ?: continue
+            tokens.remove(baseToken); tokens.remove(exponentToken)
+            val baseText = if ('/' in baseToken.text) "(${baseToken.text})" else baseToken.text
+            tokens += baseToken.copy(right = exponentToken.right, text = "$baseText^(${exponentToken.text})")
         }
         for (base in items.sortedBy { it.minX }.toList()) {
             if (base !in items) continue
@@ -93,10 +129,22 @@ object MathLayoutConverter {
                 items.remove(base)
                 continue
             }
-            val exponent = items.filter { it !== base && isExponent(base, it, scale) }
-            if (exponent.isEmpty()) continue
+            fun nearestExponentBase(candidate: LayoutSymbol): LayoutSymbol? = items.filter { possible ->
+                possible !== candidate && isPowerBase(possible) && isExponent(possible, candidate, scale)
+            }.maxByOrNull(LayoutSymbol::maxX)
+            val direct = items.filter { candidate -> candidate !== base && isExponent(base, candidate, scale) && nearestExponentBase(candidate) == base }
+            if (direct.isEmpty()) continue
+            val exponent = direct.toMutableSet()
+            var grew = true
+            while (grew) {
+                grew = false
+                for (candidate in items) if (candidate !in exponent && nearestExponentBase(candidate) in exponent) {
+                    exponent += candidate
+                    grew = true
+                }
+            }
             val baseText = atom(base, tokens, input)
-            val expText = render(exponent)
+            val expText = render(exponent.toList())
             val grouped = exponent.size > 1 || exponent.any { isBar(it) || isRoot(it) } || expText.any { it in "+-*/" }
             tokens += Token(base.minX, (listOf(base) + exponent).maxOf { it.maxX }, base.centerY,
                 "$baseText^${if (grouped) "($expText)" else expText}")
@@ -117,7 +165,7 @@ object MathLayoutConverter {
                     out.append(token.text).append(')')
                     previous = token
                     continue
-                } else if (token.text.firstOrNull()?.isDigit() == true && prev.text.lastOrNull() in listOf(')', 'x', 'y', 'π', 'α', 'β')) out.append('*')
+                } else if (token.text.firstOrNull()?.isDigit() == true && (prev.text.lastOrNull()?.isLetter() == true || prev.text.lastOrNull() == ')')) out.append('*')
             }
             out.append(token.text)
             previous = token
@@ -170,7 +218,7 @@ object MathLayoutConverter {
             changed = false
             for (bar in input.filter(::isBar)) {
                 val related = input.filter { it === bar || (overlapsX(it, bar, scale * .2f) &&
-                    abs(it.centerY - bar.centerY) <= max(bar.width * 1.3f, scale * 2.2f)) }
+                    abs(it.centerY - bar.centerY) <= scale * 3.2f) }
                 changed = mergeGroups(groups, related) || changed
             }
             for (root in input.filter(::isRoot)) {
@@ -199,6 +247,8 @@ object MathLayoutConverter {
     private fun isRoot(s: LayoutSymbol) = s.label in setOf("Raíz", "√")
     private fun isBar(s: LayoutSymbol) = s.label in setOf("Fracción", "Barra de fracción") || (s.label == "Barra" && s.width > s.height * 2f)
     private fun overlapsX(a: LayoutSymbol, b: LayoutSymbol, margin: Float) = min(a.maxX, b.maxX + margin) >= max(a.minX, b.minX - margin)
+    private fun isPowerBase(symbol: LayoutSymbol) = symbol.label.trim() in DIGITS ||
+        symbol.label.trim().length == 1 && symbol.label.trim()[0].isLetter() || symbol.label.trim() in setOf("Pi", "π", "alfa", "beta", "gamma")
     private fun isExponent(base: LayoutSymbol, candidate: LayoutSymbol, scale: Float): Boolean =
         base !== candidate && candidate.height < base.height * .78f && candidate.centerY < base.centerY - base.height * .18f &&
             candidate.minX >= base.centerX && candidate.minX - base.maxX <= scale * 2.5f && base.centerY - candidate.centerY <= max(scale * 2.2f, base.height * .95f)

@@ -141,4 +141,31 @@ class MathLayoutConverterTest {
     @Test fun conservaFraccionComoDenominadorDesdeLaIzquierda() {
         assertEquals("8/((1)/(2))", MathLayoutConverter.convert(listOf(s("8", 0f, 11f), s("Barra", 12f, 11f), s("1", 28f, 0f), s("Barra", 24f, 20f, 24f, 2f), s("2", 28f, 27f))))
     }
+
+    @Test fun rondaTresAsociaExponenteALaBaseMasCercanaYComoSubarbol() {
+        assertEquals("x+y^2", MathLayoutConverter.convert(listOf(s("x", 0f, 0f), s("Más", 12f, 0f), s("y", 24f, 0f), s("2", 36f, -12f, 6f, 10f))))
+        assertEquals("x^2+y^3", MathLayoutConverter.convert(listOf(s("x", 0f, 0f), s("2", 12f, -12f, 6f, 10f), s("Más", 24f, 0f), s("y", 36f, 0f), s("3", 48f, -12f, 6f, 10f))))
+        assertEquals("x^(2^3)", MathLayoutConverter.convert(listOf(s("x", 0f, 20f, 10f, 30f), s("2", 12f, 5f, 6f, 14f), s("3", 20f, 0f, 4f, 7f))))
+        assertEquals("((1)/(2))^23", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("2", 26f, -3f, 6f, 10f), s("3", 33f, -3f, 6f, 10f))))
+    }
+
+    @Test fun rondaTresParentesisComoBaseYEstructurasAnidadas() {
+        assertEquals("(x+1)^2", MathLayoutConverter.convert(listOf(s("(", 0f, 12f), s("x", 12f, 12f), s("Más", 24f, 12f), s("1", 36f, 12f), s(")", 48f, 12f), s("2", 60f, 0f, 6f, 10f))))
+        assertEquals("((1)/(2))^(√(4))", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("Raíz", 26f, -3f, 15f, 10f), s("4", 32f, -3f, 5f, 10f))))
+    }
+
+    @Test fun rondaTresJerarquiaDeBarrasYAlcanceVertical() {
+        assertEquals("((1)/(2))/(3)", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 38f, 24f, 2f), s("2", 4f, 21f), s("Barra", 0f, 14f, 24f, 2f), s("3", 12f, 46f))))
+        assertEquals("(1)/(2)\n3", MathLayoutConverter.convert(listOf(s("1", 44f, 0f), s("Barra", 0f, 20f, 100f, 2f), s("2", 44f, 27f), s("3", 44f, 100f))))
+    }
+
+    @Test fun rondaTresMultiplicaCualquierVariableAntesDeNumero() {
+        assertEquals("z*3", MathLayoutConverter.convert(listOf(s("z", 0f, 0f), s("3", 12f, 0f))))
+        assertEquals("γ*3", MathLayoutConverter.convert(listOf(s("gamma", 0f, 0f), s("3", 48f, 0f))))
+    }
+
+    @Test fun rondaTresErrorDeRaizFraccionYExponenteIncluyePrefijo() {
+        val e = assertThrows(MathException::class.java) { MathLayoutConverter.convert(listOf(s("3", 0f, 0f), s("Más", 12f, 0f), s("Raíz", 24f, 0f, 50f, 60f), s("garabato", 44f, 0f), s("Barra", 39f, 25f, 30f, 2f), s("2", 44f, 35f))) }
+        assertEquals(5, (e.error as MathError.Syntax).position)
+    }
 }
