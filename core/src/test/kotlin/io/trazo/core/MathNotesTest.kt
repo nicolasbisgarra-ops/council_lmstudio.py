@@ -79,6 +79,18 @@ class MathNotesTest {
         assertTrue(MathNotes.problem(inside, page.map { it.id }.toSet(), patterns).contains("sin convertir"))
     }
 
+    @Test fun `dos cuentas a la misma altura separadas se calculan cada una`() {
+        val left = row(0f, "2", "x", "3")
+        val shift = 400f - left.bounds().left
+        val right = row(0f, "5", "Más", "3", "Igual").map { it.transformed(Affine.translate(shift, 0f)) }
+        val out = MathNotes.results(left + right, patterns)
+        assertEquals(listOf(listOf("8")), labels(out))
+        assertTrue(out.bounds().left > right.bounds().right)
+        // Escritura a mano del otro lado del renglón tampoco la bloquea.
+        val hand = InkStroke("h", listOf(InkPoint(0f, 0f), InkPoint(60f, 40f)))
+        assertEquals(listOf(listOf("8")), labels(MathNotes.results(listOf(hand) + right, patterns)))
+    }
+
     @Test fun `no tapa lo que se escribio despues del igual`() {
         assertTrue(MathNotes.results(row(0f, "2", "Más", "3", "Igual", "5"), patterns).isEmpty())
         val page = row(0f, "2", "Más", "3", "Igual")

@@ -32,6 +32,8 @@ object MathNotes {
     /** Margen vertical, en altos de signo, con que dos signos siguen en el mismo renglón (fracciones, exponentes). */
     private const val ROW_GAP = 0.25f
     private const val EQUALS = "Igual"
+    /** Hueco horizontal, en altos de signo, que separa dos cuentas del mismo renglón. */
+    private const val SPLIT_GAP = 1.5f
 
     /** Un signo reconocido: los trazos de una misma salida de patrón. */
     data class Glyph(val label: String, val bounds: Bounds, val strokes: List<InkStroke>) {
@@ -71,7 +73,22 @@ object MathNotes {
                 bottom = maxOf(bottom, g.bounds.bottom)
             }
         }
-        return out.map { r -> r.sortedBy { it.bounds.left } }
+        return out.flatMap { r -> split(r.sortedBy { it.bounds.left }) }
+    }
+
+    /**
+     * Separa un renglón donde hay un hueco de más de [SPLIT_GAP] altos de signo: son cuentas distintas
+     * escritas a la misma altura (por ejemplo, una a cada lado de la hoja).
+     */
+    private fun split(row: List<Glyph>): List<List<Glyph>> {
+        val unit = median(row.filter { !isFlat(it) }.map { it.bounds.height }) ?: return listOf(row)
+        val out = mutableListOf(mutableListOf(row.first()))
+        var right = row.first().bounds.right
+        for (g in row.drop(1)) {
+            if (g.bounds.left - right > SPLIT_GAP * unit) out += mutableListOf(g) else out.last() += g
+            right = maxOf(right, g.bounds.right)
+        }
+        return out
     }
 
     /** Un renglón listo para calcular: su texto y, si termina en «=», ese signo. */
