@@ -323,15 +323,18 @@ object MathLayoutConverter {
         when (node.kind) {
             Kind.SEQUENCE -> {
                 var previous: Node? = null
-                for (child in node.children) {
+                for ((index, child) in node.children.withIndex()) {
                     val prior = previous
                     if (prior != null && startsNumber(child)) {
                         if (prior.kind == Kind.NUMBER) out.append(' ')
                         else if (endsAtom(prior)) out.append('*')
                     }
-                    // Dos identificadores contiguos serían un único nombre para el lexer.
-                    if (prior != null && endsIdentifier(prior) && startsIdentifier(child)) out.append('*')
-                    val wrap = prior?.text == "/" && child.kind == Kind.FRACTION
+                    // Dos identificadores contiguos serían un único nombre para el lexer; el espacio los
+                    // separa y los deja como un solo término («xy»), sin el «*» que se suelta ante un ÷.
+                    if (prior != null && endsIdentifier(prior) && startsIdentifier(child)) out.append(' ')
+                    // Una fracción pegada a lo que sigue es un factor entero: (1/2)(3/4), no 1/(2·3)/4.
+                    val next = node.children.getOrNull(index + 1)
+                    val wrap = child.kind == Kind.FRACTION && (prior?.text == "/" || next != null && !isOperator(next) && !startsNumber(next))
                     if (wrap) out.append('(')
                     emit(child, out)
                     if (wrap) out.append(')')
@@ -401,7 +404,8 @@ object MathLayoutConverter {
 
     private fun spelling(label: String): String? = when (label) {
         "Más", "+" -> "+"; "Menos", "−", "-" -> "-"; "Por", "Multiplicación", "×", "·", "*" -> "*"
-        "Dividido", "División", "÷", "Barra", "Fracción", "Barra de fracción", "/" -> "/"
+        "Dividido", "División", "÷", ":", "Barra", "Fracción", "Barra de fracción", "/" -> "/"
+        "Porcentaje", "%" -> "%"
         "Igual", "=" -> "="; "Raíz", "√" -> "√"; "Pi", "π" -> "π"
         "Abre paréntesis", "(", "Paréntesis abre" -> "("; "Cierra paréntesis", ")", "Paréntesis cierra" -> ")"
         "Coma", "," -> ","; "Punto", "." -> "."; "f( )" -> "f("

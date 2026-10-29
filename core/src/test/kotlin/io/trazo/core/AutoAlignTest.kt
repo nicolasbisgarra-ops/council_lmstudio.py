@@ -52,6 +52,16 @@ class AutoAlignTest {
         assertEquals(140f, alone.centerY, 0.5f)
     }
 
+    @Test fun `lo escrito a proposito mas arriba queda donde se escribio`() {
+        // Un numerador sobre el renglón del 3 no baja a su línea.
+        val num = Bounds(300f, 70f, 330f, 125f)
+        assertSame(num, align("1", num, item("3", 100f, 100f, 140f, 180f)))
+        // La barra de la fracción, debajo del numerador, tampoco se mueve.
+        val bar = Bounds(290f, 137f, 345f, 143f)
+        val fraction = presets.getValue(DefaultPatterns.FRACTION)
+        assertSame(bar, AutoAlign.anchor(fraction, bar, listOf(item("3", 100f, 100f, 140f, 180f), item("1", 300f, 70f, 330f, 125f)), lookup))
+    }
+
     @Test fun `closing bracket copies the height and level of its opening`() {
         val p = preset("parentesis-cierra")
         val out = align(

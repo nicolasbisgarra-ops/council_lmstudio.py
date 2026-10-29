@@ -1,5 +1,6 @@
 package io.trazo.core
 
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -16,6 +17,9 @@ import kotlin.math.min
  *   para las demás formas: un número dentro de una matriz no se centra en el corchete.
  * - Los signos de operación (+, −, ×, ÷, =, <…) tampoco: no marcan la altura del renglón. Ellos se
  *   centran en la línea de las letras y números más cercanos, sin cambiar de tamaño.
+ * - Lo escrito claramente más arriba o más abajo que la referencia (más de [OFFSET] de su alto: un
+ *   exponente, un numerador, un denominador) queda donde se escribió. Una raya con algo justo encima
+ *   (la barra de una fracción) tampoco se mueve.
  *
  * Solo mira la tinta que salió de un patrón; la escritura a mano no cuenta.
  */
@@ -28,6 +32,9 @@ object AutoAlign {
 
     /** Fracción del menor alto que deben solaparse en vertical dos formas para estar en el mismo renglón. */
     const val ROW_OVERLAP = 0.3f
+
+    /** Desplazamiento vertical (en altos de la referencia) a partir del cual la forma se escribió a propósito más arriba o abajo. */
+    const val OFFSET = 0.5f
 
     private val PAIRS = mapOf(
         "parentesis-abre" to "parentesis-cierra",
@@ -66,11 +73,13 @@ object AutoAlign {
             return resized(gesture, open.bounds, scale)
         }
 
+        if (gesture.height < gesture.width * 0.4f && items.any { stacked(it.bounds, gesture) }) return gesture
         val sign = isSign(pattern)
         val refs = if (isContainer(pattern)) row else row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
         // Un signo sin letras ni números al lado se centra en otro signo; lo demás nunca toma su altura.
         val ref = (refs.takeIf { it.isNotEmpty() || !sign } ?: row.filter { r -> lookup(r.patternId)?.let(::isSign) == true })
             .minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
+        if (ref in refs && abs(ref.bounds.centerY - gesture.centerY) > OFFSET * ref.bounds.height) return gesture
         val predicted = gesture.height * scale
         val ratio = predicted / ref.bounds.height.coerceAtLeast(0.5f)
         return if (!sign && ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) {
@@ -140,6 +149,10 @@ object AutoAlign {
         val overlap = min(a.bottom, b.bottom) - max(a.top, b.top)
         return overlap >= ROW_OVERLAP * min(a.height, b.height).coerceAtLeast(1f)
     }
+
+    /** [item] está justo encima de la raya [bar], dentro de su ancho: es el numerador de una fracción. */
+    private fun stacked(item: Bounds, bar: Bounds): Boolean =
+        item.centerX in bar.left..bar.right && item.bottom <= bar.centerY && bar.top - item.bottom <= item.height * 0.8f
 
     private fun horizontalGap(a: Bounds, b: Bounds): Float = max(0f, max(a.left - b.right, b.left - a.right))
 

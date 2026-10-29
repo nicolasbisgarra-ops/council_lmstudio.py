@@ -40,13 +40,15 @@ private fun collect(e: Expr, out: MutableSet<String>) {
  * Parser estricto de una línea. Gramática:
  * ```
  * expr    = term (('+' | '-') term)*
- * term    = unary (('*' | '/') unary | implícita)*   implícita: sigue identificador, π, '(' o √
+ * term    = product (('*' | '/') product)*
+ * product = unary implícita*                        implícita: sigue identificador, π, '(' o √
  * unary   = ('+' | '-') unary | power
  * power   = postfix ('^' unary)?                    asociativa a la derecha
- * postfix = primary superíndice*
+ * postfix = primary (superíndice | '%')*               50% = 50/100
  * primary = número | identificador | π | '(' expr ')' | '√' postfix
  * ```
  * La multiplicación implícita nunca toma un número a la derecha: "2 3" es un error, no 6.
+ * Lo escrito pegado es un solo término, más fuerte que × y ÷: "2x/5y" es (2x)/(5y), como se lee en la hoja.
  */
 object MathParser {
 
@@ -97,15 +99,20 @@ object MathParser {
         }
 
         fun term(): Expr {
-            var e = unary()
+            var e = product()
             while (true) {
                 e = when (peek().kind) {
-                    Kind.TIMES -> { next(); Expr.Bin('*', e, unary()) }
-                    Kind.DIVIDE -> { next(); Expr.Bin('/', e, unary()) }
-                    Kind.IDENT, Kind.PI, Kind.LPAREN, Kind.SQRT -> Expr.Bin('*', e, power())
+                    Kind.TIMES -> { next(); Expr.Bin('*', e, product()) }
+                    Kind.DIVIDE -> { next(); Expr.Bin('/', e, product()) }
                     else -> return e
                 }
             }
+        }
+
+        fun product(): Expr {
+            var e = unary()
+            while (peek().kind in setOf(Kind.IDENT, Kind.PI, Kind.LPAREN, Kind.SQRT)) e = Expr.Bin('*', e, power())
+            return e
         }
 
         fun unary(): Expr = when (peek().kind) {
@@ -123,8 +130,12 @@ object MathParser {
 
         fun postfix(): Expr {
             var e = primary()
-            while (peek().kind == Kind.SUPERSCRIPT) {
-                e = Expr.Pow(e, Expr.Num(Rational.parseDecimal(next().text)))
+            while (true) {
+                e = when (peek().kind) {
+                    Kind.SUPERSCRIPT -> Expr.Pow(e, Expr.Num(Rational.parseDecimal(next().text)))
+                    Kind.PERCENT -> { next(); Expr.Bin('/', e, Expr.Num(Rational.of(100))) }
+                    else -> break
+                }
             }
             return e
         }
@@ -144,12 +155,13 @@ object MathParser {
                 }
                 Kind.EOF -> syntax("la expresión está incompleta", t.pos)
                 Kind.SUPERSCRIPT -> syntax("el exponente no tiene base", t.pos)
+                Kind.PERCENT -> syntax("el % no tiene número", t.pos)
                 else -> syntax("no se esperaba '${t.text}'", t.pos)
             }
         }
     }
 
-    private enum class Kind { NUMBER, IDENT, PI, PLUS, MINUS, TIMES, DIVIDE, CARET, SUPERSCRIPT, SQRT, LPAREN, RPAREN, EQUALS, EOF }
+    private enum class Kind { NUMBER, IDENT, PI, PLUS, MINUS, TIMES, DIVIDE, CARET, SUPERSCRIPT, SQRT, LPAREN, RPAREN, EQUALS, PERCENT, EOF }
 
     private data class Token(val kind: Kind, val text: String, val pos: Int)
 
@@ -191,7 +203,8 @@ object MathParser {
                     '+' -> Kind.PLUS
                     '-', '−' -> Kind.MINUS
                     '*', '×', '·', '⋅' -> Kind.TIMES
-                    '/', '÷' -> Kind.DIVIDE
+                    '/', '÷', ':' -> Kind.DIVIDE
+                    '%' -> Kind.PERCENT
                     '^' -> Kind.CARET
                     '√' -> Kind.SQRT
                     '(' -> Kind.LPAREN

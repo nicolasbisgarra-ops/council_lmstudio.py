@@ -8,7 +8,7 @@ import org.junit.Test
 class MathLayoutLexicalBoundaryTest {
     @Test fun conservaLosAtomosReconocidosAlEmitirIdentificadores() {
         val entradas = listOf(
-            listOf(LayoutSymbol("x", 0f, 0f, 10f, 20f), LayoutSymbol("y", 12f, 0f, 22f, 20f)) to "x*y",
+            listOf(LayoutSymbol("x", 0f, 0f, 10f, 20f), LayoutSymbol("y", 12f, 0f, 22f, 20f)) to "x y",
             listOf(LayoutSymbol("alfa", 0f, 0f, 10f, 20f), LayoutSymbol("beta", 12f, 0f, 22f, 20f)) to "α*β",
             listOf(LayoutSymbol("x", 0f, 12f, 10f, 32f), LayoutSymbol("y", 12f, 0f, 18f, 10f),
                 LayoutSymbol("z", 24f, 12f, 34f, 32f)) to "x^y*z"

@@ -38,6 +38,12 @@ object MathNotes {
     private const val EQUALS = "Igual"
     /** Hueco horizontal, en altos de signo, que separa dos cuentas del mismo renglón. */
     private const val SPLIT_GAP = 1.5f
+    /** Distancia máxima, en altos de signo, del numerador o el denominador a su barra. */
+    private const val STACK_GAP = 0.8f
+    /** Rayas que, con algo justo encima y justo debajo, son la barra de una fracción apilada. */
+    private val BAR_LABELS = setOf("Menos", "Fracción", "Barra de fracción", "Barra", "Dividido")
+    /** Las que, sin nada encima y debajo, son una división en línea («/»). */
+    private val SLASH_LABELS = setOf("Fracción", "Barra de fracción", "Barra")
 
     /** Un signo reconocido: los trazos de una misma salida de patrón. */
     data class Glyph(val label: String, val bounds: Bounds, val strokes: List<InkStroke>) {
@@ -65,40 +71,68 @@ object MathNotes {
     private val SIGN_NAMES = listOf(
         "Más", "Menos", "Por", "Multiplicación", "Dividido", "División", "Igual", "Barra", "Fracción",
         "Barra de fracción", "Raíz", "Pi", "Abre paréntesis", "Cierra paréntesis", "Paréntesis abre",
-        "Paréntesis cierra", "Coma", "Punto",
-    ).associateBy { fold(it) } + mapOf("equis" to "x", "ye" to "y", "i griega" to "y", "incognita" to "x")
+        "Paréntesis cierra", "Coma", "Punto", "Porcentaje",
+    ).associateBy { fold(it) } + mapOf(
+        "equis" to "x", "ye" to "y", "i griega" to "y", "incognita" to "x",
+        ":" to "Dividido", "÷" to "Dividido", "dos puntos" to "Dividido", "entre" to "Dividido", "%" to "Porcentaje",
+    )
 
     private fun fold(name: String) = java.text.Normalizer.normalize(name.trim().lowercase(), java.text.Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "")
 
     internal fun label(name: String): String = SIGN_NAMES[fold(name)] ?: name.trim()
 
-    /** Renglones: barrido de arriba hacia abajo; un signo entra al renglón si empieza antes de que termine. */
+    /**
+     * Renglones: barrido de arriba hacia abajo; un signo entra al renglón si empieza antes de que termine.
+     * Una fracción apilada (numerador, barra y denominador) entra entera, aunque ocupe dos alturas.
+     */
     fun rows(glyphs: List<Glyph>): List<List<Glyph>> {
         if (glyphs.isEmpty()) return emptyList()
-        val unit = median(glyphs.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
-            ?: median(glyphs.filter { !isFlat(it) }.map { it.bounds.height }) ?: median(glyphs.map { it.bounds.height }) ?: 1f
+        val unit = unit(glyphs) ?: median(glyphs.map { it.bounds.height }) ?: 1f
+        val group = glyphs.associateWithTo(java.util.IdentityHashMap()) { mutableListOf(it) }
+        for ((bar, parts) in fractions(glyphs, unit)) for (part in parts) {
+            val a = group.getValue(bar)
+            val b = group.getValue(part)
+            if (a !== b) { a += b; b.forEach { group[it] = a } }
+        }
         val out = mutableListOf<MutableList<Glyph>>()
         var bottom = Float.NEGATIVE_INFINITY
-        for (g in glyphs.sortedBy { it.bounds.top }) {
-            if (out.isEmpty() || g.bounds.top > bottom + ROW_GAP * unit) {
-                out += mutableListOf(g)
-                bottom = g.bounds.bottom
-            } else {
-                out.last() += g
-                bottom = maxOf(bottom, g.bounds.bottom)
+        for (item in group.values.distinctBy { System.identityHashCode(it) }.sortedBy { i -> i.minOf { it.bounds.top } }) {
+            if (out.isEmpty() || item.minOf { it.bounds.top } > bottom + ROW_GAP * unit) {
+                out += mutableListOf<Glyph>()
+                bottom = Float.NEGATIVE_INFINITY
             }
+            out.last() += item
+            bottom = maxOf(bottom, item.maxOf { it.bounds.bottom })
         }
         return out.flatMap { r -> split(r.sortedBy { it.bounds.left }) }
     }
+
+    /** Alto de signo: el de las letras y números; si no hay, el de lo que no es plano. */
+    private fun unit(glyphs: List<Glyph>): Float? = median(glyphs.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
+        ?: median(glyphs.filter { !isFlat(it) }.map { it.bounds.height })
+
+    /**
+     * Barras de fracción apiladas: una raya («Fracción», «Menos», «Barra»…) con algo justo encima y justo
+     * debajo, dentro de su ancho. Cada barra con lo que tiene encima y debajo (otra barra, si está anidada).
+     */
+    internal fun fractions(glyphs: List<Glyph>, unit: Float): Map<Glyph, List<Glyph>> = glyphs
+        .filter { it.label in BAR_LABELS && isFlat(it) }
+        .mapNotNull { bar ->
+            val b = bar.bounds
+            val slack = b.width * 0.1f
+            val over = glyphs.filter { it !== bar && it.bounds.centerX in (b.left - slack)..(b.right + slack) }
+            val above = over.filter { it.bounds.bottom <= b.centerY && b.top - it.bounds.bottom <= STACK_GAP * unit }
+            val below = over.filter { it.bounds.top >= b.centerY && it.bounds.top - b.bottom <= STACK_GAP * unit }
+            if (above.isEmpty() || below.isEmpty()) null else bar to above + below
+        }.toMap()
 
     /**
      * Separa un renglón donde hay un hueco de más de [SPLIT_GAP] altos de signo: son cuentas distintas
      * escritas a la misma altura (por ejemplo, una a cada lado de la hoja).
      */
     private fun split(row: List<Glyph>): List<List<Glyph>> {
-        val unit = (median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
-            ?: median(row.filter { !isFlat(it) }.map { it.bounds.height })) ?: return listOf(row)
+        val unit = unit(row) ?: return listOf(row)
         val out = mutableListOf(mutableListOf(row.first()))
         var right = row.first().bounds.right
         for (g in row.drop(1)) {
@@ -117,18 +151,25 @@ object MathNotes {
             val box = row.map { it.bounds }.reduce(Bounds::union)
             val last = row.maxByOrNull { it.bounds.right }!!
             val trailing = last.takeIf { it.label == EQUALS && row.none { g -> g !== it && g.bounds.centerX > it.bounds.right } }
-            val unit = median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
-                ?: median(row.filter { !isFlat(it) }.map { it.bounds.height }) ?: box.height
+            val unit = unit(row) ?: box.height
             // Tinta a mano dentro de la cuenta o en el lugar del resultado: no se calcula este renglón.
             val reach = Bounds(box.left, box.top, box.right + if (trailing != null) unit * 3f else 0f, box.bottom)
             val blocked = handwriting.any { s -> val b = s.bounds; reach.contains(b.centerX, b.centerY) }
-            val text = if (blocked) "" else convert(row)
+            val text = if (blocked) "" else convert(row, fractions(row, unit).keys)
             Line(row, text, trailing.takeIf { !blocked }, blocked)
         }
     }
 
-    private fun convert(row: List<Glyph>): String = try {
-        MathLayoutConverter.convert(row.map { LayoutSymbol(it.label, it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom) })
+    /** Texto de un renglón. Las [bars] son fracciones apiladas; las demás barras dividen en línea. */
+    private fun convert(row: List<Glyph>, bars: Set<Glyph>): String = try {
+        MathLayoutConverter.convert(row.map { g ->
+            val label = when {
+                g in bars -> "Fracción"
+                g.label in SLASH_LABELS -> "/"
+                else -> g.label
+            }
+            LayoutSymbol(label, g.bounds.left, g.bounds.top, g.bounds.right, g.bounds.bottom)
+        })
             .lines().singleOrNull().orEmpty()
     } catch (e: MathException) {
         ""
@@ -297,8 +338,12 @@ object MathNotes {
         return out
     }
 
+    private val SIMPLE_PARENS = Regex("(?<![\\p{L}\\d)])\\(([\\p{L}\\d.,π]+)\\)")
+
     /** La cuenta como texto legible: «2·x + 1 =». */
-    internal fun pretty(text: String): String {
+    internal fun pretty(raw: String): String {
+        // «(1)/(2)» de una fracción apilada se lee «1/2».
+        val text = raw.replace(SIMPLE_PARENS, "$1")
         val out = StringBuilder()
         for ((i, c) in text.withIndex()) {
             val prev = text.getOrNull(i - 1)
@@ -510,13 +555,25 @@ object MathNotes {
             return Glyph(p.name.trim(), strokes.bounds(), strokes)
         }
 
+        /** Lo que no es parte de una fracción apilada, y las barras de las fracciones. */
+        private fun inline(row: List<Glyph>): Pair<List<Glyph>, Set<Glyph>> {
+            val bars = fractions(row, unit(row) ?: return row to emptySet())
+            val stacked = (bars.keys + bars.values.flatten()).toSet()
+            return row.filter { it !in stacked } to bars.keys
+        }
+
         private fun height(row: List<Glyph>): Float =
-            median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
+            median(inline(row).first.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
+                ?: median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.height })
                 ?: median(row.filter { !isFlat(it) && it.label != EQUALS }.map { it.bounds.height })
                 ?: row.maxOf { it.bounds.width } * 1.4f
 
-        private fun centerY(row: List<Glyph>): Float =
-            median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.centerY })
+        private fun centerY(row: List<Glyph>): Float {
+            val (plain, bars) = inline(row)
+            return median(plain.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.centerY })
+                ?: median(bars.map { it.bounds.centerY })
+                ?: median(row.filter { !isFlat(it) && !isSign(it) }.map { it.bounds.centerY })
                 ?: median(row.filter { !isFlat(it) }.map { it.bounds.centerY }) ?: row.first().bounds.centerY
+        }
     }
 }

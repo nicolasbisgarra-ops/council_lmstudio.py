@@ -1,5 +1,6 @@
 package io.trazo.core
 
+import io.trazo.core.math.LineResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -140,6 +141,49 @@ class MathNotesTest {
         c.penUp(at.centerX, at.centerY, 0.5f, 80L)
         assertEquals(before, page.strokes.size)
         assertEquals("5 + 5 = 10", (events.single() as InkEvent.MathExplained).explanation.steps[0])
+    }
+
+    private fun place(name: String, b: Bounds) = InkReplacement.place(signs[name] ?: user[name] ?: patterns.first { it.name == name }, b, ids)
+
+    /** Fracción apilada en [x]: [num] sobre la raya [bar] sobre [den], centrada en la línea de un renglón en [y]. */
+    private fun stack(x: Float, y: Float, num: String, den: String, bar: String = "Fracción") =
+        place(bar, Bounds(x, y + 17f, x + 40f, y + 23f)) + place(num, Bounds(x + 8f, y - 26f, x + 32f, y + 12f)) +
+            place(den, Bounds(x + 8f, y + 28f, x + 32f, y + 66f))
+
+    @Test fun `una fraccion apilada se lee en un solo renglon`() {
+        // 1/2 + 1/3 = 5/6
+        val page = stack(0f, 0f, "1", "2") + place("Más", Bounds(55f, 5f, 85f, 35f)) + stack(100f, 0f, "1", "3") +
+            place("Igual", Bounds(155f, 15f, 185f, 25f))
+        assertEquals(1, MathNotes.rows(MathNotes.glyphs(page, byId)).size)
+        val out = MathNotes.results(page, patterns)
+        assertEquals(listOf("5", "6", "Barra").sorted(), labels(out).flatten().sorted())
+        assertEquals(20f, out.filter { it.patternId == "preset-barra" }.bounds().centerY, 4f)
+        val e = MathNotes.explain(page, patterns, out.bounds().centerX, out.bounds().centerY)!!
+        assertEquals("1/2 + 1/3 = 5/6", e.steps[0])
+    }
+
+    @Test fun `un menos con algo arriba y abajo es una barra de fraccion`() {
+        val page = stack(0f, 0f, "6", "3", bar = "Menos") + place("Igual", Bounds(55f, 15f, 85f, 25f))
+        assertEquals(listOf(listOf("2")), labels(MathNotes.results(page, patterns)))
+        // Una fracción con incógnita se despeja: x/2 = 3 → x = 6.
+        val solve = stack(0f, 0f, "x", "2") + place("Igual", Bounds(55f, 15f, 85f, 25f)) + place("3", Bounds(100f, 0f, 125f, 40f)) +
+            row(150f, "x", "Igual")
+        assertEquals(listOf(listOf("6")), labels(MathNotes.results(solve, patterns)))
+    }
+
+    @Test fun `la barra inclinada y los dos puntos dividen en linea y el porcentaje divide por cien`() {
+        assertEquals(listOf(listOf("2")), labels(MathNotes.results(row(0f, "6", "Barra", "3", "Igual"), patterns)))
+        assertEquals(listOf(listOf("4")), labels(MathNotes.results(row(0f, "5", "0", "Porcentaje", "Por", "8", "Igual"), patterns)))
+        val colon = patterns.map { p -> if (p.name == "Más") p.copy(name = ":") else p }
+        assertEquals(listOf(listOf("3")), labels(MathNotes.results(row(0f, "6", "Más", "2", "Igual"), colon)))
+        val r = MathNotes.evaluate(listOf("x = 2", "y = 3", "8:4", "20%", "2x/5y", "2*x/5*y"))
+        assertEquals(listOf("2", "1/5", "4/15", "12/5"), r.drop(2).map { (it as LineResult.Value).value.display() })
+    }
+
+    @Test fun `lo escrito pegado es un solo termino frente al dividido`() {
+        // 2x ÷ 5y con x = 2 e y = 3 es 4/15, no 2·2÷5·3 = 12/5.
+        val page = row(0f, "x", "Igual", "2") + row(100f, "y", "Igual", "3") + row(200f, "2", "x", "Dividido", "5", "y", "Igual")
+        assertEquals(setOf("4", "1", "5", "Barra"), labels(MathNotes.results(page, patterns)).flatten().toSet())
     }
 
     @Test fun `no tapa lo que se escribio despues del igual`() {
