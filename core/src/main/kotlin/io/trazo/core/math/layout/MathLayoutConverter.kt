@@ -23,6 +23,7 @@ object MathLayoutConverter {
         val kind: Kind, val box: Box, val y: Double, val emX: Double, val emY: Double,
         val text: String? = null, val label: String = "", val children: List<Node> = emptyList()
     ) {
+        val baseline get() = y + emY / 2
         val canPower get() = kind in setOf(Kind.NUMBER, Kind.ROOT, Kind.FRACTION, Kind.GROUP, Kind.POWER) ||
             kind == Kind.ATOM && text?.singleOrNull()?.isLetter() == true
     }
@@ -69,10 +70,10 @@ object MathLayoutConverter {
                         ?: compareGeometry(a.bar.box.left, b.bar.box.left)
                 }) ?: break
             val bar = fraction.bar
-            val children = listOf(sequence(powers(fraction.above)), sequence(powers(fraction.below)))
+            val children = listOf(sequence(fraction.above), sequence(fraction.below))
             val parts = fraction.above + fraction.below
             val box = parts.fold(bar.box) { bounds, node -> bounds.union(node.box) }
-            items.removeAll((parts + bar).toSet())
+            items.removeAll((parts.flatMap { origins(it, items) } + bar).toSet())
             items += Node(Kind.FRACTION, box, bar.y, median(parts.map { it.emX }), median(parts.map { it.emY }), children = children)
         }
         return rows(powers(items))
@@ -89,7 +90,7 @@ object MathLayoutConverter {
             val children = layout(inside).map(::sequence)
             val box = inside.fold(open.box.union(close.box)) { bounds, node -> bounds.union(node.box) }
             items.removeAll((inside + open + close).toSet())
-            items += Node(Kind.GROUP, box, open.y, open.emX, open.emY, text = open.text, children = children)
+            items += Node(Kind.GROUP, box, open.y, median(inside.filter { it.canPower }.map { it.emX }).takeIf { inside.isNotEmpty() } ?: open.emX, open.emY, text = open.text, children = children)
         }
         for (root in input.filter { it.kind == Kind.ROOT_MARK }.sortedWith(compareByDescending<Node> { it.box.width }.thenBy { it.box.top }.thenBy { it.box.left })) {
             if (root !in items) continue
@@ -109,8 +110,8 @@ object MathLayoutConverter {
     }
 
     private fun fraction(bar: Node, items: List<Node>): Fraction? {
-        val available = items.filter { it !== bar && it.kind != Kind.BAR &&
-            min(it.box.right, bar.box.right) >= max(it.box.left, bar.box.left) - EPS }
+        val available = powers(items.filter { it !== bar && it.kind != Kind.BAR &&
+            min(it.box.right, bar.box.right) >= max(it.box.left, bar.box.left) - EPS })
         fun band(above: Boolean): List<Node> {
             val side = available.filter { if (above) it.y < bar.y - EPS else it.y > bar.y + EPS }
             val seed = side.minWithOrNull(compareBy<Node> { abs(it.y - bar.y) }.then(order)) ?: return emptyList()
@@ -135,28 +136,78 @@ object MathLayoutConverter {
         return Fraction(bar, above, below)
     }
 
-    /** Agrupa cifras del mismo nivel antes de asociar potencias; 12 puede ser una base o un exponente. */
-    private fun joinNumbers(items: MutableList<Node>) {
-        var changed: Boolean
-        do {
-            changed = false
-            val sorted = items.sortedWith(order)
-            for ((a, b) in sorted.zipWithNext()) {
-                if (a.kind != Kind.NUMBER || b.kind != Kind.NUMBER ||
-                    min(a.emY, b.emY) < max(a.emY, b.emY) * .78 || abs(a.y - b.y) > min(a.emY, b.emY) * .25 ||
-                    b.box.left - a.box.right > max(a.emX, b.emX) * 1.1) continue
-                items.remove(a); items.remove(b)
-                items += Node(Kind.NUMBER, a.box.union(b.box), (a.y + b.y) / 2, max(a.emX, b.emX), max(a.emY, b.emY), text = a.text + b.text)
-                changed = true
-                break
-            }
-        } while (changed)
+    /** Conserva los símbolos originales al cerrar operandos que ya tienen potencias. */
+    private fun origins(node: Node, input: List<Node>): List<Node> =
+        if (node in input) listOf(node) else node.children.flatMap { origins(it, input) }
+
+    /** Los niveles se comparan por pie y por centro: una cifra baja no es un exponente. */
+    private fun sameWritingLevel(a: Node, b: Node): Boolean {
+        val height = min(a.emY, b.emY)
+        return abs(a.baseline - b.baseline) <= height * .22 + EPS || abs(a.y - b.y) <= height * .3 + EPS
     }
 
-    /** Cada nivel elevado tiene una sola base: la más cercana a la izquierda, incluyendo estructuras. */
+    private fun bands(input: List<Node>, broadRoots: Boolean = false): List<List<Node>> {
+        val groups = mutableListOf<MutableList<Node>>()
+        for (node in input.sortedWith(compareByDescending<Node> { it.emY }.then(order))) {
+            val group = groups.filter { level ->
+                val reference = level.maxBy { it.emY }
+                if (broadRoots) sameLevel(reference, node) else sameWritingLevel(reference, node)
+            }.minByOrNull { level -> abs(level.maxBy { it.emY }.baseline - node.baseline) }
+            if (group == null) groups += mutableListOf(node) else group += node
+        }
+        return groups.map { it.sortedWith(order) }
+    }
+
+    /** Une cifras sólo entre vecinos de su nivel, aunque haya otros renglones en las mismas X. */
+    private fun joinNumbers(items: MutableList<Node>) {
+        while (true) {
+            val points = items.filter { it.text in setOf(".", ",") }
+            val levels = bands(items.filter { it.kind != Kind.BAR && it !in points }).map { it.toMutableList() }
+            for (point in points) {
+                val level = levels.filter { nodes -> nodes.zipWithNext().any { (a, b) ->
+                    a.kind == Kind.NUMBER && b.kind == Kind.NUMBER &&
+                        point.box.left >= a.box.right - EPS && point.box.right <= b.box.left + EPS &&
+                        b.box.left - a.box.right <= max(a.emX, b.emX) * 2 + EPS &&
+                        point.y >= min(a.box.top, b.box.top) - min(a.emY, b.emY) * .15 - EPS &&
+                        point.y <= max(a.box.bottom, b.box.bottom) + min(a.emY, b.emY) * .25 + EPS
+                } }.minByOrNull { nodes -> abs(nodes.filter { it.kind == Kind.NUMBER }.map { it.y }.average() - point.y) }
+                level?.add(point)
+                level?.sortWith(order)
+            }
+            var joined = false
+            for (level in levels) {
+                for (index in 0 until level.lastIndex) {
+                    val a = level[index]
+                    if (a.kind != Kind.NUMBER) continue
+                    val point = level[index + 1].takeIf { it in points }
+                    val b = level.getOrNull(index + if (point == null) 1 else 2) ?: continue
+                    if (b.kind != Kind.NUMBER || !sameWritingLevel(a, b) ||
+                        b.box.left - a.box.right > max(a.emX, b.emX) * (if (point == null) 1.1 else 2.0) + EPS) continue
+                    val height = max(a.emY, b.emY)
+                    val box = a.box.union(b.box).let { if (point == null) it else it.union(point.box) }
+                    items.removeAll(listOfNotNull(a, point, b).toSet())
+                    items += Node(Kind.NUMBER, box, max(a.baseline, b.baseline) - height / 2,
+                        max(a.emX, b.emX), height, text = a.text + (if (point == null) "" else ".") + b.text)
+                    joined = true
+                    break
+                }
+                if (joined) break
+            }
+            if (!joined) return
+        }
+    }
+
+    /** Una semilla vincula el nivel elevado a una base; el resto sigue por continuidad en ese nivel. */
     private fun powers(input: List<Node>): List<Node> {
         val parent = input.associateWith { candidate ->
             input.filter { it.canPower && isScript(it, candidate) }.maxWithOrNull(compareBy<Node> { it.box.right }.thenBy { it.box.left })
+        }.toMutableMap()
+        for (level in bands(input.filter { it.kind !in setOf(Kind.BAR, Kind.OPEN, Kind.CLOSE) && it.text != "=" })) {
+            for ((previous, candidate) in level.zipWithNext()) {
+                if (parent[candidate] == null && parent[previous] != null &&
+                    candidate.box.left - previous.box.right <= max(previous.emX, candidate.emX) * 2 + EPS)
+                    parent[candidate] = parent[previous]
+            }
         }
         fun build(base: Node): Node {
             val exponent = input.filter { parent[it] === base }.map(::build)
@@ -168,25 +219,19 @@ object MathLayoutConverter {
     }
 
     private fun isScript(base: Node, candidate: Node): Boolean = base !== candidate && base.canPower &&
-        candidate.kind !in setOf(Kind.BAR, Kind.OPEN, Kind.CLOSE) && candidate.text != "=" &&
-        candidate.emY < base.emY * .78 && candidate.y < base.y - base.emY * .18 &&
-        base.y - candidate.y <= max(base.emY, base.box.height) * .95 &&
-        candidate.box.left >= base.box.right - base.emX * .15 && candidate.box.left - base.box.right <= base.emX * 2.5
+        candidate.kind !in setOf(Kind.BAR, Kind.OPEN, Kind.CLOSE) && candidate.text !in setOf("=", ".", ",") &&
+        !sameWritingLevel(base, candidate) && candidate.emY <= base.emY * 1.05 + EPS &&
+        candidate.y < base.y - base.emY * .18 + EPS &&
+        base.y - candidate.y <= max(base.emY, base.box.height) * .95 + EPS &&
+        candidate.box.left >= base.box.right - base.emX * .15 - EPS &&
+        candidate.box.left - base.box.right <= max(base.emX, candidate.emX) * 2.5 + EPS
 
     private fun sameLevel(a: Node, b: Node): Boolean {
         fun reach(node: Node) = if (node.kind == Kind.ROOT) node.box.height / 2 else node.emY * .31
-        return abs(a.y - b.y) <= reach(a) + reach(b) + EPS
+        return sameWritingLevel(a, b) || abs(a.y - b.y) <= reach(a) + reach(b) + EPS
     }
 
-    private fun rows(input: List<Node>): List<List<Node>> {
-        val rows = mutableListOf<MutableList<Node>>()
-        for (node in input.sortedWith(compareBy<Node> { it.y }.then(order))) {
-            val row = rows.filter { group -> group.any { sameLevel(it, node) } }
-                .minByOrNull { group -> abs(group.map { it.y }.average() - node.y) }
-            if (row == null) rows += mutableListOf(node) else row += node
-        }
-        return rows.sortedBy { row -> row.map { it.y }.average() }.map { it.sortedWith(order) }
-    }
+    private fun rows(input: List<Node>) = bands(input, broadRoots = true).sortedBy { row -> row.map { it.y }.average() }
 
     private fun sequence(nodes: List<Node>): Node {
         val sorted = nodes.sortedWith(order)
@@ -205,6 +250,8 @@ object MathLayoutConverter {
                         if (prior.kind == Kind.NUMBER) out.append(' ')
                         else if (endsAtom(prior)) out.append('*')
                     }
+                    // Dos identificadores contiguos serían un único nombre para el lexer.
+                    if (prior != null && endsIdentifier(prior) && startsIdentifier(child)) out.append('*')
                     val wrap = prior?.text == "/" && child.kind == Kind.FRACTION
                     if (wrap) out.append('(')
                     emit(child, out)
@@ -250,6 +297,17 @@ object MathLayoutConverter {
     private fun startsNumber(node: Node): Boolean = when (node.kind) {
         Kind.NUMBER -> true
         Kind.POWER -> startsNumber(node.children[0])
+        else -> false
+    }
+    private fun startsIdentifier(node: Node): Boolean = when (node.kind) {
+        Kind.ATOM -> node.text?.singleOrNull()?.isLetter() == true
+        Kind.POWER -> startsIdentifier(node.children[0])
+        else -> false
+    }
+    private fun endsIdentifier(node: Node): Boolean = when (node.kind) {
+        Kind.ATOM -> node.text?.singleOrNull()?.isLetter() == true
+        // Un exponente compuesto termina con el paréntesis que agrega emit.
+        Kind.POWER -> node.children[1].children.singleOrNull()?.let { it.kind == Kind.ATOM && endsIdentifier(it) } == true
         else -> false
     }
     private fun endsAtom(node: Node) = node.canPower || node.kind == Kind.CLOSE
