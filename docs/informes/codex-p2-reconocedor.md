@@ -24,28 +24,30 @@ Rama: `codex/p2-reconocedor`. VM de verificación: `ib3`.
 
 ## Correcciones
 
-El commit de código `90612c02db8c1e33f088d421bf4ccb37330c5792` corrige los 12 hallazgos y agrega una prueba de regresión por entrada mínima en `MathLayoutConverterTest.kt`:
+### Ronda 1
 
-1. **Fracción como divisor:** la fracción se emite agrupada cuando sigue a división, preservando la precedencia.
-2. **Fracciones anidadas invertidas:** se procesan barras exteriores primero por ancho; la contención espacial deja la barra interior en su numerador o denominador correspondiente.
-3. **Fracción dentro de raíz:** la raíz reúne primero su radicando y lo renderiza recursivamente, con la barra interior dentro de ese grupo.
-4. **Exponentes lejanos:** la asociación exige proximidad horizontal y vertical relativa al tamaño de los símbolos; los renglones separados permanecen separados.
-5. **Menos confundido con barra:** solo las etiquetas de barra explícitas o `Barra` pueden ser fracción; el menos horizontal se conserva como operador.
-6. **Símbolos laterales de fracción:** los grupos a ambos lados se renderizan recursivamente, conservando exponentes y otras estructuras.
-7. **Escala uniforme:** se quitaron límites absolutos en detección de barra y los márgenes/distancias se calculan respecto de alturas locales; raíces no son barras candidatas.
-8. **Multiplicación tras fracción:** se inserta `*` entre la fracción agrupada y un número contiguo a la derecha.
-9. **Orden de líneas:** las líneas que no forman parte de la fracción se vuelven a ordenar por su posición vertical al combinar.
-10. **Cifras separadas:** si dos cifras exceden la distancia relativa permitida para formar un número, se conserva un espacio entre ellas.
-11. **Ancho cero y cajas inválidas:** la intersección admite una tolerancia relativa para trazos verticales de ancho cero; cajas no finitas o invertidas generan `MathError.Syntax`.
-12. **Posición de error anidado:** se propagan los desplazamientos de los prefijos generados; la posición es el índice base cero del texto de salida de la línea.
+El commit `90612c02db8c1e33f088d421bf4ccb37330c5792` fue la primera corrección. La re-revisión posterior mostró que no cerraba el hallazgo 6b y que introducía regresiones en raíces laterales, fracciones de varias líneas, operadores entre fracciones y posiciones de error. Esos resultados no se consideran resueltos por la ronda 1.
+
+### Ronda 2
+
+El commit de código `87718c0` reemplaza la reconstrucción especial por un recorrido recursivo uniforme:
+
+1. Primero separa las cajas en renglones; barras y raíces relacionan las bandas verticales de sus operandos antes de emitir los saltos de línea.
+2. Dentro de cada línea resuelve primero las estructuras de mayor extensión espacial. Numeradores, denominadores, radicandos y exponentes vuelven a pasar por el mismo conversor, que conserva operadores y símbolos externos en su orden horizontal.
+3. Las raíces y fracciones pueden aparecer como laterales o dentro de otras estructuras; se evita convertir operandos estructurados con `atom`.
+4. La asociación de exponentes limita distancia horizontal y vertical con umbrales relativos a la altura de la escritura. Un exponente puede ser una estructura, y los operadores del grupo se conservan entre paréntesis.
+5. Las pruebas de regresión cubren raíces con elementos laterales, raíces dentro de fracciones, fracciones por renglón, tres fracciones con operadores, fracciones recursivas, exponentes estructurados, separación de renglones y posiciones de error dentro de texto generado.
+
+Los índices de sintaxis se expresan desde cero en el texto emitido de la línea, contando prefijos generados; el `detail` de `MathError.Syntax` se propaga sin el mensaje ya formateado con una posición local.
 
 `f( )` se conserva como lo interpreta hoy `MathParser`: emite `f(` y el parser no ofrece llamadas a función. No se cambió la gramática.
 
-## Pruebas
+## Verificación de ronda 2
 
-Se sincronizó el worktree en `ib3` y se ejecutó `./gradlew -q -Ptrazo.coreOnly=true :core:test`. La última ejecución terminó correctamente (código de salida 0); la clase `MathLayoutConverterTest` quedó sin fallas. Durante la revisión ib3 tuvo cortes de conexión y hubo corridas intermedias fallidas; se corrigieron y se repitió la suite después del commit de código.
+Se sincronizó el worktree en `ib3` y se ejecutó únicamente `./gradlew -q -Ptrazo.coreOnly=true :core:test`. Resultado final: **216 pruebas, 0 fallas**. Las ejecuciones intermedias que fallaron guiaron ajustes antes del commit; la corrida final pasó.
 
 ## Commits
 
-- Código y regresiones: `90612c02db8c1e33f088d421bf4ccb37330c5792`.
-- Informe: se completa en el commit de documentación que contiene este archivo.
+- Código y regresiones, ronda 1: `90612c02db8c1e33f088d421bf4ccb37330c5792`.
+- Código y regresiones, ronda 2: `87718c0`.
+- Informe de ronda 2: se completa en el commit de documentación que contiene este archivo.
