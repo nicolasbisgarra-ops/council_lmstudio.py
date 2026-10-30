@@ -8,14 +8,15 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: android-${{ github.ref }}
-  cancel-in-progress: false
-
+# Cada trabajo hace cola por separado: la compilación de un push nuevo (y su APK) no espera a que
+# termine el emulador del run anterior.
 jobs:
   build:
     name: Compilar, pruebas JVM y APK
     runs-on: ubuntu-latest
+    concurrency:
+      group: android-build-${{ github.ref }}
+      cancel-in-progress: false
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +94,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: android-emulator-${{ github.ref }}-${{ matrix.fase }}
+      cancel-in-progress: false
     # El recorrido de la interfaz va en un emulador aparte con render en el invitado: con
     # swiftshader_indirect el diálogo de color tumbaba el renderizador del host y al emulador.
     strategy:
@@ -146,6 +150,12 @@ jobs:
       - name: Publicar evidencias en la rama
         if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
         run: |
+          # Si un run más nuevo ya publicó su APK, el emulador de este no la pisa con una vieja.
+          git fetch -q --depth=1 origin "${{ github.ref_name }}"
+          published=$(git show FETCH_HEAD:output/build-provenance.txt 2>/dev/null | sed -n 's/^run_id=//p')
+          if [ -n "$published" ] && [ "$published" -gt "$GITHUB_RUN_ID" ]; then
+            echo "Ya hay una APK del run $published, más nuevo: no se publican estas evidencias"; exit 0
+          fi
           # Respaldo por si falló la publicación de la compilación (agregar lo mismo no choca al rebasar).
           mkdir -p output
           cp artifact/output/Trazo-debug.apk artifact/output/SHA256SUMS-apk.txt output/
