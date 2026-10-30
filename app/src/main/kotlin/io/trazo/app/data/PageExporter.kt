@@ -3,6 +3,7 @@ package io.trazo.app.data
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.pdf.PdfDocument
+import io.trazo.app.ai.AiMarkPainter
 import io.trazo.app.ink.PaperColors
 import io.trazo.app.ink.PaperPainter
 import io.trazo.app.ink.StrokePainter
@@ -24,20 +25,20 @@ object PageExporter {
     private const val PDF_HEIGHT = 842
 
     /** @param results tinta de los resultados de las cuentas de cada página (derivada, no está en la página). */
-    fun writePdf(notebook: Notebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }) =
-        writePdf(notebook.pages.size, notebook.pages::get, notebook.paper, out, results)
+    fun writePdf(notebook: Notebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }, includeAi: Boolean = false) =
+        writePdf(notebook.pages.size, notebook.pages::get, notebook.paper, out, results, includeAi)
 
     /** Decodifica las páginas de a una mientras escribe: un cuaderno largo no se carga entero. */
-    fun writePdf(notebook: LazyNotebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }) =
-        writePdf(notebook.pageCount, notebook::page, notebook.paper, out, results)
+    fun writePdf(notebook: LazyNotebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }, includeAi: Boolean = false) =
+        writePdf(notebook.pageCount, notebook::page, notebook.paper, out, results, includeAi)
 
-    private fun writePdf(count: Int, pageAt: (Int) -> Page, paper: Paper, out: OutputStream, results: (Page) -> List<InkStroke>) {
+    private fun writePdf(count: Int, pageAt: (Int) -> Page, paper: Paper, out: OutputStream, results: (Page) -> List<InkStroke>, includeAi: Boolean) {
         val doc = PdfDocument()
         try {
             for (i in 0 until count) {
                 val page = pageAt(i)
                 val pdfPage = doc.startPage(PdfDocument.PageInfo.Builder(PDF_WIDTH, PDF_HEIGHT, i + 1).create())
-                drawPage(pdfPage.canvas, page, paper, PDF_WIDTH / Notebook.PAGE_WIDTH, results(page))
+                drawPage(pdfPage.canvas, page, paper, PDF_WIDTH / Notebook.PAGE_WIDTH, results(page), includeAi)
                 doc.finishPage(pdfPage)
             }
             doc.writeTo(out)
@@ -46,10 +47,10 @@ object PageExporter {
         }
     }
 
-    fun writePng(page: Page, paper: Paper, out: OutputStream, scale: Float = 2f, results: List<InkStroke> = emptyList()) {
+    fun writePng(page: Page, paper: Paper, out: OutputStream, scale: Float = 2f, results: List<InkStroke> = emptyList(), includeAi: Boolean = false) {
         val bmp = Bitmap.createBitmap((Notebook.PAGE_WIDTH * scale).toInt(), (Notebook.PAGE_HEIGHT * scale).toInt(), Bitmap.Config.ARGB_8888)
         try {
-            drawPage(Canvas(bmp), page, paper, scale, results)
+            drawPage(Canvas(bmp), page, paper, scale, results, includeAi)
             bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         } finally {
             bmp.recycle()
@@ -84,12 +85,14 @@ object PageExporter {
         bmp.recycle()
     }
 
-    private fun drawPage(canvas: Canvas, page: Page, paper: Paper, scale: Float, results: List<InkStroke>) {
+    /** Con [includeAi], las marcas del Modo IA van encima, como se ven en la hoja (46). */
+    private fun drawPage(canvas: Canvas, page: Page, paper: Paper, scale: Float, results: List<InkStroke>, includeAi: Boolean) {
         canvas.save()
         canvas.scale(scale, scale)
         PaperPainter.draw(canvas, paper)
         StrokePainter.drawAll(canvas, page.allInk)
         StrokePainter.drawInkOnly(canvas, results)
+        page.ai?.takeIf { includeAi }?.let { AiMarkPainter.draw(canvas, it.notes, it.verdict(page.strokes)) }
         canvas.restore()
     }
 }

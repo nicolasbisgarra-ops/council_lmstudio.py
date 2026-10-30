@@ -45,6 +45,7 @@ private val SolveColor = Color(0xFF2E7D32)
 private val CopyColor = Color(0xFF1565C0)
 private val ColorColor = Color(0xFF8E24AA)
 private val DeleteColor = Color(0xFFC62828)
+private val AiColor = Color(0xFF2F6BFF)
 
 /**
  * Menú justo debajo de lo elegido con el lazo (arriba si no entra): resolver, copiar, color y borrar,
@@ -102,6 +103,7 @@ fun SelectionMenu(vm: EditorViewModel, onCustomColor: () -> Unit) {
                     }
                 }
             }
+            MenuAction(AiStarsIcon, "Revisar", AiColor) { vm.reviewWithAi(selectionOnly = true) }
             MenuAction(Icons.Filled.Delete, "Borrar", DeleteColor) { vm.controller.deleteSelection() }
         }
     }

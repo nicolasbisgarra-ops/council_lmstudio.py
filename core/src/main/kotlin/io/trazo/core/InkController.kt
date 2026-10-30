@@ -27,7 +27,7 @@ sealed interface InkEvent {
     data class MathExplained(val explanation: MathNotes.Explanation) : InkEvent
     /** Toque sobre una marca del Modo IA: la UI abre su burbuja. */
     data class AiNoteTapped(val note: AiNote) : InkEvent
-    /** Cambiaron las marcas del Modo IA ([PageState.ai]): la goma quitó una, o llegó una revisión. */
+    /** Cambiaron las marcas del Modo IA ([PageState.ai]) o se mostró u ocultó su capa. */
     data object AiNotesChanged : InkEvent
 }
 
@@ -619,32 +619,10 @@ class InkController(
         emit(InkEvent.PageChanged)
     }
 
-    /** Por qué [calculateSelection] no pudo calcular, para mostrarlo. */
     /**
      * Explica el resultado de la cuenta en ([x], [y]) con [InkEvent.MathExplained]; con [wholeLine] vale
      * tocar cualquier parte del renglón (con el lazo). false si ahí no hay un resultado.
      */
-    /** Un toque: abre la marca del Modo IA que hay ahí o, si no hay, explica la cuenta ([explainAt]). */
-    fun tapAt(x: Float, y: Float, wholeLine: Boolean = true): Boolean {
-        aiNoteAt(x, y)?.let { emit(InkEvent.AiNoteTapped(it)); return true }
-        return explainAt(x, y, wholeLine)
-    }
-
-    /** Las marcas del Modo IA se ven (el botón del ojo las oculta): solo así se tocan y se borran. */
-    var aiVisible: Boolean = true
-
-    fun aiNoteAt(x: Float, y: Float): AiNote? {
-        val notes = page.ai?.notes
-        if (!aiVisible || notes.isNullOrEmpty()) return null
-        return AiNotes.noteAt(notes, x, y, slop = tremorRadiusPx / pxPerUnit)
-    }
-
-    /** Agrega o quita marcas del Modo IA de la hoja abierta. */
-    fun setAi(ai: PageAi?) {
-        page.ai = ai
-        emit(InkEvent.AiNotesChanged)
-    }
-
     fun explainAt(x: Float, y: Float, wholeLine: Boolean = true): Boolean {
         if (!mathEnabled) return false
         val e = MathNotes.explain(page.strokes, patterns(), x, y, slop = tremorRadiusPx * 2f / pxPerUnit, wholeLine = wholeLine)
@@ -653,6 +631,36 @@ class InkController(
         return true
     }
 
+    /** Un toque: abre la marca del Modo IA que hay ahí o, si no hay, explica la cuenta ([explainAt]). */
+    fun tapAt(x: Float, y: Float, wholeLine: Boolean = true): Boolean {
+        aiNoteAt(x, y)?.let { emit(InkEvent.AiNoteTapped(it)); return true }
+        return explainAt(x, y, wholeLine)
+    }
+
+    /** Las marcas del Modo IA se ven (el botón del ojo las oculta): solo así se tocan y se borran. */
+    var aiVisible: Boolean = true
+        set(v) { if (field != v) { field = v; emit(InkEvent.AiNotesChanged) } }
+
+    fun aiNoteAt(x: Float, y: Float): AiNote? {
+        val notes = page.ai?.notes
+        if (!aiVisible || notes.isNullOrEmpty()) return null
+        return AiNotes.noteAt(notes, x, y, slop = tremorRadiusPx / pxPerUnit)
+    }
+
+    /** Pone tinta nueva en la hoja (una marca convertida en tinta), en un solo paso deshacible. */
+    fun addInk(strokes: List<InkStroke>) {
+        if (mode != Mode.NONE || strokes.isEmpty()) return
+        history.perform(page, StrokeEdit(emptyList(), strokes, StrokeEdit.Kind.INSERT))
+        emit(InkEvent.PageChanged)
+    }
+
+    /** Agrega o quita marcas del Modo IA de la hoja abierta. */
+    fun setAi(ai: PageAi?) {
+        page.ai = ai
+        emit(InkEvent.AiNotesChanged)
+    }
+
+    /** Por qué [calculateSelection] no pudo calcular, para mostrarlo. */
     fun calculationProblem(): String = MathNotes.problem(page.strokes, selection.toSet(), patterns())
 
     /** Si la ecuación seleccionada solo tiene soluciones imaginarias (para ofrecer resolverla con ellas). */

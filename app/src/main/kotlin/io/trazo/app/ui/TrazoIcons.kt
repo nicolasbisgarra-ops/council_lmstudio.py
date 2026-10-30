@@ -139,6 +139,9 @@ object TrazoIcons {
     val Paste by lazy { icon("Paste", stroke("M8.5 5 H6 V20.5 H18 V5 H15.5"), stroke("M9 3.5 H15 V7 H9 Z"), stroke("M9.5 12 H14.5 M9.5 15.5 H13")) }
     /** Agarradera para arrastrar una barra (seis puntos). */
     val Drag by lazy { icon("Drag", stroke("M9 6 L9.01 6 M15 6 L15.01 6 M9 12 L9.01 12 M15 12 L15.01 12 M9 18 L9.01 18 M15 18 L15.01 18")) }
+    /** Ojo abierto y tachado: mostrar u ocultar las marcas del Modo IA. */
+    val Eye by lazy { icon("Eye", stroke("M2 12 C5 6.5 8.5 5 12 5 C15.5 5 19 6.5 22 12 C19 17.5 15.5 19 12 19 C8.5 19 5 17.5 2 12 Z"), stroke("M12 9 A3 3 0 1 0 12.01 9 Z")) }
+    val EyeOff by lazy { icon("EyeOff", stroke("M2 12 C5 6.5 8.5 5 12 5 C15.5 5 19 6.5 22 12 C19 17.5 15.5 19 12 19 C8.5 19 5 17.5 2 12 Z"), stroke("M3.5 3.5 L20.5 20.5")) }
     val Shrink by lazy { icon("Shrink", stroke("M20 10 H14 V4 M14 10 L20.5 3.5"), stroke("M4 14 H10 V20 M10 14 L3.5 20.5")) }
 }
 

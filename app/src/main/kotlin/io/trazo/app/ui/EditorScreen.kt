@@ -107,6 +107,9 @@ fun EditorScreen(
     var deletePageAt by remember { mutableStateOf<Int?>(null) }
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
     var aiMenu by rememberSaveable { mutableStateOf(false) }
+    // Exportar con marcas de la IA: se pregunta solo a quien usa el Modo IA. true = PDF, false = PNG.
+    var exportAsk by remember { mutableStateOf<Boolean?>(null) }
+    var exportAi by rememberSaveable { mutableStateOf(false) }
     var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
     var wheelAt by remember { mutableStateOf<Offset?>(null) }
     // Lazo apretado sobre un lugar vacío: dónde ofrecer «Pegar» (vista) y dónde pegar (documento).
@@ -121,7 +124,7 @@ fun EditorScreen(
     fun export(uri: android.net.Uri?, pdf: Boolean) {
         if (uri == null) return
         val appContext = context.applicationContext
-        vm.exportTo(appContext.contentResolver, uri, pdf) { error ->
+        vm.exportTo(appContext.contentResolver, uri, pdf, includeAi = exportAi) { error ->
             val message = when {
                 error != null -> "No se pudo exportar: ${error.message}"
                 pdf -> "PDF exportado"
@@ -242,8 +245,12 @@ fun EditorScreen(
         onPages = { pagesOpen = !pagesOpen },
         pagesOpen = pagesOpen,
         onAi = { aiMenu = true },
-        onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
-        onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
+        onPdf = {
+            if (vm.usesAi) exportAsk = true else { exportAi = false; pdfLauncher.launch("${notebook.name}.pdf") }
+        },
+        onPng = {
+            if (vm.usesAi) exportAsk = false else { exportAi = false; pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") }
+        },
         onPatterns = onPatterns,
         onSettings = onSettings,
     )
@@ -336,6 +343,8 @@ fun EditorScreen(
                         vm.mathExplanation?.let { e ->
                             MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null })
                         }
+                        AiOverlay(vm, Modifier.align(Alignment.TopEnd))
+                        vm.aiNote?.takeIf { vm.aiVisible }?.let { note -> AiNoteBubble(vm, note) }
                         // Se muestra al levantar el lápiz, encima de donde quedó la punta.
                         vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
                             LaunchedEffect(amb) { vm.ambiguousShown() }
@@ -486,7 +495,34 @@ fun EditorScreen(
     }
 
     if (aiMenu) {
-        AiQuickMenu(onDismiss = { aiMenu = false }, onConfigure = { aiMenu = false; onAiSettings() })
+        AiQuickMenu(
+            onDismiss = { aiMenu = false },
+            onConfigure = { aiMenu = false; onAiSettings() },
+            onReview = { aiMenu = false; vm.reviewWithAi() },
+            reviewing = vm.aiProgress?.running == true,
+            pending = vm.aiPending,
+        )
+    }
+
+    exportAsk?.let { pdf ->
+        AlertDialog(
+            onDismissRequest = { exportAsk = null },
+            title = { Text(if (pdf) "Exportar PDF" else "Exportar página") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(exportAi, { exportAi = it })
+                    Text("Incluir correcciones de la IA")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    exportAsk = null
+                    if (pdf) pdfLauncher.launch("${notebook.name}.pdf")
+                    else pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png")
+                }) { Text("Exportar") }
+            },
+            dismissButton = { TextButton(onClick = { exportAsk = null }) { Text("Cancelar") } },
+        )
     }
 
     deletePageAt?.let { at ->

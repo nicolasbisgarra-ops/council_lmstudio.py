@@ -109,7 +109,7 @@ El modelo debe responder con este JSON:
 | Etapa | Contenido | Estado |
 |---|---|---|
 | 1 | Módulo `:ai` (proveedores, «Obtener modelos», «Probar conexión», lector de respuestas con arreglo y regex), perfiles con clave cifrada, Preferencias → Modo IA, botón de estrellas en la barra, permiso de internet | Hecha |
-| 2 | Captura de la hoja y numeración de renglones; revisión con marcas en streaming; capa de marcas, burbujas y leyenda; «Revisar con IA» en la selección; doble verificación con el motor; historial en `.trazo`; registro de envíos; cola sin conexión; exportar con correcciones | Pendiente |
+| 2 | Captura de la hoja y numeración de renglones; revisión con marcas en streaming; capa de marcas, burbujas y leyenda; «Revisar con IA» en la selección; doble verificación con el motor; historial en `.trazo`; registro de envíos; cola sin conexión; exportar con correcciones | Hecha |
 | 3 | Modelos en la tableta: llama.cpp (GGUF con visión) y MediaPipe LLM / Gemini Nano. Se descargan desde una lista recomendada o desde Hugging Face, o se importa un archivo | Pendiente |
 | Después | Ejercicios de práctica a partir de los errores frecuentes; modo examen que bloquea la IA y la calculadora (46) | Pendiente |
 
@@ -125,4 +125,15 @@ El modelo debe responder con este JSON:
   - `HttpTransport` y `UrlConnectionTransport` hacen la red sin dependencias nuevas.
   - `AiReview` define las marcas, el lector de respuestas y el armado del pedido.
 - **`app/.../data/AiStore.kt`.** Guarda los perfiles y las claves cifradas con el Keystore.
-- **`app/.../ui/AiSettings.kt`.** Contiene la página de Preferencias y el menú del botón de estrellas.
+- **`app/.../ui/AiSettings.kt`.** Contiene la página de Preferencias, el registro de envíos y el menú del botón de estrellas.
+- **`core/.../AiNotes.kt`.** Kotlin puro, probado en JVM (`AiNotesTest`).
+  - `PageAi` guarda las marcas y el historial de revisiones de cada hoja; viaja en el `.trazo`.
+  - `AiNotes` numera y ubica las marcas, hace la doble verificación con el motor, descarta las marcas cuyos trazos cambiaron y calcula la disposición que comparten la vista, la goma y la exportación.
+  - `MathNotes.reviewLines` arma los renglones numerados (con lazo, solo lo elegido; el resaltador nunca entra).
+- **`ai/.../AiReview.kt`.** `StreamingMarks` saca cada marca apenas llega; `AiReviewer` revisa (con arreglo del JSON) y discute una marca.
+- **`app/.../ai/`.** La única letra sobre la hoja vive acá, fuera de `ink/` (lo verifica `SourcePolicyTest`).
+  - `AiMarkPainter` dibuja óvalos, flechas, el texto y el tilde con puntaje, y convierte una marca en tinta.
+  - `AiCapture` arma la captura (tinta negra sobre blanco con el número de cada renglón); `AiConnectivity` avisa cuando vuelve la red.
+- **`app/.../data/AiJournal.kt`.** Registro de envíos (`ai_log.json`, últimos 200) y cola sin conexión (`ai_queue.json`). No guarda la imagen ni el texto.
+- **`app/.../ui/AiLayer.kt`.** Barra de progreso, ojo, leyenda de colores y la burbuja de cada marca (ver más, corrección, discutir, convertir en tinta, quitar).
+- **`EditorViewModel`, sección «Modo IA».** Revisión en streaming, cola, registro, discusión y marcas de una hoja aunque se haya pasado a otra.

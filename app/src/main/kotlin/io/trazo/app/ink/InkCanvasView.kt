@@ -18,6 +18,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
+import io.trazo.app.ai.AiMarkPainter
 import io.trazo.core.Brush
 import io.trazo.core.InkController
 import io.trazo.core.InkEvent
@@ -649,7 +650,7 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> if (!holdTapUsed && !tapScaled && tapTravel < tapSlop * 2 && event.eventTime - tapStartTime < MULTI_FINGER_TAP_MS) {
                 when (tapMaxPointers) {
                     // Un toque con el dedo sobre una cuenta muestra qué se calculó y cómo.
-                    1 -> { val (x, y) = screenToDocument(event.x, event.y); controller?.explainAt(x, y, wholeLine = true) }
+                    1 -> { val (x, y) = screenToDocument(event.x, event.y); controller?.tapAt(x, y, wholeLine = true) }
                     2 -> onTwoFingerTap?.invoke()
                     3 -> onThreeFingerTap?.invoke()
                 }
@@ -705,6 +706,8 @@ class InkCanvasView @JvmOverloads constructor(
         canvas.save()
         canvas.concat(docToScreen)
         StrokePainter.drawInkOnly(canvas, wet, paperColors.dark)
+        // Capa del Modo IA: encima de la tinta, se oculta con el ojo.
+        c.page.ai?.takeIf { c.aiVisible }?.let { ai -> AiMarkPainter.draw(canvas, ai.notes, ai.verdict(c.page.strokes)) }
         val lasso = c.lassoPath
         if (lasso.size > 1) {
             lassoPath.rewind()

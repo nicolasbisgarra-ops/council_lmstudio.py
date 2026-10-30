@@ -119,6 +119,8 @@ internal fun AiSettingsPage() {
         AiHint("El modelo «En uso» es el que revisa; desde el botón de estrellas del editor se cambia rápido.")
     }
 
+    AiSendLog()
+
     deleting?.let { p ->
         AlertDialog(
             onDismissRequest = { deleting = null },
@@ -127,6 +129,41 @@ internal fun AiSettingsPage() {
             confirmButton = { TextButton(onClick = { deleting = null; store.delete(p.id) }) { Text("Borrar") } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancelar") } },
         )
+    }
+}
+
+/** Registro de envíos (36): qué salió del equipo, cuándo, a qué modelo y cómo terminó. */
+@Composable
+private fun AiSendLog() {
+    val journal = LocalContext.current.trazo.aiJournal
+    val log by journal.log.collectAsState()
+    val queue by journal.queue.collectAsState()
+    var all by remember { mutableStateOf(false) }
+    PrefCard("Registro de envíos") {
+        if (log.isEmpty()) AiHint("Todavía no se envió nada.")
+        val format = remember { java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.getDefault()) }
+        val shown = log.asReversed().let { if (all) it else it.take(8) }
+        shown.forEach { s ->
+            Column {
+                Text(
+                    "${format.format(java.util.Date(s.at))} · ${s.notebook}, hoja ${s.page}" + if (s.selection) " (selección)" else "",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                AiHint(
+                    listOf(
+                        s.profile + (s.model.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                        "${s.lines} renglones",
+                        "imagen ${s.imageBytes / 1024} KB",
+                        "%.1f s".format(s.millis / 1000.0),
+                        s.error?.let { "error: $it" } ?: if (s.marks == 1) "1 marca" else "${s.marks} marcas",
+                    ).joinToString(" · "),
+                )
+            }
+        }
+        if (!all && log.size > shown.size) TextButton(onClick = { all = true }) { Text("Ver todo (${log.size})") }
+        if (queue.isNotEmpty()) AiHint(if (queue.size == 1) "1 revisión espera conexión." else "${queue.size} revisiones esperan conexión.")
+        if (log.isNotEmpty()) OutlinedButton(onClick = journal::clearLog) { Text("Borrar registro") }
+        AiHint("Solo se guarda este resumen; la imagen y el texto enviados no quedan en el equipo.")
     }
 }
 
@@ -386,7 +423,13 @@ private fun AiHint(text: String) {
 
 /** Lo que abre el botón de estrellas del editor: el modelo en uso, cambio rápido y la revisión. */
 @Composable
-internal fun AiQuickMenu(onDismiss: () -> Unit, onConfigure: () -> Unit) {
+internal fun AiQuickMenu(
+    onDismiss: () -> Unit,
+    onConfigure: () -> Unit,
+    onReview: () -> Unit,
+    reviewing: Boolean = false,
+    pending: Int = 0,
+) {
     val store = LocalContext.current.trazo.ai
     val ai by store.settings.collectAsState()
     AlertDialog(
@@ -404,8 +447,11 @@ internal fun AiQuickMenu(onDismiss: () -> Unit, onConfigure: () -> Unit) {
                         (c.problem ?: "Falta iniciar sesión en «${c.name}».".takeIf { c.provider.signIn && store.session(c.id) == null })?.let { AiHint(it) }
                     }
                 }
-                Button(enabled = false, onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("Revisar página") }
-                AiHint("La revisión de la hoja con marcas llega en la próxima versión. Por ahora podés dejar listos tus modelos.")
+                Button(enabled = ai.current != null && !reviewing, onClick = onReview, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (reviewing) "Revisando…" else "Revisar página")
+                }
+                AiHint("Para revisar solo una parte, elegila con el lazo y tocá «Revisar». Tocá una marca para verla, discutirla o quitarla.")
+                if (pending > 0) AiHint(if (pending == 1) "1 revisión espera conexión: sale sola al volver la red." else "$pending revisiones esperan conexión: salen solas al volver la red.")
             }
         },
         confirmButton = { TextButton(onClick = onConfigure) { Text("Configurar") } },

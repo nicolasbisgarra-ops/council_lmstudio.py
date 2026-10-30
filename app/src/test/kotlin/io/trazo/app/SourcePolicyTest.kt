@@ -45,6 +45,15 @@ class SourcePolicyTest {
         }
     }
 
+    /**
+     * La única letra sobre la hoja es la de las notas del Modo IA (12): una capa aparte, que se oculta con el
+     * ojo y vive fuera de `ink/`, en `ai/`.
+     */
+    @Test fun `the AI layer is the only text over the page`() {
+        val painter = sources.single { it.name == "AiMarkPainter.kt" }
+        assertTrue(painter.path.replace('\\', '/').contains("/app/ai/"))
+    }
+
     /** Internet es solo para el Modo IA (módulo :ai); el motor y el resto de la app no tocan la red. */
     @Test fun `only the AI mode touches the network`() {
         val network = listOf("java.net", "HttpURLConnection", "okhttp", "Socket(", "UrlConnectionTransport")
