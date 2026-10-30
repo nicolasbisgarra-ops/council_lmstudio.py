@@ -23,6 +23,8 @@ data class Page(
     val strokes: List<InkStroke> = emptyList(),
     /** Formas paramétricas editables; su tinta se deriva al dibujar ([allInk]). */
     val parametricShapes: List<ParametricShape> = emptyList(),
+    /** Marcas e historial del Modo IA; null en las hojas que nunca se revisaron. */
+    val ai: PageAi? = null,
 ) {
     /** Trazos más la tinta de las formas, en orden de dibujo. */
     val allInk: List<InkStroke>

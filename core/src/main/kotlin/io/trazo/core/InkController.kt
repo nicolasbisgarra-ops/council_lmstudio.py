@@ -25,6 +25,10 @@ sealed interface InkEvent {
     data class NotRecognized(val candidates: List<List<String>>, val anchor: Bounds) : InkEvent
     /** Toque sobre un resultado de las cuentas: qué se calculó y cómo ([MathNotes.explain]). */
     data class MathExplained(val explanation: MathNotes.Explanation) : InkEvent
+    /** Toque sobre una marca del Modo IA: la UI abre su burbuja. */
+    data class AiNoteTapped(val note: AiNote) : InkEvent
+    /** Cambiaron las marcas del Modo IA ([PageState.ai]): la goma quitó una, o llegó una revisión. */
+    data object AiNotesChanged : InkEvent
 }
 
 /**
@@ -339,7 +343,7 @@ class InkController(
                 val tap = tiny && timeMs - downTime < TAP_MS
                 val tapToDismiss = tap && dismissedSelection
                 // Tocar un resultado lo explica, sin dejar un punto encima.
-                val explained = tap && !dismissedSelection && explainAt(x, y, wholeLine = false)
+                val explained = tap && !dismissedSelection && tapAt(x, y, wholeLine = false)
                 if (!heldWithoutInk && !tapToDismiss && !explained) {
                     history.perform(page, StrokeEdit(emptyList(), listOf(stroke), StrokeEdit.Kind.DRAW))
                     emit(InkEvent.PageChanged)
@@ -357,7 +361,7 @@ class InkController(
                 lassoPoints += InkPoint(x, y)
                 val tap = timeMs - downTime < TAP_MS && lassoPoints.all { hypot(it.x - x, it.y - y) * pxPerUnit < tremorRadiusPx }
                 selection = if (tap) emptyList() else Lasso.select(page.strokes, lassoPoints).map { it.id }
-                if (tap) explainAt(x, y, wholeLine = true)
+                if (tap) tapAt(x, y, wholeLine = true)
                 else if (selection.isEmpty()) lassoShape()?.let { selectedShapeId = it.id }
                 resetContact()
                 emit(InkEvent.SelectionChanged)
@@ -620,6 +624,27 @@ class InkController(
      * Explica el resultado de la cuenta en ([x], [y]) con [InkEvent.MathExplained]; con [wholeLine] vale
      * tocar cualquier parte del renglón (con el lazo). false si ahí no hay un resultado.
      */
+    /** Un toque: abre la marca del Modo IA que hay ahí o, si no hay, explica la cuenta ([explainAt]). */
+    fun tapAt(x: Float, y: Float, wholeLine: Boolean = true): Boolean {
+        aiNoteAt(x, y)?.let { emit(InkEvent.AiNoteTapped(it)); return true }
+        return explainAt(x, y, wholeLine)
+    }
+
+    /** Las marcas del Modo IA se ven (el botón del ojo las oculta): solo así se tocan y se borran. */
+    var aiVisible: Boolean = true
+
+    fun aiNoteAt(x: Float, y: Float): AiNote? {
+        val notes = page.ai?.notes
+        if (!aiVisible || notes.isNullOrEmpty()) return null
+        return AiNotes.noteAt(notes, x, y, slop = tremorRadiusPx / pxPerUnit)
+    }
+
+    /** Agrega o quita marcas del Modo IA de la hoja abierta. */
+    fun setAi(ai: PageAi?) {
+        page.ai = ai
+        emit(InkEvent.AiNotesChanged)
+    }
+
     fun explainAt(x: Float, y: Float, wholeLine: Boolean = true): Boolean {
         if (!mathEnabled) return false
         val e = MathNotes.explain(page.strokes, patterns(), x, y, slop = tremorRadiusPx * 2f / pxPerUnit, wholeLine = wholeLine)
@@ -931,6 +956,10 @@ class InkController(
 
     private fun eraseAt(x: Float, y: Float) {
         val r = eraserRadiusPx / pxPerUnit
+        // La goma sobre la nota de una marca del Modo IA borra solo esa marca (31).
+        page.ai?.notes?.takeIf { aiVisible && it.isNotEmpty() }?.let { notes ->
+            AiNotes.noteAt(notes, x, y, slop = r)?.let { setAi(page.ai?.without(it.id)); return }
+        }
         val snapshot = page.strokes.toList()
         var changed = false
         snapshot.forEach { s ->

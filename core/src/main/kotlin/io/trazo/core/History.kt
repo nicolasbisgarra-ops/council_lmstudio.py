@@ -31,6 +31,9 @@ class PageState(initial: List<InkStroke> = emptyList(), initialShapes: List<Para
     val strokes: List<InkStroke> get() = list
     val shapes: List<ParametricShape> get() = shapeList
 
+    /** Marcas e historial del Modo IA de la hoja ([Page.ai]). No entran en el deshacer. */
+    var ai: PageAi? = null
+
     private var inkCache: List<InkStroke>? = null
     private var inkCacheVersion = -1L
 

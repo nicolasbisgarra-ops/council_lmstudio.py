@@ -210,6 +210,26 @@ object MathNotes {
         ""
     }
 
+    /** Marca de un signo sin reconocer en [reviewLines]. */
+    private const val UNREAD = "\u0000?"
+
+    /**
+     * Los renglones numerados que se envían al Modo IA, de arriba hacia abajo: toda la tinta menos el
+     * resaltador, también la escritura a mano sin reconocer (ese renglón va como «?» y el modelo lo lee en
+     * la imagen). Con [only], solo esos trazos (lo elegido con el lazo).
+     */
+    fun reviewLines(strokes: List<InkStroke>, patterns: List<InkPattern>, only: Set<String>? = null): List<AiNotes.ReviewLine> {
+        val pool = strokes.filter { it.brush != Brush.HIGHLIGHTER && (only == null || it.id in only) }
+        val known = glyphs(pool, patterns.associateBy { it.id })
+        val read = known.flatMap { it.ids }.toSet()
+        val unread = pool.filter { it.id !in read }.groupBy { it.groupId ?: it.id }.map { (_, g) -> Glyph(UNREAD, g.bounds(), g) }
+        return rows(known + unread).mapIndexed { i, row ->
+            val box = row.map { it.bounds }.reduce(Bounds::union)
+            val text = if (row.any { it.label == UNREAD }) "?" else convert(row, fractions(row, unit(row) ?: box.height).keys).ifBlank { "?" }
+            AiNotes.ReviewLine(i + 1, text, box, row.flatMap { it.ids })
+        }
+    }
+
     /** Valores de cada renglón, en el orden de [lines]; null donde no hay un resultado para mostrar. */
     private fun values(lines: List<Line>): List<MathValue?> =
         evaluate(lines.map { it.text }).mapIndexed { i, r -> shownValue(lines[i].text, r) }

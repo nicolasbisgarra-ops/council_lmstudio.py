@@ -86,6 +86,82 @@ class AiClient(
         return replyText(profile.provider, parseObject(response))
     }
 
+    /**
+     * Como [complete], pero en streaming: [onText] recibe cada trozo de texto apenas llega (las marcas se
+     * van mostrando). Si el servidor no contesta en streaming, se lee la respuesta entera. Devuelve el texto completo.
+     */
+    fun stream(
+        profile: AiProfile, key: String?, system: String, text: String, png: ByteArray?,
+        maxTokens: Int = profile.maxTokens, onText: (String) -> Unit,
+    ): String {
+        profile.problem?.let { throw AiException(it) }
+        val image = png?.let { Base64.getEncoder().encodeToString(it) }
+        val base = profile.endpoint
+        val p = profile.provider
+        val (url, headers, body) = when (p) {
+            AiProvider.ANTHROPIC -> Triple("$base/v1/messages", anthropicHeaders(key), anthropicBody(profile, system, text, image, maxTokens).streaming())
+            AiProvider.OPENAI, AiProvider.OPENAI_COMPATIBLE ->
+                Triple("$base/chat/completions", bearer(key), openAiBody(profile, system, text, image, maxTokens).streaming())
+            AiProvider.CHATGPT -> Triple("$base/responses", chatGptHeaders(key), chatGptBody(profile, system, text, image))
+            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> Triple(
+                "$base/models/${profile.model.removePrefix("models/")}:streamGenerateContent?alt=sse",
+                geminiHeaders(profile, key), geminiBody(profile, system, text, image, maxTokens),
+            )
+            AiProvider.ON_DEVICE -> throw AiException(profile.problem!!)
+        }
+        val out = StringBuilder()
+        var events = 0
+        val response = transport.stream(HttpRequest("POST", url, headers + ("Accept" to "text/event-stream"), body.toString(), profile.timeoutSeconds)) { line ->
+            if (!line.startsWith("data:")) return@stream
+            val data = line.removePrefix("data:").trim()
+            if (data.isEmpty() || data == "[DONE]") return@stream
+            val event = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: return@stream
+            events++
+            val delta = deltaOf(p, event)
+            if (!delta.isNullOrEmpty()) { out.append(delta); onText(delta) }
+        }
+        val raw = check(response)
+        if (out.isNotEmpty()) return out.toString()
+        // Sin trozos: un servidor que ignoró el streaming, o Codex con el texto solo al final.
+        val whole = when {
+            p == AiProvider.CHATGPT -> streamedText(raw)
+            events == 0 -> replyText(p, parseObject(raw))
+            else -> throw AiException("El modelo respondió vacío (puede que se haya quedado sin tokens).")
+        }
+        onText(whole)
+        return whole
+    }
+
+    /** El texto de un evento SSE de cada proveedor; lanza [AiException] si el evento es un error. */
+    private fun deltaOf(p: AiProvider, e: JsonObject): String? = when (p) {
+        AiProvider.ANTHROPIC -> when (e["type"].text()) {
+            "content_block_delta" -> e["delta"]?.jsonObject?.takeIf { it["type"].text() == "text_delta" }?.get("text").text()
+            "error" -> throw AiException("El proveedor cortó la respuesta: ${(e["error"] as? JsonObject)?.get("message").text() ?: "sin detalle"}")
+            else -> null
+        }
+        AiProvider.CHATGPT -> when (e["type"].text()) {
+            "response.output_text.delta" -> e["delta"].text()
+            "response.failed", "error" -> {
+                val err = e["response"]?.jsonObject?.get("error") ?: e["error"] ?: e
+                throw AiException("ChatGPT rechazó el pedido: ${((err as? JsonObject)?.get("message")).text() ?: "sin detalle"}")
+            }
+            else -> null
+        }
+        AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> {
+            (e["error"] as? JsonObject)?.let { throw AiException("Gemini cortó la respuesta: ${it["message"].text() ?: "sin detalle"}") }
+            e["candidates"].array().firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts").array()
+                .mapNotNull { it.jsonObject["text"].text() }.joinToString("")
+        }
+        else -> {
+            (e["error"] as? JsonObject)?.let { throw AiException("El servidor cortó la respuesta: ${it["message"].text() ?: "sin detalle"}") }
+            e["choices"].array().firstOrNull()?.jsonObject?.get("delta")?.jsonObject?.get("content").let { c ->
+                if (c is JsonArray) c.mapNotNull { it.jsonObject["text"].text() }.joinToString("") else c.text()
+            }
+        }
+    }
+
+    private fun JsonObject.streaming() = JsonObject(this + ("stream" to JsonPrimitive(true)))
+
     /** Manda una imagen chica con «1+2» escrito: si el modelo contesta 3, lee imágenes. */
     fun testConnection(profile: AiProfile, key: String?): ConnectionReport {
         val start = clock()

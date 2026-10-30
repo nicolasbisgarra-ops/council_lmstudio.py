@@ -20,6 +20,13 @@ class HttpResponse(val status: Int, val body: String)
 fun interface HttpTransport {
     /** Lanza [AiException] si no hay respuesta; un código de error HTTP sí es una respuesta. */
     fun send(request: HttpRequest): HttpResponse
+
+    /**
+     * Como [send], pero entrega el cuerpo de una respuesta buena renglón a renglón, a medida que llega
+     * (eventos SSE). Devuelve la respuesta con el cuerpo completo.
+     */
+    fun stream(request: HttpRequest, onLine: (String) -> Unit): HttpResponse =
+        send(request).also { r -> if (r.status in 200..299) r.body.lineSequence().forEach(onLine) }
 }
 
 /** Error que se le muestra al usuario tal cual: siempre en español y sin la clave. */
@@ -27,7 +34,11 @@ class AiException(message: String, val status: Int? = null, cause: Throwable? = 
 
 /** Sin dependencias: HttpURLConnection del sistema. */
 object UrlConnectionTransport : HttpTransport {
-    override fun send(request: HttpRequest): HttpResponse {
+    override fun send(request: HttpRequest): HttpResponse = exchange(request, null)
+
+    override fun stream(request: HttpRequest, onLine: (String) -> Unit): HttpResponse = exchange(request, onLine)
+
+    private fun exchange(request: HttpRequest, onLine: ((String) -> Unit)?): HttpResponse {
         val conn = try {
             URL(request.url).openConnection() as HttpURLConnection
         } catch (e: Exception) {
@@ -46,7 +57,11 @@ object UrlConnectionTransport : HttpTransport {
             }
             val status = conn.responseCode
             val stream = if (status >= 400) conn.errorStream else conn.inputStream
-            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            val reader = stream?.bufferedReader(Charsets.UTF_8) ?: return HttpResponse(status, "")
+            val body = reader.use { r ->
+                if (onLine == null || status >= 400) r.readText()
+                else buildString { r.lineSequence().forEach { line -> appendLine(line); onLine(line) } }
+            }
             return HttpResponse(status, body)
         } catch (e: SocketTimeoutException) {
             throw AiException("El modelo tardó más de ${request.timeoutSeconds} s en responder.", cause = e)

@@ -83,21 +83,25 @@ object AiReviewParser {
         val root = runCatching { json.parseToJsonElement(text.substring(start, end + 1)) as? JsonObject }.getOrNull() ?: return null
         val rawMarks = root.field("marcas", "marks", "errores", "errors") as? JsonArray
         if (rawMarks == null && root.field("correcto", "correct") == null) return null
-        val marks = rawMarks.orEmpty().mapNotNull { m ->
-            val o = m as? JsonObject ?: return@mapNotNull null
-            val line = o.field("renglon", "renglón", "linea", "línea", "line").number()?.toInt() ?: return@mapNotNull null
-            AiMark(
-                line = line,
-                kind = MarkKind.parse(o.field("tipo", "type", "kind").string()),
-                short = o.field("breve", "short", "mensaje", "message").string().orEmpty().trim(),
-                detail = o.field("detalle", "detail", "explicacion", "explicación").string().orEmpty().trim(),
-                fix = o.field("correccion", "corrección", "fix", "correction").string().orEmpty().trim(),
-            )
-        }
+        val marks = rawMarks.orEmpty().mapNotNull { (it as? JsonObject)?.let(::markOf) }
         val correct = (root.field("correcto", "correct") as? JsonPrimitive)?.booleanOrNull ?: marks.isEmpty()
         val score = root.field("puntaje", "score", "nota").number()?.coerceIn(0.0, 10.0)
         return AiReview(correct && marks.isEmpty(), score, marks)
     }
+
+    /** Una marca del JSON (acepta los nombres en español y en inglés); null si no dice el renglón. */
+    fun markOf(o: JsonObject): AiMark? {
+        val line = o.field("renglon", "renglón", "linea", "línea", "line").number()?.toInt() ?: return null
+        return AiMark(
+            line = line,
+            kind = MarkKind.parse(o.field("tipo", "type", "kind").string()),
+            short = o.field("breve", "short", "mensaje", "message").string().orEmpty().trim(),
+            detail = o.field("detalle", "detail", "explicacion", "explicación").string().orEmpty().trim(),
+            fix = o.field("correccion", "corrección", "fix", "correction").string().orEmpty().trim(),
+        )
+    }
+
+    internal fun lenient(text: String): JsonElement? = runCatching { json.parseToJsonElement(text) }.getOrNull()
 
     private val lineRegex = Regex(
         """(?im)^\s*[-*•]?\s*(?:\*\*)?(?:rengl[oó]n|l[ií]nea|line|L)\s*(\d+)(?:\*\*)?\s*(?:\(([^)]*)\))?\s*[:\-–—]\s*(.+)$""",
@@ -118,12 +122,128 @@ object AiReviewParser {
         return AiReview(correct = marks.isEmpty() && sinErrores, score = null, marks = marks, fromFreeText = true)
     }
 
-    private fun JsonObject.field(vararg names: String): JsonElement? = names.firstNotNullOfOrNull { this[it] }
+    internal fun JsonObject.field(vararg names: String): JsonElement? = names.firstNotNullOfOrNull { this[it] }
 
-    private fun JsonElement?.string(): String? = (this as? JsonPrimitive)?.contentOrNull
+    internal fun JsonElement?.string(): String? = (this as? JsonPrimitive)?.contentOrNull
 
     private fun JsonElement?.number(): Double? =
         (this as? JsonPrimitive)?.let { it.doubleOrNull ?: it.intOrNull?.toDouble() ?: it.contentOrNull?.trim()?.toDoubleOrNull() }
+}
+
+/**
+ * Lee las marcas mientras llega la respuesta (streaming): busca la lista `marcas` y entrega cada objeto
+ * apenas se cierra, para que la hoja las vaya mostrando. La respuesta completa se vuelve a leer al final con
+ * [AiReviewParser], que es la que vale.
+ */
+class StreamingMarks(private val onMark: (AiMark) -> Unit) {
+    private val text = StringBuilder()
+    private var pos = 0
+    private var inArray = false
+    private var depth = 0
+    private var start = -1
+    private var inString = false
+    private var escaped = false
+    private var done = false
+
+    fun feed(chunk: String) {
+        if (done) return
+        text.append(chunk)
+        if (!inArray) {
+            val m = ARRAY_START.find(text) ?: return
+            inArray = true
+            pos = m.range.last + 1
+        }
+        while (pos < text.length && !done) {
+            val c = text[pos]
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+            } else when (c) {
+                '"' -> inString = true
+                '{' -> { if (depth == 0) start = pos; depth++ }
+                '}' -> if (depth > 0) {
+                    depth--
+                    if (depth == 0 && start >= 0) {
+                        val o = AiReviewParser.lenient(text.substring(start, pos + 1)) as? JsonObject
+                        o?.let(AiReviewParser::markOf)?.let(onMark)
+                        start = -1
+                    }
+                }
+                ']' -> if (depth == 0) done = true
+            }
+            pos++
+        }
+    }
+
+    private companion object {
+        val ARRAY_START = Regex(""""(?:marcas|marks|errores|errors)"\s*:\s*\[""")
+    }
+}
+
+/** Respuesta a «Discutir» una marca: si el modelo la mantiene, qué contesta y, si la corrige, la marca nueva. */
+data class AiDiscussion(val keep: Boolean, val answer: String, val mark: AiMark? = null)
+
+/**
+ * Revisión de una hoja: arma el pedido, lo manda en streaming (las marcas llegan de a una por [review]'s
+ * `onMark`), lee la respuesta (con un reintento si el JSON vino roto) y aplica el rigor.
+ */
+class AiReviewer(private val client: AiClient = AiClient()) {
+    fun review(profile: AiProfile, key: String?, lines: List<String>, png: ByteArray?, onMark: (AiMark) -> Unit = {}): AiReview {
+        val keep = { m: AiMark -> m.kind != MarkKind.NOTATION || profile.rigor == Rigor.STRICT }
+        val stream = StreamingMarks { if (keep(it)) onMark(it) }
+        val reply = client.stream(profile, key, profile.instructions, AiReviewPrompt.userText(lines, profile.rigor), png) { stream.feed(it) }
+        val r = AiReviewParser.parse(reply) { fix -> client.complete(profile, key, profile.instructions, fix, null) }
+        val marks = r.marks.filter(keep)
+        // Si solo había notación (y el rigor no la pide), la hoja queda bien.
+        val correct = marks.isEmpty() && (r.correct || r.marks.isNotEmpty())
+        return r.copy(correct = correct, marks = marks)
+    }
+
+    /**
+     * El usuario no está de acuerdo con una marca: se le muestra al modelo la marca, el renglón y el
+     * argumento, y decide si la mantiene, la retira o la corrige.
+     */
+    fun discuss(profile: AiProfile, key: String?, mark: AiMark, lineText: String, argument: String, png: ByteArray?): AiDiscussion {
+        val text = buildString {
+            appendLine("Usted marcó el renglón ${mark.line} (${mark.kind.label}): ${mark.short}")
+            if (mark.detail.isNotBlank()) appendLine("Detalle: ${mark.detail}")
+            if (mark.fix.isNotBlank()) appendLine("Corrección propuesta: ${mark.fix}")
+            appendLine("Texto reconocido del renglón: ${lineText.ifBlank { "?" }}")
+            appendLine()
+            appendLine("El estudiante responde: $argument")
+            appendLine()
+            append(
+                "Revise de nuevo con cuidado. Responda únicamente con JSON: " +
+                    "{\"mantener\": true|false, \"respuesta\": \"...\", \"marca\": {\"renglon\": ${mark.line}, \"tipo\": \"...\", " +
+                    "\"breve\": \"...\", \"detalle\": \"...\", \"correccion\": \"...\"} o null}. " +
+                    "Si el estudiante tiene razón, «mantener» es false. Si la marca sigue pero cambia, envíe la marca nueva.",
+            )
+        }
+        val reply = client.complete(profile, key, DISCUSS_SYSTEM, text, png)
+        return parseDiscussion(reply)
+    }
+
+    internal fun parseDiscussion(reply: String): AiDiscussion {
+        val clean = reply.replace(Regex("```[a-zA-Z]*"), "")
+        val s = clean.indexOf('{')
+        val e = clean.lastIndexOf('}')
+        val o = if (s >= 0 && e > s) AiReviewParser.lenient(clean.substring(s, e + 1)) as? JsonObject else null
+        if (o == null) return AiDiscussion(keep = true, answer = reply.trim())
+        with(AiReviewParser) {
+            val keep = (o.field("mantener", "keep") as? JsonPrimitive)?.booleanOrNull ?: true
+            val answer = o.field("respuesta", "answer").string().orEmpty().trim()
+            val mark = (o.field("marca", "mark") as? JsonObject)?.let(::markOf)
+            return AiDiscussion(keep, answer.ifBlank { if (keep) "El modelo mantiene la marca." else "El modelo retira la marca." }, mark.takeIf { keep })
+        }
+    }
+
+    companion object {
+        const val DISCUSS_SYSTEM = "Usted es un corrector de matemática. Reconsidera una marca que hizo sobre una hoja manuscrita. " +
+            "Sea honesto: si se equivocó, admítalo. Use español formal y neutro, como máximo tres oraciones en «respuesta»."
+    }
 }
 
 private fun String.searchKey(): String =
