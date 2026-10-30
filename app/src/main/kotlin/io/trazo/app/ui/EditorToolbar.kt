@@ -103,6 +103,9 @@ class EditorActions(
     val onPng: () -> Unit,
     val onPatterns: () -> Unit,
     val onSettings: () -> Unit,
+    /** Abre o cierra el panel de páginas. */
+    val onPages: () -> Unit = {},
+    val pagesOpen: Boolean = false,
 )
 
 /**
@@ -197,6 +200,7 @@ fun EditorTopBar(
 private fun NavGroup(vm: EditorViewModel, title: String, actions: EditorActions, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "Volver", onClick = actions.onBack)
+        ToolButton(TrazoIcons.Pages, "Páginas", onClick = actions.onPages, selected = actions.pagesOpen)
         Column(
             Modifier
                 .weight(1f, fill = false)

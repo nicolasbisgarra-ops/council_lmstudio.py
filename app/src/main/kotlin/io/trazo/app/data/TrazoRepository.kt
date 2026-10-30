@@ -10,6 +10,7 @@ import io.trazo.core.PatternCategory
 import io.trazo.core.PatternLibrary
 import io.trazo.core.PatternUpgrades
 import io.trazo.core.PresetPatterns
+import io.trazo.core.LazyNotebook
 import io.trazo.core.TrazoFormat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -131,8 +132,9 @@ class TrazoRepository(root: File) {
 
     fun listNotebooks(): List<NotebookSummary> = synchronized(lock) {
         notebooksDir.listFiles { f -> f.name.endsWith(".trazo.json") }.orEmpty()
-            .mapNotNull { f -> runCatching { TrazoFormat.decodeNotebook(AtomicFile(f).readFully().toString(Charsets.UTF_8)) }.getOrNull() }
-            .map { NotebookSummary(it.id, it.name, it.pages.size, it.updatedAt, it.pages.first(), it.paper) }
+            // Para la portada alcanza con decodificar la primera página.
+            .mapNotNull { f -> runCatching { TrazoFormat.decodeLazy(AtomicFile(f).readFully().toString(Charsets.UTF_8)) }.getOrNull() }
+            .map { NotebookSummary(it.id, it.name, it.pageCount, it.updatedAt, it.page(0), it.paper) }
             .sortedByDescending { it.updatedAt }
     }
 
@@ -140,6 +142,17 @@ class TrazoRepository(root: File) {
         val f = fileFor(id)
         if (!f.baseFile.exists()) return null
         runCatching { TrazoFormat.decodeNotebook(f.readFully().toString(Charsets.UTF_8)) }.getOrNull()
+    }
+
+    /** El cuaderno con las páginas fijas, sin decodificar sus trazos (lo que usa el editor). */
+    fun loadLazy(id: String): LazyNotebook? = synchronized(lock) {
+        val f = fileFor(id)
+        if (!f.baseFile.exists()) return null
+        runCatching { TrazoFormat.decodeLazy(f.readFully().toString(Charsets.UTF_8)) }.getOrNull()
+    }
+
+    fun saveLazy(n: LazyNotebook) = synchronized(lock) {
+        write(fileFor(n.id), TrazoFormat.encodeLazy(n))
     }
 
     fun saveNotebook(n: Notebook) = synchronized(lock) {

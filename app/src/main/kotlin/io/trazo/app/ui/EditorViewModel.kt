@@ -7,6 +7,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.trazo.app.data.EraserMode
@@ -14,6 +16,7 @@ import io.trazo.app.data.PageExporter
 import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.TrazoSettings
 import io.trazo.app.data.highlighterInk
+import io.trazo.app.ink.PaperColors
 import io.trazo.app.ink.Viewport
 import io.trazo.app.trazo
 import io.trazo.core.Brush
@@ -24,6 +27,7 @@ import io.trazo.core.InkController
 import io.trazo.core.InkEvent
 import io.trazo.core.InkPattern
 import io.trazo.core.InkStroke
+import io.trazo.core.LazyNotebook
 import io.trazo.core.MathNotes
 import io.trazo.core.Notebook
 import io.trazo.core.Page
@@ -32,9 +36,6 @@ import io.trazo.core.Paper
 import io.trazo.core.ParametricShape
 import io.trazo.core.Tool
 import io.trazo.core.withGestureExample
-import io.trazo.core.withPageDuplicated
-import io.trazo.core.withPageMoved
-import io.trazo.core.withPageRemoved
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -52,7 +53,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private val repo = app.trazo.repository
     private val settings = app.trazo.settings
 
-    var notebook by mutableStateOf<Notebook?>(null)
+    /** Solo la página actual está decodificada; las demás quedan fijas hasta que se abren. */
+    var notebook by mutableStateOf<LazyNotebook?>(null)
         private set
     /** El cuaderno se lee fuera del hilo principal; mientras tanto la pantalla muestra un indicador. */
     var loading by mutableStateOf(true)
@@ -85,7 +87,6 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     val viewport = Viewport()
     private var lastSettings = settings.settings.value
-    private val pages = HashMap<String, Pair<PageState, History>>()
     private var saveJob: Job? = null
     /** Versión de los cambios y última versión confirmada en disco (abrir o mirar no modifica). */
     private var editVersion = 0L
@@ -113,14 +114,15 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     init {
         viewModelScope.launch {
-            val n = withContext(Dispatchers.IO) { repo.loadNotebook(notebookId) }
+            val n = withContext(Dispatchers.IO) { repo.loadLazy(notebookId) }
             notebook = n
-            if (n != null) attachPage(0)
+            // Vuelve a la última página en la que se estuvo.
+            if (n != null) attachPage(n.openPage)
             loading = false
         }
     }
 
-    val pageCount: Int get() = notebook?.pages?.size ?: 0
+    val pageCount: Int get() = notebook?.pageCount ?: 0
     val paper: Paper get() = notebook?.paper ?: Paper.LINES
 
     fun applySettings(s: TrazoSettings, density: Float) {
@@ -191,11 +193,19 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     /** Hay un trazo en curso: los diálogos esperan a que se levante el lápiz. */
     val isDrawing: Boolean get() { revision; return controller.isContactActive }
 
+    /**
+     * Abre la página [index]: se decodifica solo esa y las demás quedan fijas (el historial de deshacer
+     * es de la página abierta). Recordar la última página es un cambio del cuaderno que se guarda.
+     */
     private fun attachPage(index: Int) {
         val n = notebook ?: return
-        val page = n.pages[index]
-        val (state, history) = pages.getOrPut(page.id) { PageState(page.strokes, page.parametricShapes) to History() }
+        val page = n.page(index)
+        val state = PageState(page.strokes, page.parametricShapes)
+        val history = History()
+        val reopened = n.lastPage != index
+        notebook = n.withPage(index, page).loadedOnly(index).copy(lastPage = index)
         pageIndex = index
+        if (reopened) markDirty()
         attaching = true
         try {
             controller.attach(state, history)
@@ -206,17 +216,19 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     fun goToPage(index: Int) {
         val n = notebook ?: return
-        if (index !in n.pages.indices || index == pageIndex) return
+        if (index !in 0 until n.pageCount || index == pageIndex) return
         syncNotebook()
         attachPage(index)
         viewport.scale = 0f // volver a encajar
     }
 
-    fun addPage() {
+    /** Hoja nueva al final, o después de [after]. */
+    fun addPage(after: Int? = null) {
         syncNotebook()
         val n = notebook ?: return
-        notebook = n.copy(pages = n.pages + Page(IdGenerator.RANDOM.next()))
-        attachPage(n.pages.size)
+        val at = (after?.plus(1)) ?: n.pageCount
+        notebook = n.withPageAdded(Page(IdGenerator.RANDOM.next()), at)
+        attachPage(at)
         viewport.scale = 0f
         markDirty()
     }
@@ -268,11 +280,10 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private fun mathResults(page: Page): List<InkStroke> =
         if (controller.mathEnabled) MathNotes.results(page.strokes, repo.patterns.value, controller.mathColor) else emptyList()
 
-    /** Calcula lo seleccionado y escribe el resultado (con «=» si faltaba); false si no había una cuenta. */
-    /** Calcula la selección; si no se puede, devuelve el motivo para mostrarlo. */
     /** Aviso pendiente cuando la ecuación solo tiene raíces imaginarias: el usuario decide si resolverla igual. */
     var complexPrompt by mutableStateOf<String?>(null)
 
+    /** Calcula la selección y escribe el resultado; si no se puede, devuelve el motivo para mostrarlo. */
     fun calculateSelection(): String? {
         if (controller.calculateSelection()) return null
         if (controller.calculationOnlyComplex()) {
@@ -301,32 +312,41 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     val pageIsEmpty: Boolean get() { revision; return controller.page.strokes.isEmpty() && controller.page.shapes.isEmpty() }
 
-    fun duplicatePage() {
+    fun duplicatePage(index: Int = pageIndex) {
         val n = syncNotebook() ?: return
-        notebook = n.withPageDuplicated(pageIndex)
-        attachPage(pageIndex + 1)
+        notebook = n.withPageDuplicated(index)
+        attachPage(index + 1)
         viewport.scale = 0f
         markDirty()
     }
 
-    /** Elimina la página actual (no se puede deshacer; la UI pide confirmación). */
-    fun deletePage() {
+    /** Elimina la página [index] (no se puede deshacer; la UI pide confirmación). */
+    fun deletePage(index: Int = pageIndex) {
         val n = syncNotebook() ?: return
-        if (n.pages.size < 2) return
-        val removed = n.pages[pageIndex].id
-        notebook = n.withPageRemoved(pageIndex)
-        pages.remove(removed)
-        attachPage(pageIndex.coerceAtMost(n.pages.size - 2))
-        viewport.scale = 0f
+        if (n.pageCount < 2 || index !in 0 until n.pageCount) return
+        val current = pageIndex
+        notebook = n.withPageRemoved(index)
+        when {
+            index == current -> { attachPage(current.coerceAtMost(n.pageCount - 2)); viewport.scale = 0f }
+            index < current -> { pageIndex = current - 1; notebook = notebook?.copy(lastPage = pageIndex) }
+        }
         markDirty()
     }
 
-    fun movePage(delta: Int) {
+    fun movePage(delta: Int) = movePage(pageIndex, pageIndex + delta)
+
+    /** Cambia el orden de las hojas; la página abierta sigue abierta (con su historial). */
+    fun movePage(from: Int, to: Int) {
         val n = syncNotebook() ?: return
-        val to = pageIndex + delta
-        if (to !in n.pages.indices) return
-        notebook = n.withPageMoved(pageIndex, to)
-        attachPage(to)
+        if (from !in 0 until n.pageCount || to !in 0 until n.pageCount || from == to) return
+        notebook = n.withPageMoved(from, to)
+        pageIndex = when {
+            pageIndex == from -> to
+            from < pageIndex && to >= pageIndex -> pageIndex - 1
+            from > pageIndex && to <= pageIndex -> pageIndex + 1
+            else -> pageIndex
+        }
+        notebook = notebook?.copy(lastPage = pageIndex)
         markDirty()
     }
 
@@ -372,7 +392,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
      */
     fun exportTo(resolver: ContentResolver, uri: Uri, pdf: Boolean, onDone: (Throwable?) -> Unit) {
         val n = syncNotebook() ?: return
-        val page = n.pages[pageIndex]
+        val page = n.page(pageIndex)
         viewModelScope.launch {
             val error = withContext(Dispatchers.IO) {
                 runCatching {
@@ -387,13 +407,47 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         }
     }
 
-    /** Vuelca las páginas en edición al modelo inmutable. */
-    private fun syncNotebook(): Notebook? {
+    // ---------------------------------------------------------------- miniaturas del panel de páginas
+
+    /** Miniaturas por página, válidas mientras la página no cambie (misma [PageSlot]). */
+    private val thumbs = object : LinkedHashMap<String, Pair<Any, ImageBitmap>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Any, ImageBitmap>>) = size > 80
+    }
+
+    /** Lo que identifica el contenido actual de la página [index] (la abierta cambia con cada trazo). */
+    fun thumbKey(index: Int): Any? {
         val n = notebook ?: return null
-        val updated = n.copy(
-            pages = n.pages.map { p -> pages[p.id]?.let { p.copy(strokes = it.first.strokes.toList(), parametricShapes = it.first.shapes.toList()) } ?: p },
-            updatedAt = System.currentTimeMillis(),
-        )
+        if (index !in 0 until n.pageCount) return null
+        return if (index == pageIndex) revision else n.slots[index]
+    }
+
+    fun cachedThumb(index: Int): ImageBitmap? {
+        val n = notebook ?: return null
+        val key = thumbKey(index) ?: return null
+        return thumbs[n.slots[index].id]?.takeIf { it.first == key }?.second
+    }
+
+    /** Dibuja la miniatura fuera del hilo principal: una página fija se decodifica solo para esto. */
+    suspend fun thumbnail(index: Int, width: Int, colors: PaperColors): ImageBitmap? {
+        cachedThumb(index)?.let { return it }
+        val n = notebook ?: return null
+        val key = thumbKey(index) ?: return null
+        val id = n.slots[index].id
+        val page = if (index == pageIndex) Page(id, controller.page.strokes.toList(), controller.page.shapes.toList()) else null
+        val slot = n.slots[index]
+        val bmp = withContext(Dispatchers.Default) {
+            PageExporter.thumbnail(page ?: slot.page(), n.paper, width, colors).asImageBitmap()
+        }
+        thumbs[id] = key to bmp
+        return bmp
+    }
+
+    /** Vuelca la página en edición al cuaderno (las demás no cambian: siguen fijas). */
+    private fun syncNotebook(): LazyNotebook? {
+        val n = notebook ?: return null
+        val live = controller.page
+        val page = Page(n.slots[pageIndex].id, live.strokes.toList(), live.shapes.toList())
+        val updated = n.withPage(pageIndex, page).copy(updatedAt = System.currentTimeMillis())
         notebook = updated
         return updated
     }
@@ -410,7 +464,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
             if (savedVersion == editVersion) return@launch
             val version = editVersion
             val snapshot = syncNotebook() ?: return@launch
-            val saved = withContext(Dispatchers.IO) { runCatching { repo.saveNotebook(snapshot) }.isSuccess }
+            val saved = withContext(Dispatchers.IO) { runCatching { repo.saveLazy(snapshot) }.isSuccess }
             if (saved) savedVersion = maxOf(savedVersion, version)
         }
     }
@@ -420,7 +474,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         saveJob?.cancel()
         if (savedVersion == editVersion) return
         val version = editVersion
-        syncNotebook()?.let { repo.saveNotebook(it) }
+        syncNotebook()?.let { repo.saveLazy(it) }
         savedVersion = version
     }
 

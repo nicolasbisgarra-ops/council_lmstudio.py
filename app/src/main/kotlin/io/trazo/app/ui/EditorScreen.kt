@@ -99,7 +99,9 @@ fun EditorScreen(
     var canvasSize by remember { mutableStateOf(0 to 0) }
     var showInsert by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
-    var confirmDeletePage by remember { mutableStateOf(false) }
+    // Página por borrar (pide confirmación): la actual desde el menú o cualquiera desde el panel.
+    var deletePageAt by remember { mutableStateOf<Int?>(null) }
+    var pagesOpen by rememberSaveable { mutableStateOf(false) }
     var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
     var wheelAt by remember { mutableStateOf<Offset?>(null) }
     // El panel lateral de patrones se puede minimizar para dejarle todo el ancho a la hoja.
@@ -233,7 +235,9 @@ fun EditorScreen(
                     onPickColor = { colorTarget = it },
                     onQuickColor = ::quickColor,
                     onClearPage = ::clearPage,
-                    onDeletePage = { confirmDeletePage = true },
+                    onDeletePage = { deletePageAt = vm.pageIndex },
+                    onPages = { pagesOpen = !pagesOpen },
+                    pagesOpen = pagesOpen,
                     onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
                     onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
                     onPatterns = onPatterns,
@@ -248,6 +252,9 @@ fun EditorScreen(
             // En tablet los patrones quedan en un panel lateral; en teléfono, en la hoja inferior.
             val wide = maxWidth >= 840.dp
             Row(Modifier.fillMaxSize()) {
+                if (pagesOpen) {
+                    PagesPanel(vm, paper, onDelete = { deletePageAt = it }, onClose = { pagesOpen = false })
+                }
                 Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
                     AndroidView(
                         factory = { ctx ->
@@ -428,13 +435,13 @@ fun EditorScreen(
         }
     }
 
-    if (confirmDeletePage) {
+    deletePageAt?.let { at ->
         AlertDialog(
-            onDismissRequest = { confirmDeletePage = false },
-            title = { Text("¿Eliminar la página ${vm.pageIndex + 1}?") },
+            onDismissRequest = { deletePageAt = null },
+            title = { Text("¿Eliminar la página ${at + 1}?") },
             text = { Text("Se borran sus trazos. Esta acción no se puede deshacer.") },
-            confirmButton = { TextButton(onClick = { confirmDeletePage = false; vm.deletePage() }) { Text("Eliminar") } },
-            dismissButton = { TextButton(onClick = { confirmDeletePage = false }) { Text("Cancelar") } },
+            confirmButton = { TextButton(onClick = { deletePageAt = null; vm.deletePage(at) }) { Text("Eliminar") } },
+            dismissButton = { TextButton(onClick = { deletePageAt = null }) { Text("Cancelar") } },
         )
     }
 }

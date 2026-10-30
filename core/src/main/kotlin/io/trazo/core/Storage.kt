@@ -1,6 +1,7 @@
 package io.trazo.core
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
@@ -37,6 +38,8 @@ data class Notebook(
     val paper: Paper = Paper.LINES,
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
+    /** Última página abierta: el cuaderno vuelve a abrirse ahí. */
+    val lastPage: Int = 0,
 ) {
     init { require(pages.isNotEmpty()) { "A notebook needs at least one page" } }
 
@@ -115,6 +118,51 @@ object TrazoFormat {
     fun decodeNotebook(text: String): Notebook {
         val root = migrate(json.parseToJsonElement(text).jsonObject, FORMAT)
         return json.decodeFromJsonElement(NotebookFile.serializer(), root).notebook
+    }
+
+    fun encodePage(p: Page): String = json.encodeToString(Page.serializer(), p)
+
+    fun decodePage(text: String): Page = json.decodeFromString(Page.serializer(), text)
+
+    /** Mismo archivo que [encodeNotebook]; las páginas fijas se copian tal cual, sin decodificarlas. */
+    fun encodeLazy(n: LazyNotebook): String {
+        val meta = json.encodeToString(NotebookMeta.serializer(), NotebookMeta(n.id, n.name, n.paper, n.createdAt, n.updatedAt, n.lastPage))
+        val out = StringBuilder(n.slots.sumOf { it.json().length } + meta.length + 96)
+        out.append("{\"format\":\"").append(FORMAT).append("\",\"schemaVersion\":").append(SCHEMA_VERSION).append(",\"notebook\":")
+        out.append(meta, 0, meta.length - 1).append(",\"pages\":[")
+        n.slots.forEachIndexed { i, slot -> if (i > 0) out.append(','); out.append(slot.json()) }
+        return out.append("]}}").toString()
+    }
+
+    /**
+     * Lee un cuaderno dejando todas las páginas fijas como texto: abrir un cuaderno largo no decodifica
+     * sus trazos. Si el archivo no tiene la forma esperada, lo lee entero como siempre.
+     */
+    fun decodeLazy(text: String): LazyNotebook = runCatching { splitLazy(text) }.getOrElse { LazyNotebook.of(decodeNotebook(text)) }
+
+    private fun splitLazy(text: String): LazyNotebook {
+        val scan = JsonSpans(text)
+        val root = scan.members(0)
+        root["\"format\""]?.let { r ->
+            val format = json.decodeFromString(String.serializer(), text.substring(r.first, r.last + 1))
+            if (format != FORMAT) throw UnsupportedSchemaException("Expected $FORMAT, got $format")
+        }
+        root["\"schemaVersion\""]?.let { r ->
+            val version = text.substring(r.first, r.last + 1).trim().toInt()
+            if (version > SCHEMA_VERSION) throw UnsupportedSchemaException("Schema $version is newer than $SCHEMA_VERSION")
+        }
+        val nb = root.getValue("\"notebook\"")
+        val members = scan.members(nb.first)
+        val pages = members.getValue("\"pages\"")
+        val slots = scan.elements(pages.first).map { r ->
+            val pageText = text.substring(r.first, r.last + 1)
+            val idRange = scan.members(r.first).getValue("\"id\"")
+            val id = json.decodeFromString(String.serializer(), text.substring(idRange.first, idRange.last + 1))
+            PageSlot.frozen(id, pageText)
+        }
+        val metaText = text.substring(nb.first, pages.first) + "[]" + text.substring(pages.last + 1, nb.last + 1)
+        val meta = json.decodeFromString(NotebookMeta.serializer(), metaText)
+        return LazyNotebook(meta.id, meta.name, slots, meta.paper, meta.createdAt, meta.updatedAt, meta.lastPage)
     }
 
     fun encodePatterns(p: List<InkPattern>): String =
