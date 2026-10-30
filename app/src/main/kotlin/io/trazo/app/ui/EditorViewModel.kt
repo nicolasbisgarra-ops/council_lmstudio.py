@@ -97,10 +97,14 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         strokeClock = { it + offset }
         addListener { e ->
             when (e) {
-                InkEvent.PageChanged -> { revision++; mathExplanation = null; if (!attaching) markDirty() }
+                InkEvent.PageChanged -> {
+                    revision++; mathExplanation = null; if (!attaching) markDirty()
+                    // Seguir escribiendo (o borrar, deshacer…) con la burbuja abierta conserva la escritura.
+                    if (ambiguousArmed) { ambiguous = null; ambiguousArmed = false }
+                }
                 InkEvent.SelectionChanged -> { hasSelection = selection.isNotEmpty(); shapeSelected = selectedShapeId }
                 is InkEvent.Converted -> lastConversion = e
-                is InkEvent.Ambiguous -> ambiguous = e
+                is InkEvent.Ambiguous -> { ambiguous = e; ambiguousArmed = false }
                 is InkEvent.NotRecognized -> teachOffer = e
                 is InkEvent.MathExplained -> mathExplanation = e.explanation
             }
@@ -232,8 +236,19 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     fun chooseAmbiguous(pattern: InkPattern?) {
         val a = ambiguous ?: return
         ambiguous = null
+        ambiguousArmed = false
         if (pattern != null) teach(pattern, a.gestureIds)
     }
+
+    /** La burbuja de la ambigüedad ya está a la vista: el próximo cambio de la hoja la cierra. */
+    private var ambiguousArmed = false
+
+    fun ambiguousShown() { if (ambiguous != null) ambiguousArmed = true }
+
+    /** Dónde quedó la punta al terminar el gesto dudoso (coordenadas de documento). */
+    fun penOf(a: InkEvent.Ambiguous): Pair<Float, Float> =
+        controller.strokesById(a.gestureIds)?.lastOrNull()?.points?.lastOrNull()?.let { it.x to it.y }
+            ?: (a.anchor.right to a.anchor.top)
 
     /** Trazos de un grupo candidato, si siguen en la página. */
     fun strokesOf(ids: List<String>) = controller.strokesById(ids)

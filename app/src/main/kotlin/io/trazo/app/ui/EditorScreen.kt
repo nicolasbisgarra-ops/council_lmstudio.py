@@ -306,6 +306,11 @@ fun EditorScreen(
                     vm.mathExplanation?.let { e ->
                         MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null })
                     }
+                    // Se muestra al levantar el lápiz, encima de donde quedó la punta.
+                    vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
+                        LaunchedEffect(amb) { vm.ambiguousShown() }
+                        AmbiguityBubble(amb, vm.penOf(amb), vm.viewport, onChoose = vm::chooseAmbiguous)
+                    }
                     if (vm.hasSelection) {
                         SelectionPill(
                             vm,
@@ -350,24 +355,6 @@ fun EditorScreen(
             dismissButton = { TextButton(onClick = { vm.complexPrompt = null }) { Text("No") } },
         )
     }
-    vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
-        AlertDialog(
-            onDismissRequest = { vm.chooseAmbiguous(null) },
-            title = { Text("Dos patrones se parecen") },
-            text = {
-                Column {
-                    Text("Tu escritura se conservó. ¿Querés reemplazarla por alguno?")
-                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        amb.options.forEach { m ->
-                            PatternTile(m.pattern, onClick = { vm.chooseAmbiguous(m.pattern) }, Modifier.weight(1f), previewHeight = 84.dp)
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { vm.chooseAmbiguous(null) }) { Text("Conservar mi escritura") } },
-        )
-    }
-
     if (showInsert) {
         ModalBottomSheet(
             onDismissRequest = { showInsert = false },
