@@ -17,6 +17,10 @@ import java.util.zip.ZipOutputStream
 @Serializable
 enum class Paper { PLAIN, LINES, GRID, DOTS }
 
+/** Qué se ve en la tapa del cuaderno: la primera hoja o una imagen elegida ([Notebook.coverImage]). */
+@Serializable
+enum class CoverKind { FIRST_PAGE, IMAGE }
+
 @Serializable
 data class Page(
     val id: String,
@@ -42,6 +46,11 @@ data class Notebook(
     val updatedAt: Long = 0L,
     /** Última página abierta: el cuaderno vuelve a abrirse ahí. */
     val lastPage: Int = 0,
+    val coverKind: CoverKind = CoverKind.FIRST_PAGE,
+    /** Nombre del archivo de la portada (ver [Covers]); solo vale con [CoverKind.IMAGE]. */
+    val coverImage: String? = null,
+    /** Carpeta del cuaderno ([Folder.id]); null es «Sin carpeta». */
+    val folderId: String? = null,
 ) {
     init { require(pages.isNotEmpty()) { "A notebook needs at least one page" } }
 
@@ -112,6 +121,9 @@ object TrazoFormat {
         ignoreUnknownKeys = true
         encodeDefaults = true
         explicitNulls = false
+        // Un valor desconocido (p. ej. un tipo de portada de una versión futura) toma el predeterminado
+        // en vez de dejar el cuaderno sin abrir.
+        coerceInputValues = true
     }
 
     fun encodeNotebook(n: Notebook): String =
@@ -128,7 +140,7 @@ object TrazoFormat {
 
     /** Mismo archivo que [encodeNotebook]; las páginas fijas se copian tal cual, sin decodificarlas. */
     fun encodeLazy(n: LazyNotebook): String {
-        val meta = json.encodeToString(NotebookMeta.serializer(), NotebookMeta(n.id, n.name, n.paper, n.createdAt, n.updatedAt, n.lastPage))
+        val meta = json.encodeToString(NotebookMeta.serializer(), NotebookMeta(n.id, n.name, n.paper, n.createdAt, n.updatedAt, n.lastPage, n.coverKind, n.coverImage, n.folderId))
         val out = StringBuilder(n.slots.sumOf { it.json().length } + meta.length + 96)
         out.append("{\"format\":\"").append(FORMAT).append("\",\"schemaVersion\":").append(SCHEMA_VERSION).append(",\"notebook\":")
         out.append(meta, 0, meta.length - 1).append(",\"pages\":[")
@@ -164,7 +176,10 @@ object TrazoFormat {
         }
         val metaText = text.substring(nb.first, pages.first) + "[]" + text.substring(pages.last + 1, nb.last + 1)
         val meta = json.decodeFromString(NotebookMeta.serializer(), metaText)
-        return LazyNotebook(meta.id, meta.name, slots, meta.paper, meta.createdAt, meta.updatedAt, meta.lastPage)
+        return LazyNotebook(
+            meta.id, meta.name, slots, meta.paper, meta.createdAt, meta.updatedAt, meta.lastPage,
+            meta.coverKind, meta.coverImage, meta.folderId,
+        )
     }
 
     fun encodePatterns(p: List<InkPattern>): String =
@@ -189,35 +204,65 @@ object TrazoFormat {
     private const val NOTEBOOK_ENTRY = "notebook.json"
     private const val PATTERNS_ENTRY = "patterns.json"
     private const val MANIFEST_ENTRY = "manifest.json"
+    private const val COVER_ENTRY = "cover"
 
-    data class Archive(val notebook: Notebook, val patterns: List<InkPattern>)
+    /** [cover]: bytes de la portada (WEBP o PNG) cuando el cuaderno tiene una imagen elegida. */
+    class Archive(val notebook: Notebook, val patterns: List<InkPattern>, val cover: ByteArray? = null) {
+        operator fun component1() = notebook
+        operator fun component2() = patterns
+    }
 
-    /** ZIP con el cuaderno y (opcional) los patrones que usa; todo como trazos vectoriales. */
-    fun exportArchive(notebook: Notebook, patterns: List<InkPattern>, out: OutputStream) {
+    /** ZIP con el cuaderno, (opcional) los patrones que usa y la portada; todo como trazos vectoriales. */
+    fun exportArchive(notebook: Notebook, patterns: List<InkPattern>, out: OutputStream, cover: ByteArray? = null) {
+        val ext = cover?.let { Covers.extensionOf(it) }.takeIf { notebook.coverKind == CoverKind.IMAGE }
+        val nb = if (ext != null) notebook else notebook.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null)
         ZipOutputStream(out).use { zip ->
-            fun put(name: String, text: String) {
-                zip.putNextEntry(ZipEntry(name)); zip.write(text.toByteArray(Charsets.UTF_8)); zip.closeEntry()
+            fun put(name: String, bytes: ByteArray) {
+                zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry()
             }
-            put(MANIFEST_ENTRY, """{"format":"trazo-archive","schemaVersion":$SCHEMA_VERSION}""")
-            put(NOTEBOOK_ENTRY, encodeNotebook(notebook))
-            put(PATTERNS_ENTRY, encodePatterns(patterns))
+            put(MANIFEST_ENTRY, """{"format":"trazo-archive","schemaVersion":$SCHEMA_VERSION}""".toByteArray(Charsets.UTF_8))
+            put(NOTEBOOK_ENTRY, encodeNotebook(nb).toByteArray(Charsets.UTF_8))
+            put(PATTERNS_ENTRY, encodePatterns(patterns).toByteArray(Charsets.UTF_8))
+            if (ext != null) put("$COVER_ENTRY.$ext", cover!!)
         }
     }
 
+    /**
+     * Lee un `.trazo`. El cuaderno importado queda «Sin carpeta» (las carpetas son de cada dispositivo);
+     * una portada que falta, es muy grande o no es WEBP/PNG vuelve a la primera hoja.
+     */
     fun importArchive(input: InputStream): Archive {
         var notebook: Notebook? = null
         var patterns: List<InkPattern> = emptyList()
+        var cover: ByteArray? = null
         ZipInputStream(input).use { zip ->
             while (true) {
                 val e = zip.nextEntry ?: break
-                val bytes = ByteArrayOutputStream().also { zip.copyTo(it) }.toByteArray()
-                val text = bytes.toString(Charsets.UTF_8)
                 when (e.name) {
-                    NOTEBOOK_ENTRY -> notebook = decodeNotebook(text)
-                    PATTERNS_ENTRY -> patterns = decodePatterns(text)
+                    NOTEBOOK_ENTRY -> notebook = decodeNotebook(zip.readAll().toString(Charsets.UTF_8))
+                    PATTERNS_ENTRY -> patterns = decodePatterns(zip.readAll().toString(Charsets.UTF_8))
+                    "$COVER_ENTRY.webp", "$COVER_ENTRY.png" ->
+                        cover = zip.readAll(Covers.MAX_BYTES + 1)?.takeIf { Covers.extensionOf(it) == e.name.substringAfter('.') }
                 }
             }
         }
-        return Archive(notebook ?: throw UnsupportedSchemaException("Archive without $NOTEBOOK_ENTRY"), patterns)
+        val nb = (notebook ?: throw UnsupportedSchemaException("Archive without $NOTEBOOK_ENTRY")).copy(folderId = null)
+        val withCover = if (cover != null && nb.coverKind == CoverKind.IMAGE) nb
+        else nb.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null)
+        return Archive(withCover, patterns, cover.takeIf { withCover.coverKind == CoverKind.IMAGE })
+    }
+
+    private fun InputStream.readAll(): ByteArray = ByteArrayOutputStream().also { copyTo(it) }.toByteArray()
+
+    /** Hasta [limit] bytes; null si la entrada es más larga. */
+    private fun InputStream.readAll(limit: Int): ByteArray? {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        while (true) {
+            val n = read(buf)
+            if (n < 0) return out.toByteArray()
+            out.write(buf, 0, n)
+            if (out.size() >= limit) return null
+        }
     }
 }

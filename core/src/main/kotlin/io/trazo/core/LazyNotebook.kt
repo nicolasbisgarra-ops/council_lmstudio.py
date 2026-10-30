@@ -40,6 +40,9 @@ data class LazyNotebook(
     val updatedAt: Long = 0L,
     /** Última página abierta: el cuaderno vuelve a abrirse ahí. */
     val lastPage: Int = 0,
+    val coverKind: CoverKind = CoverKind.FIRST_PAGE,
+    val coverImage: String? = null,
+    val folderId: String? = null,
 ) {
     init { require(slots.isNotEmpty()) { "A notebook needs at least one page" } }
 
@@ -80,11 +83,14 @@ data class LazyNotebook(
     }
 
     /** Todo decodificado (exportar, archivo `.trazo`). */
-    fun toNotebook(): Notebook = Notebook(id, name, slots.map { it.page() }, paper, createdAt, updatedAt, lastPage)
+    fun toNotebook(): Notebook = Notebook(id, name, slots.map { it.page() }, paper, createdAt, updatedAt, lastPage, coverKind, coverImage, folderId)
 
     companion object {
         fun of(n: Notebook): LazyNotebook =
-            LazyNotebook(n.id, n.name, n.pages.map { PageSlot.of(it) }, n.paper, n.createdAt, n.updatedAt, n.lastPage)
+            LazyNotebook(
+                n.id, n.name, n.pages.map { PageSlot.of(it) }, n.paper, n.createdAt, n.updatedAt, n.lastPage,
+                n.coverKind, n.coverImage, n.folderId,
+            )
     }
 }
 
@@ -97,6 +103,9 @@ internal data class NotebookMeta(
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val lastPage: Int = 0,
+    val coverKind: CoverKind = CoverKind.FIRST_PAGE,
+    val coverImage: String? = null,
+    val folderId: String? = null,
 )
 
 /**
