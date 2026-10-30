@@ -23,14 +23,14 @@ import io.trazo.core.LazyNotebook
 import io.trazo.core.NotebookOrder
 import io.trazo.core.TrazoFormat
 import io.trazo.core.normalizedCover
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 data class NotebookSummary(
     val id: String,

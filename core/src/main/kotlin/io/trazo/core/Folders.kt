@@ -101,6 +101,18 @@ object NotebookOrder {
         val at = if (target == null) rest.size else rest.indexOf(target).takeIf { it >= 0 } ?: return current
         return rest.toMutableList().apply { add(at, moving) }
     }
+
+    /**
+     * El orden completo [full] con los ids visibles reacomodados como [visible] (una carpeta o la lista
+     * entera): ocupan los mismos lugares que antes y el resto no se mueve. Ids de [visible] que no están
+     * en [full] van al final.
+     */
+    fun withSubset(full: List<String>, visible: List<String>): List<String> {
+        val set = visible.toHashSet()
+        val next = visible.filter { it in full }.iterator()
+        val merged = full.map { if (it in set && next.hasNext()) next.next() else it }
+        return (merged + visible.filter { it !in full }).distinct()
+    }
 }
 
 /** Portadas: imágenes guardadas como `covers/<sha256>.webp` (o `.png`), referidas por nombre. */

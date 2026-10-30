@@ -10,19 +10,28 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import io.trazo.app.data.ToolbarButtonSize
 import io.trazo.app.data.TrazoSettings
 import io.trazo.app.data.WheelEntry
+import io.trazo.core.moveItem
+import io.trazo.core.positionLabel
 import io.trazo.core.settings.ToolPreferences
 import kotlin.math.PI
 import kotlin.math.cos
@@ -51,9 +62,9 @@ internal fun ToolbarPreferences(s: TrazoSettings, update: ((TrazoSettings) -> Tr
             PreviewButton(tool.preferenceIcon(), tool.preferenceLabel(), s.toolbarButtonSize.dp.dp, tool == EditorTool.PEN)
         }
     }
-    Text("Elegí qué mostrar y usá las flechas para ordenar. La pluma queda siempre visible.", style = MaterialTheme.typography.bodySmall)
+    Text("Elegí qué mostrar. Mantené apretado el ícono de líneas y arrastrá, o usá las flechas. La pluma queda siempre visible.", style = MaterialTheme.typography.bodySmall)
     OrderedChoices(
-        options = EditorTool.entries, selected = s.toolbarTools, label = { it.preferenceLabel() },
+        options = EditorTool.entries, selected = s.toolbarTools, key = { it.name }, label = { it.preferenceLabel() },
         canToggle = { it != EditorTool.PEN },
         onChange = { tools -> update { it.copy(toolbarTools = tools) } },
     )
@@ -88,7 +99,7 @@ internal fun WheelPreferences(s: TrazoSettings, update: ((TrazoSettings) -> Traz
         style = MaterialTheme.typography.bodySmall,
     )
     OrderedChoices(
-        options = WheelEntry.entries, selected = s.wheelItems, label = { it.preferenceLabel() },
+        options = WheelEntry.entries, selected = s.wheelItems, key = { it.name }, label = { it.preferenceLabel() },
         canToggle = { entry ->
             if (entry in s.wheelItems) s.wheelItems.size > ToolPreferences.MIN_WHEEL_ITEMS
             else s.wheelItems.size < ToolPreferences.MAX_WHEEL_ITEMS
@@ -102,38 +113,58 @@ internal fun WheelPreferences(s: TrazoSettings, update: ((TrazoSettings) -> Traz
 private fun <T> OrderedChoices(
     options: List<T>,
     selected: List<T>,
+    key: (T) -> String,
     label: (T) -> String,
     canToggle: (T) -> Boolean,
     onChange: (List<T>) -> Unit,
 ) {
-    Column {
-        (selected + options.filter { it !in selected }).forEach { option ->
-            key(option) {
-                val index = selected.indexOf(option)
-                val checked = index >= 0
+    // Las preferencias tienen como máximo diez entradas: guardar por cruce es barato.
+    var ordered by remember(selected) { mutableStateOf(selected) }
+    val list = rememberLazyListState()
+    fun change(next: List<T>) { ordered = next; onChange(next) }
+    val reorder = rememberReorderableState(list) { from, to ->
+        if (from in ordered.indices && to in ordered.indices) change(moveItem(ordered, from, to))
+    }
+    LazyColumn(state = list, modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+        itemsIndexed(ordered, key = { _, option -> key(option) }) { index, option ->
+            ReorderableItem(reorder, key(option)) { _ ->
                 val name = label(option)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(
-                        checked = checked, enabled = canToggle(option),
-                        onCheckedChange = { show -> onChange(if (show) selected + option else selected - option) },
+                        checked = true, enabled = reorder.draggingKey == null && canToggle(option),
+                        onCheckedChange = { change(ordered - option) },
                         modifier = Modifier.semantics { contentDescription = "Mostrar $name" },
                     )
-                    Text(name, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.bodyMedium)
-                    IconButton(onClick = { onChange(selected.moved(index, index - 1)) }, enabled = checked && index > 0) {
+                    Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                        Text(name, style = MaterialTheme.typography.bodyMedium)
+                        Text(positionLabel(index, ordered.size), style = MaterialTheme.typography.labelSmall)
+                    }
+                    Icon(Icons.Filled.Menu, "Mover $name", Modifier.dragHandle(reorder, key(option)).padding(12.dp).size(24.dp))
+                    IconButton(onClick = { change(moveItem(ordered, index, index - 1)) }, enabled = reorder.draggingKey == null && index > 0) {
                         Icon(Icons.Filled.KeyboardArrowUp, "Subir $name")
                     }
-                    IconButton(onClick = { onChange(selected.moved(index, index + 1)) }, enabled = checked && index < selected.lastIndex) {
+                    IconButton(onClick = { change(moveItem(ordered, index, index + 1)) }, enabled = reorder.draggingKey == null && index < ordered.lastIndex) {
                         Icon(Icons.Filled.KeyboardArrowDown, "Bajar $name")
                     }
                 }
             }
         }
+        item(key = "hidden-header") {
+            Text("Ocultas (activá una para agregarla al final)", Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium)
+        }
+        items(options.filter { it !in ordered }, key = key) { option ->
+            val name = label(option)
+            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = false, enabled = reorder.draggingKey == null && canToggle(option),
+                    onCheckedChange = { change(ordered + option) },
+                    modifier = Modifier.semantics { contentDescription = "Mostrar $name" },
+                )
+                Text(name, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
     }
 }
-
-private fun <T> List<T>.moved(from: Int, to: Int): List<T> =
-    if (from !in indices || to !in indices) this
-    else toMutableList().apply { add(to, removeAt(from)) }
 
 @Composable
 private fun PreviewButton(icon: ImageVector, label: String, size: Dp, selected: Boolean) {

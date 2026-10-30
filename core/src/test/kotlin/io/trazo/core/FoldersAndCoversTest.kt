@@ -101,6 +101,14 @@ class FoldersAndCoversTest {
         assertEquals(l, NotebookOrder.moved(l, "a", "x"))
     }
 
+    @Test fun `reordering the visible notebooks keeps the hidden ones in place`() {
+        val full = listOf("a", "x", "b", "y", "c")
+        assertEquals(listOf("c", "x", "a", "y", "b"), NotebookOrder.withSubset(full, listOf("c", "a", "b")))
+        assertEquals(listOf("b", "a", "c"), NotebookOrder.withSubset(listOf("a", "b", "c"), listOf("b", "a", "c")))
+        assertEquals(listOf("a", "b", "n"), NotebookOrder.withSubset(listOf("a", "b"), listOf("a", "n")))
+        assertEquals(full, NotebookOrder.withSubset(full, emptyList()))
+    }
+
     @Test fun `cover names and magic bytes are validated`() {
         assertTrue(Covers.isValidName(coverName))
         assertFalse(Covers.isValidName("../x.webp"))

@@ -23,11 +23,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -35,6 +39,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -88,12 +93,14 @@ import io.trazo.core.Notebook
 import io.trazo.core.NotebookOrder
 import io.trazo.core.Paper
 import java.io.File
+import io.trazo.core.moveItem
+import io.trazo.core.positionLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Orden de la lista de cuadernos. */
-private enum class NotebookSort(val label: String) { RECENT("Recientes"), NAME("Nombre"), MANUAL("Manual") }
+private enum class NotebookSort(val label: String) { RECENT("Recientes"), NAME("Nombre"), MANUAL("Manual (arrastrar)") }
 
 /** Filtros de la fila de carpetas que no son una carpeta. */
 private const val FILTER_ALL = "\u0000todos"
@@ -126,7 +133,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
     var coverId by rememberSaveable { mutableStateOf<String?>(null) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    var sort by rememberSaveable { mutableStateOf(NotebookSort.RECENT) }
+    var sort by rememberSaveable { mutableStateOf(NotebookSort.MANUAL) }
     var menu by remember { mutableStateOf(false) }
     // Sobrevive a una recreación mientras el selector de archivos está abierto.
     var exportId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -193,6 +200,27 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
             NotebookSort.RECENT -> filtered.sortedByDescending { it.updatedAt }
             NotebookSort.NAME -> filtered.sortedBy { searchKey(it.name) }
             NotebookSort.MANUAL -> NotebookOrder.sorted(filtered, order, { it.id }, { it.updatedAt })
+        }
+    }
+
+    var orderDirty by remember { mutableStateOf(false) }
+    val manualList = rememberLazyListState()
+    // Arrastrar reacomoda solo los cuadernos que se ven (carpeta elegida); el resto queda en su lugar.
+    val reorder = rememberReorderableState(manualList) { from, to ->
+        if (sort == NotebookSort.MANUAL && query.isBlank()) {
+            // Se relee [order] en cada paso: puede haber varios movimientos antes de recomponer.
+            val full = NotebookOrder.sorted(items, order, { it.id }, { it.updatedAt }).map { it.id }
+            val visibleIds = shown.mapTo(HashSet()) { it.id }
+            order = NotebookOrder.withSubset(full, moveItem(full.filter { it in visibleIds }, from, to))
+            orderDirty = true
+        }
+    }
+    PersistReorderOnEnd(reorder, { orderDirty }) {
+        val next = order
+        orderDirty = false
+        scope.launch {
+            val error = withContext(Dispatchers.IO) { runCatching { repo.saveManualOrder(next) }.exceptionOrNull() }
+            if (error != null) Toast.makeText(context, "No se pudo guardar el orden: ${error.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -302,6 +330,35 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
                           color = MaterialTheme.colorScheme.onSurfaceVariant,
                       )
                   }
+              } else if (sort == NotebookSort.MANUAL) LazyColumn(
+                state = manualList,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+              ) {
+                itemsIndexed(shown, key = { _, nb -> nb.id }) { index, nb ->
+                    ReorderableItem(reorder, nb.id) { _ ->
+                        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface), verticalAlignment = Alignment.CenterVertically) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                if (query.isBlank()) Icon(
+                                    Icons.Filled.Menu, "Mover ${nb.name}",
+                                    Modifier.dragHandle(reorder, nb.id).padding(12.dp).size(24.dp),
+                                )
+                                Text(positionLabel(index, shown.size), style = MaterialTheme.typography.labelSmall)
+                            }
+                            NotebookCard(
+                                nb, colors, compact = true,
+                                onOpen = { onOpen(nb.id) },
+                                onRename = { renaming = nb },
+                                onExport = { exportId = nb.id; exportLauncher.launch("${nb.name}.trazo") },
+                                onDelete = { deleting = nb },
+                                onMove = { moving = nb },
+                                onCover = { coverFor = nb },
+                                onShift = { d -> shift(nb, d) },
+                            )
+                        }
+                    }
+                }
               } else BoxWithConstraints(Modifier.fillMaxSize()) {
                 // En pantallas bajas (teléfono horizontal) la tapa a 168 dp de ancho ocupa toda la
                 // altura y el nombre queda fuera de la vista: se angosta la columna para que entren
@@ -323,7 +380,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
                             onDelete = { deleting = nb },
                             onMove = { moving = nb },
                             onCover = { coverFor = nb },
-                            onShift = if (sort == NotebookSort.MANUAL) { d -> shift(nb, d) } else null,
+                            onShift = null,
                         )
                     }
                 }
@@ -455,13 +512,15 @@ private fun NotebookCard(
     onCover: () -> Unit,
     /** Subir (-1) o bajar (+1) en el orden manual; null fuera de ese orden. */
     onShift: ((Int) -> Unit)?,
+    compact: Boolean = false,
 ) {
     var menu by remember { mutableStateOf(false) }
-    Column {
+    @Composable
+    fun cover(modifier: Modifier) {
         Surface(
             onClick = onOpen,
             shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth().aspectRatio(Notebook.PAGE_WIDTH / Notebook.PAGE_HEIGHT).shadow(4.dp, RoundedCornerShape(10.dp)),
+            modifier = modifier.aspectRatio(Notebook.PAGE_WIDTH / Notebook.PAGE_HEIGHT).shadow(4.dp, RoundedCornerShape(10.dp)),
         ) {
             val cover = coverBitmap(nb.coverFile)
             if (cover != null) {
@@ -470,7 +529,10 @@ private fun NotebookCard(
                 PageThumbnail(nb.firstPage.allInk, nb.paper, colors, Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
             }
         }
-        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
+    }
+    @Composable
+    fun details(modifier: Modifier) {
+        Row(modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
             // El nombre también abre el cuaderno, no solo la miniatura.
             Column(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpen).padding(start = 2.dp)) {
                 Text(nb.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -497,6 +559,17 @@ private fun NotebookCard(
                     DropdownMenuItem(text = { Text("Eliminar…") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { menu = false; onDelete() })
                 }
             }
+        }
+    }
+    if (compact) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            cover(Modifier.width(72.dp))
+            details(Modifier.weight(1f))
+        }
+    } else {
+        Column {
+            cover(Modifier.fillMaxWidth())
+            details(Modifier.fillMaxWidth())
         }
     }
 }

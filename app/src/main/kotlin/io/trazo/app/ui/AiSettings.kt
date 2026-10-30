@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,14 +12,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -59,6 +65,9 @@ import io.trazo.ai.Rigor
 import io.trazo.ai.signIn
 import io.trazo.app.data.AiStore
 import io.trazo.app.trazo
+import io.trazo.core.applySavedOrder
+import io.trazo.core.moveItem
+import io.trazo.core.positionLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,6 +79,18 @@ internal fun AiSettingsPage() {
     val ai by store.settings.collectAsState()
     var editing by remember { mutableStateOf<AiProfile?>(null) }
     var deleting by remember { mutableStateOf<AiProfile?>(null) }
+
+    var localOrder by remember { mutableStateOf<List<String>?>(null) }
+    val profiles = remember(ai.profiles, localOrder) { applySavedOrder(ai.profiles, localOrder.orEmpty()) { it.id } }
+    val listState = rememberLazyListState()
+    val reorder = rememberReorderableState(listState) { from, to ->
+        // Puede haber varios cruces antes del próximo frame.
+        localOrder = moveItem(applySavedOrder(store.settings.value.profiles, localOrder.orEmpty()) { it.id }, from, to).map { it.id }
+    }
+    PersistReorderOnEnd(reorder, { localOrder != null }) {
+        localOrder?.let(store::reorderProfiles)
+        localOrder = null
+    }
 
     val draft = editing
     if (draft != null) {
@@ -88,16 +109,25 @@ internal fun AiSettingsPage() {
         if (ai.profiles.isEmpty()) {
             AiHint("Todavía no hay ningún modelo. Agregá uno con tu clave de API, con tu cuenta (ChatGPT, Google) o un servidor de tu red (LM Studio, Ollama).")
         }
-        ai.profiles.forEach { p ->
-            val inUse = p.id == ai.current?.id
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(p.name, style = MaterialTheme.typography.bodyLarge)
-                    AiHint(listOf(p.provider.label.substringBefore(" ("), p.model.ifBlank { "sin modelo" }).joinToString(" · "))
+        AiHint("Mantené apretado el ícono de líneas para ordenar los modelos.")
+        if (profiles.isNotEmpty()) LazyColumn(
+            state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+        ) {
+            itemsIndexed(profiles, key = { _, p -> p.id }) { index, p ->
+                ReorderableItem(reorder, p.id) { _ ->
+                    val inUse = p.id == ai.current?.id
+                    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Menu, "Mover ${p.name}", Modifier.dragHandle(reorder, p.id).padding(12.dp).size(24.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(p.name, style = MaterialTheme.typography.bodyLarge)
+                            AiHint(positionLabel(index, profiles.size))
+                            AiHint(listOf(p.provider.label.substringBefore(" ("), p.model.ifBlank { "sin modelo" }).joinToString(" · "))
+                        }
+                        ChoiceChip(if (inUse) "En uso" else "Usar", inUse, onClick = { store.select(p.id) })
+                        IconButton(onClick = { editing = p }) { Icon(Icons.Filled.Edit, "Editar ${p.name}") }
+                        IconButton(onClick = { deleting = p }) { Icon(Icons.Filled.Delete, "Borrar ${p.name}") }
+                    }
                 }
-                ChoiceChip(if (inUse) "En uso" else "Usar", inUse, onClick = { store.select(p.id) })
-                IconButton(onClick = { editing = p }) { Icon(Icons.Filled.Edit, "Editar ${p.name}") }
-                IconButton(onClick = { deleting = p }) { Icon(Icons.Filled.Delete, "Borrar ${p.name}") }
             }
         }
         var choosing by remember { mutableStateOf(false) }

@@ -8,15 +8,16 @@ import io.trazo.ai.AiOAuth
 import io.trazo.ai.AiProfile
 import io.trazo.ai.AiProvider
 import io.trazo.ai.OAuthTokens
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import io.trazo.core.applySavedOrder
 import java.security.KeyStore
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** Perfiles del Modo IA y cuál se usa. Se guardan aparte de [TrazoSettings]: restablecer las preferencias no los borra. */
 data class AiSettings(val profiles: List<AiProfile> = emptyList(), val defaultId: String? = null) {
@@ -55,6 +56,12 @@ class AiStore(context: Context) {
         val list = s.profiles.filterNot { it.id == id }
         keys.edit().remove(id).apply()
         write(AiSettings(list, s.defaultId.takeIf { it != id } ?: list.firstOrNull()?.id))
+    }
+
+    /** El array de perfiles ya guarda el orden explícito; los datos viejos conservan su secuencia. */
+    fun reorderProfiles(ids: List<String>) {
+        val s = _settings.value
+        write(s.copy(profiles = applySavedOrder(s.profiles, ids) { it.id }, defaultId = s.current?.id))
     }
 
     fun select(id: String) = write(_settings.value.copy(defaultId = id))

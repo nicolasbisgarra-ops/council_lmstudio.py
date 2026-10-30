@@ -50,6 +50,7 @@ import io.trazo.core.Paper
 import io.trazo.core.ParametricShape
 import io.trazo.core.Tool
 import io.trazo.core.bounds
+import io.trazo.core.moveItem
 import io.trazo.core.withGestureExample
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -409,10 +410,11 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     fun movePage(delta: Int) = movePage(pageIndex, pageIndex + delta)
 
     /** Cambia el orden de las hojas; la página abierta sigue abierta (con su historial). */
-    fun movePage(from: Int, to: Int) {
-        val n = syncNotebook() ?: return
+    fun movePage(from: Int, to: Int, deferSave: Boolean = false) {
+        // Durante el gesto la tinta viva sigue en el controlador: no la copies en cada cruce.
+        val n = (if (deferSave) notebook else syncNotebook()) ?: return
         if (from !in 0 until n.pageCount || to !in 0 until n.pageCount || from == to) return
-        notebook = n.withPageMoved(from, to)
+        notebook = n.copy(slots = moveItem(n.slots, from, to))
         pageIndex = when {
             pageIndex == from -> to
             from < pageIndex && to >= pageIndex -> pageIndex - 1
@@ -420,8 +422,14 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
             else -> pageIndex
         }
         notebook = notebook?.copy(lastPage = pageIndex)
-        markDirty()
+        if (deferSave) {
+            editVersion++
+            saveJob?.cancel()
+        } else markDirty()
     }
+
+    /** Al terminar el gesto, el guardado habitual vuelca la tinta y el orden juntos. */
+    fun persistPageOrder() { scheduleSave() }
 
     /** Inserta la tinta de salida de un patrón en el centro de la zona visible. */
     fun insertPattern(pattern: InkPattern, viewWidth: Int, viewHeight: Int) {

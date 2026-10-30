@@ -17,7 +17,7 @@ internal enum class PreferenceSection(val title: String, val summary: String, va
     PAPER("Hoja", "Papel de los cuadernos nuevos", listOf("Papel")),
     TOOLS(
         "Herramientas", "Goma, barra y ruleta",
-        listOf("Modo de la goma", "Tamaño de la goma", "Herramientas de la barra", "Tamaño de los botones", "Entradas de la ruleta"),
+        listOf("Modo de la goma", "Tamaño de la goma", "Herramientas de la barra", "Tamaño de los botones", "Entradas de la ruleta", "Ordenar herramientas por arrastre"),
     ),
     RECOGNITION(
         "Reconocimiento", "Alineado, pausa, temblor y aprendizaje",
@@ -37,7 +37,7 @@ internal enum class PreferenceSection(val title: String, val summary: String, va
     AI(
         "Modo IA", "Modelos, claves de API y revisión de la hoja",
         listOf(
-            "Perfiles de modelos", "Clave de API", "Obtener modelos", "Probar conexión", "Rigor de la revisión",
+            "Perfiles de modelos", "Ordenar modelos por arrastre", "Clave de API", "Obtener modelos", "Probar conexión", "Rigor de la revisión",
             "Calidad de la captura", "Instrucciones del modelo (prompt)", "Temperatura", "LM Studio, Ollama, OpenRouter",
         ),
     ),
