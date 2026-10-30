@@ -316,7 +316,7 @@ fun EditorScreen(
                                 vm.pageIndex // releer al cambiar de página
                                 vm.fitRequest // y al pedir "Ajustar a la página"
                                 v.controller = vm.controller
-                                v.viewport = vm.viewport
+                                if (v.viewport !== vm.viewport || !vm.viewport.isSet) v.viewport = vm.viewport
                                 v.paper = vm.paper
                                 v.fingerDraws = settings.fingerDraws
                                 v.showHoldIndicator = settings.showHoldIndicator

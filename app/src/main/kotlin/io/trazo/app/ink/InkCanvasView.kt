@@ -335,8 +335,14 @@ class InkCanvasView @JvmOverloads constructor(
         docToScreen.postTranslate(viewport.tx, viewport.ty)
         docToScreen.invert(screenToDoc)
         invalidate()
+        // Solo avisa si cambió de verdad: reasignar la misma vista no debe redibujar la interfaz en bucle.
+        val now = Triple(viewport.scale, viewport.tx, viewport.ty)
+        if (now == notifiedViewport) return
+        notifiedViewport = now
         onViewportChanged?.invoke()
     }
+
+    private var notifiedViewport: Triple<Float, Float, Float>? = null
 
     /** Acerca o aleja desde el centro de la vista (botones de zoom). */
     fun zoomStep(factor: Float) {
