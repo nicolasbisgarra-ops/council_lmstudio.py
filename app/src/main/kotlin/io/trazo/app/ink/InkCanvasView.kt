@@ -814,9 +814,9 @@ class InkCanvasView @JvmOverloads constructor(
         /** Espera tras soltar el botón en el aire antes de decidir si fueron 1, 2 o 3 clics. */
         const val PEN_CLICK_WAIT_MS = 350L
         private val BUTTON_ACTIONS = setOf(MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE)
-        /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
         /** Cuánto se deja quieto el lazo para que aparezca «Pegar». */
         private const val LASSO_HOLD_MS = 550L
+        /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
         private const val SPEN_ACTION_DOWN = 211
         private const val SPEN_ACTION_UP = 212
         private const val SPEN_ACTION_MOVE = 213
