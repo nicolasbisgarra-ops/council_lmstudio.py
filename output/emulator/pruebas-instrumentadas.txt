@@ -3,7 +3,7 @@ io.trazo.app.EditorInstrumentedTest:..............
 io.trazo.app.ExportInstrumentedTest:..
 io.trazo.app.ParametricExportInstrumentedTest:...
 
-Time: 103.504
+Time: 96.332
 
 OK (19 tests)
 
