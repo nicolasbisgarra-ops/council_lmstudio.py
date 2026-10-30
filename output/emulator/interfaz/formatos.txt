@@ -1,0 +1,45 @@
+-- telefono: 1080x2400 @ 420 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 16.078
+
+OK (1 test)
+
+
+-- telefono-horizontal: 2400x1080 @ 420 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 14.334
+
+OK (1 test)
+
+
+-- tableta: 1600x2560 @ 320 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 15.094
+
+OK (1 test)
+
+
+-- tableta-horizontal: 2560x1600 @ 320 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 15.474
+
+OK (1 test)
+
+
+-- pc: 1920x1080 @ 160 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 15.36
+
+OK (1 test)
+
+

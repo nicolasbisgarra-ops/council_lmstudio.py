@@ -1,0 +1,11 @@
+
+io.trazo.app.EditorInstrumentedTest:..............
+io.trazo.app.ExportInstrumentedTest:..
+io.trazo.app.ParametricExportInstrumentedTest:...
+io.trazo.app.PageHistoryInstrumentedTest:..
+
+Time: 117.337
+
+OK (21 tests)
+
+

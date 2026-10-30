@@ -1,0 +1,5 @@
+Fecha: 2026-10-30T12:31:19Z
+Modelo: sdk_gphone64_x86_64
+Android: 14 (API 34)
+Pantalla: Physical size: 1080x2400 / Physical density: 420
+Tipo: EMULADOR (eventos de lápiz sintetizados; no es S Pen físico)
