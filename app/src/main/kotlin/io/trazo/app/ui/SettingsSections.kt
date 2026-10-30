@@ -34,6 +34,13 @@ internal enum class PreferenceSection(val title: String, val summary: String, va
         "General", "Vibración, dedo y gestos",
         listOf("Vibrar al reemplazar un gesto (vibración)", "Escribir también con el dedo", "Gestos con pausa del lápiz"),
     ),
+    AI(
+        "Modo IA", "Modelos, claves de API y revisión de la hoja",
+        listOf(
+            "Perfiles de modelos", "Clave de API", "Obtener modelos", "Probar conexión", "Rigor de la revisión",
+            "Calidad de la captura", "Instrucciones del modelo (prompt)", "Temperatura", "LM Studio, Ollama, OpenRouter",
+        ),
+    ),
 }
 
 /** Sin distinguir mayúsculas ni tildes: «lapiz» también encuentra «Lápiz». */
@@ -66,5 +73,7 @@ internal fun TrazoSettings.resetSection(section: PreferenceSection): TrazoSettin
         PreferenceSection.GENERAL -> copy(
             haptics = defaults.haptics, fingerDraws = defaults.fingerDraws, gesturesEnabled = defaults.gesturesEnabled,
         )
+        // Los perfiles del Modo IA viven en su propio almacén (AiStore).
+        PreferenceSection.AI -> this
     }
 }

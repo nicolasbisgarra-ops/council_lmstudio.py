@@ -45,8 +45,15 @@ class SourcePolicyTest {
         }
     }
 
-    @Test fun `offline app requests no network permission`() {
-        val manifest = File(main, "AndroidManifest.xml").readText()
-        assertFalse(manifest.contains("android.permission.INTERNET"))
+    /** Internet es solo para el Modo IA (módulo :ai); el motor y el resto de la app no tocan la red. */
+    @Test fun `only the AI mode touches the network`() {
+        val network = listOf("java.net", "HttpURLConnection", "okhttp", "Socket(", "UrlConnectionTransport")
+        for (f in sources.filterNot { it.name.startsWith("Ai") }) for (word in network) {
+            assertFalse("${f.path} usa $word", code(f).contains(word))
+        }
+        val core = (File("../core/src/main").takeIf { it.exists() } ?: File("core/src/main"))
+            .walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        assertTrue(core.isNotEmpty())
+        for (f in core) assertFalse("${f.path} usa la red", code(f).contains("java.net"))
     }
 }

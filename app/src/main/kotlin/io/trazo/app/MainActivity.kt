@@ -46,7 +46,8 @@ sealed interface Screen {
     data object Patterns : Screen
     /** @param seedGesture gesto de la hoja para empezar un patrón nuevo ("enseñar este gesto"). */
     data class PatternEdit(val patternId: String?, val seedGesture: List<InkStroke>? = null) : Screen
-    data object Settings : Screen
+    /** @param section página de preferencias a abrir (nombre de [io.trazo.app.ui.PreferenceSection]); null = la lista. */
+    data class Settings(val section: String? = null) : Screen
 }
 
 /** Entrada de la pila: cada pantalla tiene su propio almacén de ViewModels, que se limpia al salir. */
@@ -134,20 +135,21 @@ private fun ScreenContent(screen: Screen, nav: NavViewModel) {
         Screen.Notebooks -> NotebookListScreen(
             onOpen = { nav.push(Screen.Editor(it)) },
             onPatterns = { nav.push(Screen.Patterns) },
-            onSettings = { nav.push(Screen.Settings) },
+            onSettings = { nav.push(Screen.Settings()) },
         )
         is Screen.Editor -> EditorScreen(
             notebookId = screen.notebookId,
             onBack = nav::pop,
             onPatterns = { nav.push(Screen.Patterns) },
-            onSettings = { nav.push(Screen.Settings) },
+            onSettings = { nav.push(Screen.Settings()) },
             onTeachNewPattern = { gesture -> nav.push(Screen.PatternEdit(null, gesture)) },
+            onAiSettings = { nav.push(Screen.Settings("AI")) },
         )
         Screen.Patterns -> PatternLibraryScreen(
             onBack = nav::pop,
             onEdit = { nav.push(Screen.PatternEdit(it)) },
         )
         is Screen.PatternEdit -> PatternEditorScreen(patternId = screen.patternId, seedGesture = screen.seedGesture, onDone = nav::pop)
-        Screen.Settings -> SettingsScreen(onBack = nav::pop)
+        is Screen.Settings -> SettingsScreen(onBack = nav::pop, initialSection = screen.section)
     }
 }

@@ -104,6 +104,8 @@ fun ToolButton(
     enabled: Boolean = true,
     onLongClick: (() -> Unit)? = null,
     size: Dp = 40.dp,
+    /** null = el color de la barra; [Color.Unspecified] deja los colores propios del ícono. */
+    tint: Color? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val bg = if (selected) scheme.primary else Color.Transparent
@@ -128,7 +130,7 @@ fun ToolButton(
             .alpha(if (enabled) 1f else 0.35f),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = null, tint = tint ?: fg, modifier = Modifier.size(22.dp))
         if (showHint) HoverHint(description)
     }
 }

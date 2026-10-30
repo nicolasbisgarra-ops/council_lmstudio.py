@@ -86,6 +86,8 @@ fun EditorScreen(
     onPatterns: () -> Unit,
     onSettings: () -> Unit,
     onTeachNewPattern: (List<InkStroke>) -> Unit,
+    /** Abre las preferencias directo en la página del Modo IA. */
+    onAiSettings: () -> Unit = onSettings,
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -104,6 +106,7 @@ fun EditorScreen(
     // Página por borrar (pide confirmación): la actual desde el menú o cualquiera desde el panel.
     var deletePageAt by remember { mutableStateOf<Int?>(null) }
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
+    var aiMenu by rememberSaveable { mutableStateOf(false) }
     var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
     var wheelAt by remember { mutableStateOf<Offset?>(null) }
     // Lazo apretado sobre un lugar vacío: dónde ofrecer «Pegar» (vista) y dónde pegar (documento).
@@ -238,6 +241,7 @@ fun EditorScreen(
         onDeletePage = { deletePageAt = vm.pageIndex },
         onPages = { pagesOpen = !pagesOpen },
         pagesOpen = pagesOpen,
+        onAi = { aiMenu = true },
         onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
         onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
         onPatterns = onPatterns,
@@ -479,6 +483,10 @@ fun EditorScreen(
             renaming = false
             if (!name.isNullOrBlank()) vm.rename(name)
         }
+    }
+
+    if (aiMenu) {
+        AiQuickMenu(onDismiss = { aiMenu = false }, onConfigure = { aiMenu = false; onAiSettings() })
     }
 
     deletePageAt?.let { at ->

@@ -34,6 +34,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "Trazo"
 include(":core")
+include(":ai")
 if (coreOnly) {
     rootProject.buildFileName = "build-core.gradle.kts"
 } else {

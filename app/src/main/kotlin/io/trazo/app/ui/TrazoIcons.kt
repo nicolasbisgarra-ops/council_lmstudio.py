@@ -142,6 +142,24 @@ object TrazoIcons {
     val Shrink by lazy { icon("Shrink", stroke("M20 10 H14 V4 M14 10 L20.5 3.5"), stroke("M4 14 H10 V20 M10 14 L3.5 20.5")) }
 }
 
+/** Modo IA: estrella grande azul y dos chicas celestes. Lleva sus colores: mostrarlo con `tint = Color.Unspecified`. */
+val AiStarsIcon: ImageVector by lazy {
+    ImageVector.Builder("AiStars", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(
+            addPathNodes("M10 3.5 C10.9 9 12.9 11.1 18.5 12 C12.9 12.9 10.9 15 10 20.5 C9.1 15 7.1 12.9 1.5 12 C7.1 11.1 9.1 9 10 3.5 Z"),
+            fill = SolidColor(Color(0xFF2F6BFF)),
+        )
+        addPath(
+            addPathNodes("M18.5 1.6 C18.8 3.8 19.7 4.7 21.9 5 C19.7 5.3 18.8 6.2 18.5 8.4 C18.2 6.2 17.3 5.3 15.1 5 C17.3 4.7 18.2 3.8 18.5 1.6 Z"),
+            fill = SolidColor(Color(0xFF7FD3FF)),
+        )
+        addPath(
+            addPathNodes("M19 15.6 C19.2 17.2 19.8 17.8 21.4 18 C19.8 18.2 19.2 18.8 19 20.4 C18.8 18.8 18.2 18.2 16.6 18 C18.2 17.8 18.8 17.2 19 15.6 Z"),
+            fill = SolidColor(Color(0xFF7FD3FF)),
+        )
+    }.build()
+}
+
 private class IconPart(val d: String, val filled: Boolean)
 
 private fun stroke(d: String) = IconPart(d, filled = false)

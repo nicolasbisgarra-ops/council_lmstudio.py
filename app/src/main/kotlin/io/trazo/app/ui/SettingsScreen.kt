@@ -33,6 +33,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -85,14 +86,17 @@ private sealed interface PrefColor {
     data object MathResult : PrefColor
 }
 
-/** Lista de secciones con páginas internas; volver desde una página conserva la búsqueda. */
+/**
+ * Lista de secciones con páginas internas; volver desde una página conserva la búsqueda.
+ * @param initialSection abre directo esa página (desde el editor); volver desde ella cierra las preferencias.
+ */
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
     val store = LocalContext.current.trazo.settings
     val s by store.settings.collectAsState()
     val stylus = remember { hasStylusDevice() }
     var picking by remember { mutableStateOf<PrefColor?>(null) }
-    var page by rememberSaveable { mutableStateOf<String?>(null) }
+    var page by rememberSaveable { mutableStateOf(initialSection) }
     var query by rememberSaveable { mutableStateOf("") }
     var resetTarget by rememberSaveable { mutableStateOf<String?>(null) }
     val section = PreferenceSection.entries.firstOrNull { it.name == page }
@@ -103,7 +107,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         page = target.name
     }
     val back: () -> Unit = {
-        if (section == null) onBack() else { page = null; picking = null }
+        if (section == null || page == initialSection) onBack() else { page = null; picking = null }
     }
     BackHandler(enabled = section != null) { back() }
     Scaffold(
@@ -128,7 +132,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                         if (query.isBlank()) {
                             PreferenceSection.entries.forEach { item ->
-                                PreferenceLink(item.icon(), item.title, item.summary) { openSection(item) }
+                                PreferenceLink(item.icon(), item.title, item.summary, item.iconTint()) { openSection(item) }
                             }
                         } else {
                             val search = query.preferenceSearchKey()
@@ -139,20 +143,23 @@ fun SettingsScreen(onBack: () -> Unit) {
                             }
                             if (matches.isEmpty()) Hint("No encontramos ajustes con ese nombre.")
                             matches.forEach { (item, name) ->
-                                PreferenceLink(item.icon(), name, item.title) { openSection(item) }
+                                PreferenceLink(item.icon(), name, item.title, item.iconTint()) { openSection(item) }
                             }
                         }
                     } else {
                         SettingsPage(section, s, stylus, update) { picking = it }
                     }
 
-                    OutlinedButton(onClick = { resetTarget = section?.name ?: "ALL" }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (section == null) "Restablecer preferencias" else "Volver a fábrica")
+                    // Los perfiles del Modo IA tienen su propio borrado, por perfil.
+                    if (section != PreferenceSection.AI) {
+                        OutlinedButton(onClick = { resetTarget = section?.name ?: "ALL" }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                            Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (section == null) "Restablecer preferencias" else "Volver a fábrica")
+                        }
                     }
                     Text(
-                        "Todo funciona sin conexión. Los cuadernos se guardan como trazos editables en este dispositivo.",
+                        "Todo funciona sin conexión, salvo el Modo IA cuando lo usás. Los cuadernos se guardan como trazos editables en este dispositivo.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -217,13 +224,17 @@ private fun PreferenceSection.icon(): ImageVector = when (this) {
     PreferenceSection.RECOGNITION -> TrazoIcons.Wand
     PreferenceSection.MATH -> TrazoIcons.Calculate
     PreferenceSection.GENERAL -> Icons.Filled.Settings
+    PreferenceSection.AI -> AiStarsIcon
 }
 
 @Composable
-private fun PreferenceLink(icon: ImageVector, title: String, summary: String, onClick: () -> Unit) {
+private fun PreferenceSection.iconTint(): Color = if (this == PreferenceSection.AI) Color.Unspecified else LocalContentColor.current
+
+@Composable
+private fun PreferenceLink(icon: ImageVector, title: String, summary: String, tint: Color, onClick: () -> Unit) {
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.clickable(role = Role.Button, onClick = onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, Modifier.size(24.dp))
+            Icon(icon, null, Modifier.size(24.dp), tint = tint)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
@@ -326,6 +337,7 @@ private fun SettingsPage(
             }
             Hint("Lo autocompletado no se guarda como tinta: se recalcula al cambiar la cuenta. «Calcular» con el lazo sí lo escribe en la hoja.")
         }
+        PreferenceSection.AI -> AiSettingsPage()
         PreferenceSection.GENERAL -> PrefCard("General") {
             SwitchRow("Vibrar al reemplazar un gesto", s.haptics, { on -> update { it.copy(haptics = on) } })
             SwitchRow(
@@ -341,7 +353,7 @@ private fun SettingsPage(
 }
 
 @Composable
-private fun PrefCard(title: String, content: @Composable () -> Unit) {
+internal fun PrefCard(title: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionLabel(title, Modifier.padding(start = 4.dp))
         Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {

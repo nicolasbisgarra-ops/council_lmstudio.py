@@ -37,16 +37,16 @@ jobs:
           set -o pipefail
           started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           ./gradlew --console=plain --stacktrace \
-            :core:test --rerun :app:testDebugUnitTest --rerun 2>&1 | tee jvm-tests.log
+            :core:test --rerun :ai:test --rerun :app:testDebugUnitTest --rerun 2>&1 | tee jvm-tests.log
           {
             echo "source_sha=$GITHUB_SHA"
             echo "run_id=$GITHUB_RUN_ID"
             echo "run_attempt=$GITHUB_RUN_ATTEMPT"
             echo "tests_started_at=$started"
             echo "tests_finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            grep -E '^> Task :(core:test|app:testDebugUnitTest)( |$)' jvm-tests.log | sed 's/^> Task /task /'
+            grep -E '^> Task :(core:test|ai:test|app:testDebugUnitTest)( |$)' jvm-tests.log | sed 's/^> Task /task /'
           } | tee output/jvm-provenance.txt
-          if grep -qE '^> Task :(core:test|app:testDebugUnitTest) (FROM-CACHE|UP-TO-DATE)' jvm-tests.log; then
+          if grep -qE '^> Task :(core:test|ai:test|app:testDebugUnitTest) (FROM-CACHE|UP-TO-DATE)' jvm-tests.log; then
             echo "Las pruebas JVM no se ejecutaron en este run" >&2; exit 1
           fi
       - name: APK
@@ -81,6 +81,8 @@ jobs:
             output/
             core/build/reports/tests/
             core/build/test-results/
+            ai/build/reports/tests/
+            ai/build/test-results/
             app/build/reports/tests/
             app/build/test-results/
       # La APK queda en la rama apenas compila, sin esperar al emulador.

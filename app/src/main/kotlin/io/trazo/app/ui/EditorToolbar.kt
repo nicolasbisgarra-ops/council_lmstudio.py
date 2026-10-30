@@ -51,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -108,6 +109,8 @@ class EditorActions(
     /** Abre o cierra el panel de páginas. */
     val onPages: () -> Unit = {},
     val pagesOpen: Boolean = false,
+    /** Abre el menú del Modo IA. */
+    val onAi: () -> Unit = {},
 )
 
 /**
@@ -138,6 +141,7 @@ fun EditorTopBar(
             val history: @Composable () -> Unit = {
                 ToolButton(TrazoIcons.Undo, "Deshacer", onClick = vm::undo, enabled = vm.canUndo)
                 ToolButton(TrazoIcons.Redo, "Rehacer", onClick = vm::redo, enabled = vm.canRedo)
+                ToolButton(AiStarsIcon, "Modo IA", onClick = actions.onAi, tint = Color.Unspecified)
             }
             // Grupos de la barra: en el teléfono cada grupo baja de renglón entero, sin partirse.
             val drawGroup: @Composable () -> Unit = {
@@ -719,6 +723,7 @@ fun CompactToolbar(
         }
         add { ToolButton(TrazoIcons.Undo, "Deshacer", onClick = vm::undo, enabled = vm.canUndo) }
         add { ToolButton(TrazoIcons.Redo, "Rehacer", onClick = vm::redo, enabled = vm.canRedo) }
+        add { ToolButton(AiStarsIcon, "Modo IA", onClick = actions.onAi, tint = Color.Unspecified) }
         addAll(toolItems(vm, settings, update, actions, panel) { panel = it })
         add {
             ToolButton(
