@@ -176,7 +176,10 @@ class GuiTourTest {
             // Lo que queda fuera de la fila no está en el árbol: si no aparece, se sigue deslizando.
             val b = device.findObject(By.desc(desc))?.visibleBounds
             // Entero = no recortado por el borde: los botones redondos miden algo menos de ancho que de alto.
-            if (b != null && b.width() * 5 >= b.height() * 4 && b.right < device.displayWidth - 4) return
+            // Entero en pantalla (puede tocar el borde) y sin recortar a lo ancho.
+            if (b != null && b.left >= 0 && b.top >= 0 && b.right <= device.displayWidth && b.bottom <= device.displayHeight &&
+                b.width() * 5 >= b.height() * 4
+            ) return
             // Se alternan tres vías porque cada emulador responde a una distinta: el gesto de
             // UiAutomator dentro de la fila, la acción de accesibilidad «a la derecha» y la «adelante».
             val row = device.findObjects(By.scrollable(true)).firstOrNull {

@@ -93,6 +93,14 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private var savedVersion = 0L
     private var attaching = false
 
+    /**
+     * Las últimas hojas visitadas con su historial, por id: volver a una hoja recupera su deshacer/rehacer.
+     * Solo unas pocas, para no tener decodificada la tinta de todo el cuaderno.
+     */
+    private val sessions = object : LinkedHashMap<String, Pair<PageState, History>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<PageState, History>>) = size > PAGE_SESSIONS
+    }
+
     val controller = InkController(patterns = { repo.patterns.value }, ids = IdGenerator.RANDOM).apply {
         val offset = System.currentTimeMillis() - android.os.SystemClock.uptimeMillis()
         strokeClock = { it + offset }
@@ -194,14 +202,13 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     val isDrawing: Boolean get() { revision; return controller.isContactActive }
 
     /**
-     * Abre la página [index]: se decodifica solo esa y las demás quedan fijas (el historial de deshacer
-     * es de la página abierta). Recordar la última página es un cambio del cuaderno que se guarda.
+     * Abre la página [index]: se decodifica solo esa y las demás quedan fijas. Si se visitó hace poco,
+     * vuelve con su historial ([sessions]). Recordar la última página es un cambio del cuaderno que se guarda.
      */
     private fun attachPage(index: Int) {
         val n = notebook ?: return
         val page = n.page(index)
-        val state = PageState(page.strokes, page.parametricShapes)
-        val history = History()
+        val (state, history) = sessions.getOrPut(page.id) { PageState(page.strokes, page.parametricShapes) to History() }
         val reopened = n.lastPage != index
         notebook = n.withPage(index, page).loadedOnly(index).copy(lastPage = index)
         pageIndex = index
@@ -373,6 +380,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         val n = syncNotebook() ?: return
         if (n.pageCount < 2 || index !in 0 until n.pageCount) return
         val current = pageIndex
+        sessions.remove(n.slots[index].id)
         notebook = n.withPageRemoved(index)
         when {
             index == current -> { attachPage(current.coerceAtMost(n.pageCount - 2)); viewport.scale = 0f }
@@ -531,3 +539,6 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         super.onCleared()
     }
 }
+
+/** Cuántas hojas recientes conservan su historial de deshacer. */
+private const val PAGE_SESSIONS = 8

@@ -383,7 +383,8 @@ class InkCanvasView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         cache?.recycle(); cache = null
         fitIfNeeded(force = mode == Mode.PAD || !viewport.isSet)
-        if (mode == Mode.NOTEBOOK && viewport.isSet) clampPan()
+        // Recortar el paneo cambia tx/ty: hay que rehacer las matrices o el dedo y la tinta quedan desfasados.
+        if (mode == Mode.NOTEBOOK && viewport.isSet) { clampPan(); applyViewport() }
         invalidateContent()
     }
 
