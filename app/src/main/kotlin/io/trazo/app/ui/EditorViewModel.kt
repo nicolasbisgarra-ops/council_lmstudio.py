@@ -143,17 +143,6 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         }
     }
 
-    init {
-        viewModelScope.launch {
-            val n = withContext(Dispatchers.IO) { repo.loadLazy(notebookId) }
-            notebook = n
-            // Vuelve a la última página en la que se estuvo.
-            if (n != null) attachPage(n.openPage)
-            loading = false
-            connectivity.start()
-        }
-    }
-
     val pageCount: Int get() = notebook?.pageCount ?: 0
     val paper: Paper get() = notebook?.paper ?: Paper.LINES
 
@@ -812,6 +801,18 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         connectivity.stop()
         if (!controller.isContactActive) saveNow()
         super.onCleared()
+    }
+
+    // Al final de la clase: Main.immediate corre esto en el acto y todas las propiedades ya deben existir.
+    init {
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) { repo.loadLazy(notebookId) }
+            notebook = n
+            // Vuelve a la última página en la que se estuvo.
+            if (n != null) attachPage(n.openPage)
+            loading = false
+            connectivity.start()
+        }
     }
 }
 

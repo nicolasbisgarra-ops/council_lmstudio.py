@@ -104,8 +104,12 @@ class GuiTourTest {
             menu("Preferencias")
             find(By.text("Apariencia"))
             shot("9-preferencias")
+            // Preferencias es una lista de secciones: el tema está dentro de Apariencia.
+            find(By.text("Apariencia")).click()
             find(By.text("Oscuro")).click()
             shot("10-oscuro")
+            device.pressBack()
+            find(By.text("Modo IA"))
             device.pressBack()
             find(By.desc("Más opciones"))
             shot("11-oscuro-editor")
