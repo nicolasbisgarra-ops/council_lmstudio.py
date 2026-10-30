@@ -35,12 +35,18 @@ class AiClient(
         val response = when (profile.provider) {
             AiProvider.ANTHROPIC -> get("$base/v1/models?limit=1000", anthropicHeaders(key), profile)
             AiProvider.OPENAI, AiProvider.OPENAI_COMPATIBLE -> get("$base/models", bearer(key), profile)
-            AiProvider.GEMINI -> get("$base/models?pageSize=1000", geminiHeaders(key), profile)
+            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> get("$base/models?pageSize=1000", geminiHeaders(profile, key), profile)
+            AiProvider.CHATGPT -> get("$base/models?client_version=$CODEX_CLIENT_VERSION", chatGptHeaders(key), profile)
             AiProvider.ON_DEVICE -> throw AiException(profile.problem!!)
         }
         val root = parseObject(response)
         val models = when (profile.provider) {
-            AiProvider.GEMINI -> root["models"].array().mapNotNull { m ->
+            AiProvider.CHATGPT -> root["models"].array().mapNotNull { m ->
+                val o = m.jsonObject
+                val id = o["slug"].text() ?: o["id"].text() ?: return@mapNotNull null
+                AiModelInfo(id, o["display_name"].text() ?: id)
+            }
+            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> root["models"].array().mapNotNull { m ->
                 val o = m.jsonObject
                 val methods = o["supportedGenerationMethods"].array().mapNotNull { it.text() }
                 if ("generateContent" !in methods) return@mapNotNull null
@@ -66,8 +72,13 @@ class AiClient(
             AiProvider.ANTHROPIC -> post("$base/v1/messages", anthropicHeaders(key), anthropicBody(profile, system, text, image, maxTokens), profile)
             AiProvider.OPENAI, AiProvider.OPENAI_COMPATIBLE ->
                 post("$base/chat/completions", bearer(key), openAiBody(profile, system, text, image, maxTokens), profile)
-            AiProvider.GEMINI -> post(
-                "$base/models/${profile.model.removePrefix("models/")}:generateContent", geminiHeaders(key),
+            AiProvider.CHATGPT -> {
+                // El servidor de Codex solo contesta en streaming (SSE): se lee entero y se juntan los trozos.
+                val body = check(transport.send(HttpRequest("POST", "$base/responses", chatGptHeaders(key), chatGptBody(profile, system, text, image).toString(), profile.timeoutSeconds)))
+                return streamedText(body)
+            }
+            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> post(
+                "$base/models/${profile.model.removePrefix("models/")}:generateContent", geminiHeaders(profile, key),
                 geminiBody(profile, system, text, image, maxTokens), profile,
             )
             AiProvider.ON_DEVICE -> throw AiException(profile.problem!!)
@@ -128,6 +139,50 @@ class AiClient(
         }
     }
 
+    /** API «Responses». Sin límite de tokens ni temperatura: el servidor de Codex los rechaza. */
+    internal fun chatGptBody(p: AiProfile, system: String, text: String, image: String?): JsonObject = buildJsonObject {
+        put("model", p.model)
+        put("instructions", system)
+        putJsonArray("input") {
+            addJsonObject {
+                put("type", "message")
+                put("role", "user")
+                putJsonArray("content") {
+                    addJsonObject { put("type", "input_text"); put("text", text) }
+                    if (image != null) addJsonObject { put("type", "input_image"); put("image_url", "data:image/png;base64,$image") }
+                }
+            }
+        }
+        put("tools", JsonArray(emptyList()))
+        put("stream", true)
+        put("store", false)
+    }
+
+    /** Junta el texto de los eventos `response.output_text.delta`; si no hay, toma el de `response.completed`. */
+    internal fun streamedText(sse: String): String {
+        val deltas = StringBuilder()
+        var completed: String? = null
+        for (line in sse.lineSequence()) {
+            val data = line.removePrefix("data:").trim()
+            if (!line.startsWith("data:") || data.isEmpty() || data == "[DONE]") continue
+            val event = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: continue
+            when (event["type"].text()) {
+                "response.output_text.delta" -> deltas.append(event["delta"].text().orEmpty())
+                "response.completed" -> completed = event["response"]?.jsonObject?.get("output").array()
+                    .flatMap { it.jsonObject["content"].array() }
+                    .filter { it.jsonObject["type"].text() == "output_text" }
+                    .mapNotNull { it.jsonObject["text"].text() }.joinToString("")
+                "response.failed", "error" -> {
+                    val e = event["response"]?.jsonObject?.get("error") ?: event["error"] ?: event
+                    throw AiException("ChatGPT rechazó el pedido: ${((e as? JsonObject)?.get("message")).text() ?: "sin detalle"}")
+                }
+            }
+        }
+        val text = deltas.toString().ifBlank { completed.orEmpty() }
+        if (text.isBlank()) throw AiException("El modelo respondió vacío (puede que se haya quedado sin tokens).")
+        return text
+    }
+
     internal fun geminiBody(p: AiProfile, system: String, text: String, image: String?, maxTokens: Int): JsonObject = buildJsonObject {
         if (system.isNotBlank()) putJsonObject("systemInstruction") {
             putJsonArray("parts") { addJsonObject { put("text", system) } }
@@ -153,7 +208,7 @@ class AiClient(
         val text = when (provider) {
             AiProvider.ANTHROPIC -> root["content"].array()
                 .filter { it.jsonObject["type"].text() == "text" }.mapNotNull { it.jsonObject["text"].text() }.joinToString("")
-            AiProvider.GEMINI -> root["candidates"].array().firstOrNull()?.jsonObject?.get("content")
+            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> root["candidates"].array().firstOrNull()?.jsonObject?.get("content")
                 ?.jsonObject?.get("parts").array().mapNotNull { it.jsonObject["text"].text() }.joinToString("")
             else -> root["choices"].array().firstOrNull()?.jsonObject?.get("message")?.jsonObject?.get("content").let { c ->
                 // Algunos servidores devuelven el contenido como lista de partes.
@@ -169,7 +224,29 @@ class AiClient(
         put("x-api-key", requireKey(key))
     }
 
-    private fun geminiHeaders(key: String?) = mapOf("x-goog-api-key" to requireKey(key))
+    /** Con cuenta de Google, la «clave» es la sesión guardada y la cuota se cobra a [AiProfile.googleProject]. */
+    private fun geminiHeaders(p: AiProfile, key: String?): Map<String, String> {
+        if (p.provider != AiProvider.GEMINI_GOOGLE) return mapOf("x-goog-api-key" to requireKey(key))
+        return buildMap {
+            put("Authorization", "Bearer ${session(key).accessToken}")
+            p.googleProject.trim().takeIf { it.isNotEmpty() }?.let { put("x-goog-user-project", it) }
+        }
+    }
+
+    /** Los mismos encabezados que manda Codex CLI. */
+    private fun chatGptHeaders(key: String?): Map<String, String> {
+        val t = session(key)
+        return buildMap {
+            put("Authorization", "Bearer ${t.accessToken}")
+            t.accountId?.let { put("chatgpt-account-id", it) }
+            put("OpenAI-Beta", "responses=experimental")
+            put("originator", AiOAuth.CODEX_ORIGINATOR)
+            put("Accept", "text/event-stream")
+        }
+    }
+
+    private fun session(key: String?): OAuthTokens =
+        OAuthTokens.decode(key) ?: throw AiException("Falta iniciar sesión en este perfil.")
 
     /** La clave es opcional en los servidores compatibles (LM Studio, Ollama). */
     private fun bearer(key: String?) = if (key.isNullOrBlank()) emptyMap() else mapOf("Authorization" to "Bearer ${key.trim()}")
@@ -209,6 +286,9 @@ class AiClient(
     private fun JsonElement?.text(): String? = (this as? JsonPrimitive)?.contentOrNull
 
     companion object {
+        /** Versión que se informa al pedir la lista de modelos de Codex. */
+        const val CODEX_CLIENT_VERSION = "0.50.0"
+
         /** 168×88, «1+2» en negro sobre blanco. */
         val VISION_PROBE_PNG: ByteArray = Base64.getDecoder().decode(
             "iVBORw0KGgoAAAANSUhEUgAAAKgAAABYCAAAAABEsuNxAAAAhUlEQVR42u3WMQ7AIAgFUO5/6XZxbYLaNAXfXzXwXJC4iiRAQUFBQUFBQUGPhMbI640fAgoKCtoFmi0w+7DVc1BQUNBq0NWBv/tBgIKCgp4GjWS2+4CCgoI2hX51HxQUFBR0sy4oKChoMejqApwFzi7aoKCgoNWgfwsoKCgoKCgoKGhL6A022FFg64anXAAAAABJRU5ErkJggg==",

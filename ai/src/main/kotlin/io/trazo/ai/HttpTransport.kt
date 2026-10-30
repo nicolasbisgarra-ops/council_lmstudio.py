@@ -37,10 +37,11 @@ object UrlConnectionTransport : HttpTransport {
             conn.requestMethod = request.method
             conn.connectTimeout = (request.timeoutSeconds * 1000).coerceAtMost(15_000)
             conn.readTimeout = request.timeoutSeconds * 1000
+            if (request.body != null) conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            // Van después: el pedido puede cambiar el tipo (el token OAuth va como formulario).
             request.headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
             if (request.body != null) {
                 conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 conn.outputStream.use { it.write(request.body.toByteArray(Charsets.UTF_8)) }
             }
             val status = conn.responseCode

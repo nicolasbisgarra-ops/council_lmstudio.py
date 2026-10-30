@@ -18,14 +18,20 @@ Las 50 decisiones salen del cuestionario respondido por el usuario. El número e
 |---|---|---|
 | Claude (Anthropic) | `POST /v1/messages`, imagen en base64 | `x-api-key` |
 | OpenAI | `POST /chat/completions`, imagen como `data:` URI, `max_completion_tokens` | Bearer |
+| ChatGPT con suscripción (como Codex) | `POST chatgpt.com/backend-api/codex/responses` (API «Responses», en streaming) | Inicio de sesión con la cuenta |
 | Compatible con OpenAI (LM Studio, Ollama, OpenRouter) | Igual que OpenAI, con `max_tokens` | Opcional |
 | Gemini | `POST /models/{m}:generateContent`, `inline_data` | `x-goog-api-key` |
+| Gemini con cuenta de Google | Igual que Gemini | Inicio de sesión con Google (OAuth); cuota del proyecto en `x-goog-user-project` |
 | En la tableta | llama.cpp (GGUF con visión), MediaPipe LLM, Gemini Nano | — (etapa 3) |
 
 - **«Obtener modelos»** pide la lista al servidor (`/v1/models`, `/models`). En Gemini quedan solo los modelos que generan contenido.
 - **«Probar conexión»** envía una imagen chica con «1+2» escrito y mide la latencia. Si el modelo contesta 3, lee imágenes.
 - **Perfiles:** cada perfil guarda proveedor, URL, modelo y clave. Uno queda «En uso», y el botón de estrellas permite cambiarlo rápido (6).
 - **Opciones avanzadas** (24): temperatura (por omisión no se envía), tokens máximos, tiempo de espera e instrucciones editables por completo (47).
+- **Inicio de sesión con la cuenta** (`AiOAuth`): OAuth con PKCE. Se abre el navegador, y el regreso llega a un servidor de una sola petición en `127.0.0.1` de la tableta (`LoopbackReceiver`). La sesión se guarda cifrada en el lugar de la clave, y se renueva sola cuando vence.
+  - **ChatGPT:** usa el cliente público de Codex CLI y su regreso, `http://localhost:1455/auth/callback`. El uso sale del plan Plus/Pro. No es una API oficial para otras apps: OpenAI puede cambiarla o limitarla.
+  - **Google:** el usuario crea en su proyecto de Google Cloud un «ID de cliente OAuth» de tipo «App de escritorio» y activa la Generative Language API. El uso lo paga ese proyecto, no la suscripción de Gemini.
+  - **Claude:** solo con clave de API. Desde febrero de 2026, Anthropic no permite usar la suscripción Pro/Max en apps de terceros.
 - **Servidor de la red local:** a una URL sin ruta se le agrega `/v1`. El manifiesto permite `http` para LM Studio y Ollama.
 
 ## Qué se envía (7, 8, 17, 33, 38, 39)

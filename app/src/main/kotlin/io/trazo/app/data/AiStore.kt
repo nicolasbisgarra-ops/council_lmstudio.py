@@ -4,8 +4,10 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import io.trazo.ai.AiOAuth
 import io.trazo.ai.AiProfile
 import io.trazo.ai.AiProvider
+import io.trazo.ai.OAuthTokens
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +70,21 @@ class AiStore(context: Context) {
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, bytes, 0, IV_BYTES))
             String(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES), Charsets.UTF_8)
         }.getOrNull()
+    }
+
+    /** La sesión de un perfil con inicio de sesión (ChatGPT, Google), o null. */
+    fun session(id: String): OAuthTokens? = OAuthTokens.decode(key(id))
+
+    /**
+     * Lo que se le pasa a [io.trazo.ai.AiClient] como «clave»: la clave de API, o la sesión renovada si venció.
+     * Bloquea (puede ir a la red): llamar fuera del hilo de la interfaz.
+     */
+    fun credential(profile: AiProfile, oauth: AiOAuth): String? {
+        if (!profile.provider.signIn) return key(profile.id)
+        val t = session(profile.id) ?: return null
+        val fresh = oauth.fresh(profile, t)
+        if (fresh != t) setKey(profile.id, fresh.encode())
+        return fresh.encode()
     }
 
     /** Vacía = borrar la clave. */

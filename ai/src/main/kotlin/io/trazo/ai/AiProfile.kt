@@ -7,10 +7,14 @@ import kotlinx.serialization.json.Json
 
 /** Servicio que atiende al modelo. Cada uno arma la petición a su manera (ver [AiClient]). */
 @Serializable
-enum class AiProvider(val label: String, val defaultBaseUrl: String, val needsKey: Boolean) {
+enum class AiProvider(val label: String, val defaultBaseUrl: String, val needsKey: Boolean, val signIn: Boolean = false) {
     @SerialName("anthropic") ANTHROPIC("Claude (Anthropic)", "https://api.anthropic.com", true),
     @SerialName("openai") OPENAI("OpenAI", "https://api.openai.com/v1", true),
+    /** La suscripción de ChatGPT Plus/Pro, con el mismo inicio de sesión y servidor que Codex. No es una API oficial. */
+    @SerialName("chatgpt") CHATGPT("ChatGPT con suscripción (como Codex)", "https://chatgpt.com/backend-api/codex", false, signIn = true),
     @SerialName("gemini") GEMINI("Gemini (Google)", "https://generativelanguage.googleapis.com/v1beta", true),
+    /** Gemini con la cuenta de Google: el uso lo paga el proyecto de Google Cloud del cliente OAuth. */
+    @SerialName("gemini_google") GEMINI_GOOGLE("Gemini con cuenta de Google", "https://generativelanguage.googleapis.com/v1beta", false, signIn = true),
     /** LM Studio, Ollama, OpenRouter y cualquier servidor con la API de OpenAI. La clave es opcional. */
     @SerialName("openai_compatible") OPENAI_COMPATIBLE("Compatible con OpenAI (LM Studio, Ollama, OpenRouter)", "http://192.168.0.10:1234/v1", false),
     /** Modelo en la tableta (llama.cpp, MediaPipe, Gemini Nano): llega en la etapa 3. */
@@ -49,6 +53,12 @@ data class AiProfile(
     val rigor: Rigor = Rigor.NORMAL,
     /** Instrucciones del modelo, editables por completo. */
     val instructions: String = DEFAULT_INSTRUCTIONS,
+    /** Inicio de sesión: en ChatGPT vacío = el cliente de Codex; en Google, el del proyecto del usuario. */
+    val oauthClientId: String = "",
+    /** Google lo da también a las apps de escritorio; no es secreto de verdad, pero el token lo pide. */
+    val oauthClientSecret: String = "",
+    /** Proyecto de Google Cloud al que se cobra la cuota (encabezado x-goog-user-project). */
+    val googleProject: String = "",
 ) {
     /** URL sin barra final; a un servidor compatible sin ruta se le agrega /v1. */
     val endpoint: String
@@ -65,6 +75,7 @@ data class AiProfile(
             provider == AiProvider.ON_DEVICE -> "Los modelos en la tableta llegan en una próxima versión."
             baseUrl.isBlank() -> "Falta la URL."
             !baseUrl.trim().startsWith("http://") && !baseUrl.trim().startsWith("https://") -> "La URL debe empezar con http:// o https://."
+            provider == AiProvider.GEMINI_GOOGLE && oauthClientId.isBlank() -> "Falta el ID de cliente OAuth de su proyecto de Google Cloud."
             model.isBlank() -> "Falta elegir el modelo."
             else -> null
         }

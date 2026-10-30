@@ -1,5 +1,9 @@
 package io.trazo.app.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,11 +48,14 @@ import androidx.compose.ui.unit.dp
 import io.trazo.ai.AiClient
 import io.trazo.ai.AiException
 import io.trazo.ai.AiModelInfo
+import io.trazo.ai.AiOAuth
 import io.trazo.ai.AiProfile
 import io.trazo.ai.AiProvider
 import io.trazo.ai.DEFAULT_INSTRUCTIONS
 import io.trazo.ai.ImageQuality
+import io.trazo.ai.OAuthTokens
 import io.trazo.ai.Rigor
+import io.trazo.ai.signIn
 import io.trazo.app.data.AiStore
 import io.trazo.app.trazo
 import kotlinx.coroutines.Dispatchers
@@ -77,7 +84,9 @@ internal fun AiSettingsPage() {
         )
     }
     PrefCard("Modelos") {
-        if (ai.profiles.isEmpty()) AiHint("Todavía no hay ningún modelo. Agregá uno con tu clave de API o un servidor de tu red (LM Studio, Ollama).")
+        if (ai.profiles.isEmpty()) {
+            AiHint("Todavía no hay ningún modelo. Agregá uno con tu clave de API, con tu cuenta (ChatGPT, Google) o un servidor de tu red (LM Studio, Ollama).")
+        }
         ai.profiles.forEach { p ->
             val inUse = p.id == ai.current?.id
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -131,16 +140,24 @@ private sealed interface Remote {
 @Composable
 private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val client = remember { AiClient() }
+    val oauth = remember { AiOAuth() }
     var p by remember { mutableStateOf(initial) }
-    var key by remember { mutableStateOf(store.key(initial.id).orEmpty()) }
+    // Si el perfil tenía una sesión guardada, no se muestra como si fuera una clave.
+    var key by remember { mutableStateOf(store.key(initial.id)?.takeIf { OAuthTokens.decode(it) == null }.orEmpty()) }
+    var session by remember { mutableStateOf(store.session(initial.id)) }
+    var login by remember { mutableStateOf<Remote>(Remote.Idle) }
     var showKey by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<AiModelInfo>>(emptyList()) }
     var modelMenu by remember { mutableStateOf(false) }
     var fetch by remember { mutableStateOf<Remote>(Remote.Idle) }
     var test by remember { mutableStateOf<Remote>(Remote.Idle) }
     var advanced by remember { mutableStateOf(false) }
-    val lostKey = !isNew && key.isEmpty() && store.hasKey(initial.id)
+    val lostKey = !isNew && key.isEmpty() && session == null && store.hasKey(initial.id)
+
+    /** Con inicio de sesión, la «clave» es la sesión guardada (renovada si venció). */
+    fun credentialFor(draft: AiProfile): String? = if (draft.provider.signIn) store.credential(draft, oauth) else key
 
     fun call(set: (Remote) -> Unit, work: () -> Remote) {
         set(Remote.Busy)
@@ -171,7 +188,23 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
         if (p.provider == AiProvider.OPENAI_COMPATIBLE) {
             AiHint("LM Studio: http://IP-de-la-PC:1234/v1 · Ollama: http://IP-de-la-PC:11434/v1 · OpenRouter: https://openrouter.ai/api/v1")
         }
-        OutlinedTextField(
+        if (p.provider.signIn) SignInSection(p, session, login, onSignIn = {
+            val draft = p
+            call({ login = it }) {
+                val t = oauth.signIn(draft, open = { url ->
+                    Handler(Looper.getMainLooper()).post {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                })
+                store.setKey(draft.id, t.encode())
+                session = t
+                Remote.Done("Sesión iniciada" + (t.email?.let { " como $it" } ?: "") + ".", ok = true)
+            }
+        }, onSignOut = {
+            store.setKey(p.id, "")
+            session = null
+            login = Remote.Idle
+        }, onChange = { p = it }) else OutlinedTextField(
             key, { key = it.trim() },
             label = { Text(if (p.provider.needsKey) "Clave de API" else "Clave de API (opcional)") },
             singleLine = true,
@@ -180,7 +213,7 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
             trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Ocultar" else "Mostrar") } },
             modifier = Modifier.fillMaxWidth(),
         )
-        AiHint(
+        if (!p.provider.signIn) AiHint(
             if (lostKey) "La clave guardada no se pudo leer (¿se restauró en otro equipo?). Escribila de nuevo."
             else "La clave se guarda cifrada con el Keystore de Android y solo se envía a esta URL.",
         )
@@ -205,9 +238,8 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(enabled = fetch != Remote.Busy, onClick = {
                 val draft = p
-                val k = key
                 call({ fetch = it }) {
-                    val list = client.listModels(draft, k)
+                    val list = client.listModels(draft, credentialFor(draft))
                     models = list
                     if (draft.model.isBlank() || list.none { it.id == draft.model }) modelMenu = true
                     Remote.Done("${list.size} modelos disponibles.", ok = true)
@@ -215,9 +247,8 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
             }) { Text(if (fetch == Remote.Busy) "Buscando…" else "Obtener modelos") }
             OutlinedButton(enabled = test != Remote.Busy, onClick = {
                 val draft = p
-                val k = key
                 call({ test = it }) {
-                    val r = client.testConnection(draft, k)
+                    val r = client.testConnection(draft, credentialFor(draft))
                     Remote.Done(
                         if (r.readsImages) "Funciona y lee imágenes (${r.latencyMs} ms)."
                         else "Respondió en ${r.latencyMs} ms, pero no leyó la imagen de prueba («${r.reply.take(60)}»): elegí un modelo con visión.",
@@ -273,13 +304,69 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
     }
 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-        TextButton(onClick = onDone) { Text("Cancelar") }
+        TextButton(onClick = {
+            // Una sesión iniciada en un perfil que no se guardó no debe quedar suelta.
+            if (isNew) store.setKey(p.id, "")
+            onDone()
+        }) { Text("Cancelar") }
         Button(enabled = p.name.isNotBlank(), onClick = {
             store.save(p.copy(name = p.name.trim()))
-            store.setKey(p.id, key)
+            // La sesión ya quedó guardada al iniciarla; la clave escrita es solo para los demás proveedores.
+            if (!p.provider.signIn) store.setKey(p.id, key)
             onDone()
         }) { Text("Guardar") }
     }
+}
+
+/** Iniciar o cerrar sesión con la cuenta, en lugar de la clave de API. */
+@Composable
+private fun SignInSection(
+    p: AiProfile,
+    session: OAuthTokens?,
+    login: Remote,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+    onChange: (AiProfile) -> Unit,
+) {
+    if (p.provider == AiProvider.GEMINI_GOOGLE) {
+        AiHint(
+            "Necesitás un cliente OAuth propio: en console.cloud.google.com creá un proyecto, activá «Generative Language API», " +
+                "configurá la pantalla de consentimiento (Externo, agregate como usuario de prueba) y en Credenciales creá un " +
+                "«ID de cliente OAuth» de tipo «App de escritorio». El uso lo paga ese proyecto (su cuota gratis o su facturación), " +
+                "no la suscripción de Gemini.",
+        )
+        OutlinedTextField(
+            p.oauthClientId, { onChange(p.copy(oauthClientId = it.trim())) }, label = { Text("ID de cliente") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            p.oauthClientSecret, { onChange(p.copy(oauthClientSecret = it.trim())) }, label = { Text("Secreto del cliente") }, singleLine = true,
+            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            p.googleProject, { onChange(p.copy(googleProject = it.trim())) }, label = { Text("ID del proyecto (opcional)") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    } else {
+        AiHint(
+            "Usa tu ChatGPT Plus o Pro con el mismo inicio de sesión que Codex, sin clave de API: el uso sale de los límites de tu plan. " +
+                "No es una API oficial para otras apps: OpenAI puede cambiarla o limitarla en cualquier momento.",
+        )
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (session == null) {
+            Button(enabled = login != Remote.Busy && (p.provider != AiProvider.GEMINI_GOOGLE || p.oauthClientId.isNotBlank()), onClick = onSignIn) {
+                Text(if (login == Remote.Busy) "Esperando al navegador…" else "Iniciar sesión")
+            }
+        } else {
+            AiHint("Sesión iniciada" + (session.email?.let { " como $it" } ?: "") + ".")
+            Spacer(Modifier.weight(1f))
+            OutlinedButton(onClick = onSignOut) { Text("Cerrar sesión") }
+        }
+    }
+    if (login == Remote.Busy) AiHint("Se abrió el navegador: iniciá sesión ahí y volvé a Trazo.")
+    RemoteStatus(login)
+    AiHint("La sesión se guarda cifrada con el Keystore de Android y se renueva sola.")
 }
 
 @Composable
@@ -313,7 +400,9 @@ internal fun AiQuickMenu(onDismiss: () -> Unit, onConfigure: () -> Unit) {
                 } else {
                     Text("Modelo", style = MaterialTheme.typography.labelLarge)
                     ChoiceRow(ai.profiles, ai.current ?: ai.profiles.first(), { it.name }, { store.select(it.id) })
-                    ai.current?.problem?.let { AiHint(it) }
+                    ai.current?.let { c ->
+                        (c.problem ?: "Falta iniciar sesión en «${c.name}».".takeIf { c.provider.signIn && store.session(c.id) == null })?.let { AiHint(it) }
+                    }
                 }
                 Button(enabled = false, onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("Revisar página") }
                 AiHint("La revisión de la hoja con marcas llega en la próxima versión. Por ahora podés dejar listos tus modelos.")
