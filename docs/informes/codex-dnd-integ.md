@@ -155,3 +155,6 @@ lógica de orden y el formato de páginas; no ejecutan SharedPreferences,
 AtomicFile de Android ni Compose. La compilación verifica la integración de
 sus APIs; queda para dispositivo la validación visual del long-press,
 auto-scroll, cancelación y persistencia de punta a punta al reabrir pantallas.
+
+Integrado en la rama principal de trabajo con carpetas y portadas: compilación,
+pruebas JVM y APK en CI (run 95, `552032d`).
