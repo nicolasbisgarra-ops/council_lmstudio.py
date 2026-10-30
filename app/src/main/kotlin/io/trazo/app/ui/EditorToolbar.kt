@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -58,6 +59,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.trazo.app.data.BarDock
 import io.trazo.app.data.EraserMode
 import io.trazo.app.data.PaperTone
 import io.trazo.app.data.SideButtonAction
@@ -122,11 +124,15 @@ fun EditorTopBar(
     settings: TrazoSettings,
     update: ((TrazoSettings) -> TrazoSettings) -> Unit,
     actions: EditorActions,
+    /** Agarradera para soltar la barra o llevarla a otro borde. */
+    handle: (@Composable () -> Unit)? = null,
+    /** Pegada arriba (deja lugar a la barra de estado) o abajo (a la de navegación). */
+    atTop: Boolean = true,
 ) {
     var panel by remember { mutableStateOf<BarPanel?>(null) }
     val scheme = MaterialTheme.colorScheme
     Surface(color = scheme.surfaceContainer, shadowElevation = 3.dp) {
-        BoxWithConstraints(Modifier.statusBarsPadding()) {
+        BoxWithConstraints(if (atTop) Modifier.statusBarsPadding() else Modifier.navigationBarsPadding()) {
             val compact = maxWidth < 1100.dp
             val nav: @Composable () -> Unit = { NavGroup(vm, title, actions, Modifier.widthIn(max = if (compact) 400.dp else 240.dp)) }
             val history: @Composable () -> Unit = {
@@ -160,6 +166,7 @@ fun EditorTopBar(
             if (compact) {
                 Column {
                     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        handle?.invoke()
                         Box(Modifier.weight(1f)) { nav() }
                         history()
                         EditorMenu(vm, actions)
@@ -176,6 +183,7 @@ fun EditorTopBar(
                 }
             } else {
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    handle?.invoke()
                     nav()
                     history()
                     BarDivider()
@@ -237,6 +245,18 @@ private fun ToolsGroup(
     panel: BarPanel?,
     setPanel: (BarPanel?) -> Unit,
 ) {
+    toolItems(vm, settings, update, actions, panel, setPanel).forEach { it() }
+}
+
+/** Cada herramienta de [ToolsGroup] por separado, en el orden elegido en Preferencias. */
+private fun toolItems(
+    vm: EditorViewModel,
+    settings: TrazoSettings,
+    update: ((TrazoSettings) -> TrazoSettings) -> Unit,
+    actions: EditorActions,
+    panel: BarPanel?,
+    setPanel: (BarPanel?) -> Unit,
+): List<@Composable () -> Unit> {
     val tools = listOf(
         Triple(EditorTool.PEN, TrazoIcons.Pen, "Pluma"),
         Triple(EditorTool.HIGHLIGHTER, TrazoIcons.Highlighter, "Resaltador"),
@@ -245,9 +265,9 @@ private fun ToolsGroup(
         Triple(EditorTool.SHAPE, TrazoIcons.Shapes, "Formas"),
         Triple(EditorTool.PAN, TrazoIcons.Pan, "Mano: desplazar la hoja"),
     )
-    settings.toolbarTools.mapNotNull { wanted -> tools.firstOrNull { it.first == wanted } }.forEach { (tool, icon, label) ->
+    return settings.toolbarTools.mapNotNull { wanted -> tools.firstOrNull { it.first == wanted } }.map { (tool, icon, label) ->
         val own = tool.panel()
-        Box {
+        val item: @Composable () -> Unit = { Box {
             ToolButton(
                 icon, label,
                 onClick = { if (vm.editorTool == tool && own != null) setPanel(own) else vm.selectTool(tool) },
@@ -261,18 +281,23 @@ private fun ToolsGroup(
                         BarPanel.PEN -> PenPanel(settings, update, actions)
                         BarPanel.HIGHLIGHTER -> HighlighterPanel(settings, update, actions)
                         BarPanel.ERASER -> EraserPanel(settings, update, onClear = { setPanel(null); actions.onClearPage() })
-                        BarPanel.LASSO -> LassoPanel(onSelectAll = { setPanel(null); vm.selectAll() })
+                        BarPanel.LASSO -> LassoPanel(
+                            onSelectAll = { setPanel(null); vm.selectAll() },
+                            canPaste = vm.canPaste,
+                            onPaste = { setPanel(null); vm.pasteInView() },
+                        )
                         BarPanel.SHAPE -> ShapePanel(settings, update, onInsert = { k -> setPanel(null); vm.insertParametric(k) })
                         BarPanel.PAPER -> Unit
                     }
                 }
             }
-        }
+        } }
+        item
     }
 }
 
 @Composable
-private fun PanelMenu(expanded: Boolean, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+internal fun PanelMenu(expanded: Boolean, onDismiss: () -> Unit, content: @Composable () -> Unit) {
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
@@ -394,14 +419,20 @@ private fun EraserPanel(settings: TrazoSettings, update: ((TrazoSettings) -> Tra
 }
 
 @Composable
-private fun LassoPanel(onSelectAll: () -> Unit) {
+private fun LassoPanel(onSelectAll: () -> Unit, canPaste: Boolean, onPaste: () -> Unit) {
     ToolPanel("Lazo") {
-        Hint("Rodeá trazos para elegirlos. Después arrastralos, cambiales el tamaño desde la esquina o usá la barra de selección.")
+        Hint("Rodeá trazos para elegirlos. Después arrastralos, cambiales el tamaño desde la esquina o usá el menú que aparece debajo.")
         TextButton(onClick = onSelectAll) {
             Icon(TrazoIcons.SelectAll, null, Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Seleccionar todo")
         }
+        TextButton(onClick = onPaste, enabled = canPaste) {
+            Icon(TrazoIcons.Paste, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Pegar")
+        }
+        Hint("También podés mantener el lazo apretado en un lugar vacío para pegar ahí, en esta hoja o en otra.")
     }
 }
 
@@ -565,34 +596,43 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions) {
 
 // ------------------------------------------------------------------ selección
 
-/** Barra flotante de la selección: girar, tamaño, duplicar, color y borrar. */
+/**
+ * Barra de la selección: quitar, girar, tamaño, duplicar, copiar, calcular, color y borrar. Abajo o
+ * arriba va en una fila; a un costado, en columna; suelta, en un cuadrado de 4 columnas.
+ */
 @Composable
-fun SelectionPill(vm: EditorViewModel, onCustomColor: () -> Unit, modifier: Modifier = Modifier) {
+fun SelectionPill(
+    vm: EditorViewModel,
+    onCustomColor: () -> Unit,
+    modifier: Modifier = Modifier,
+    dock: BarDock = BarDock.BOTTOM,
+    handle: (@Composable () -> Unit)? = null,
+) {
     var colors by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 6.dp,
-        modifier = modifier,
-    ) {
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ToolButton(Icons.Filled.Close, "Quitar selección", onClick = { vm.controller.clearSelection() })
-            BarDivider()
+    val items = listOf<@Composable () -> Unit>(
+        { ToolButton(Icons.Filled.Close, "Quitar selección", onClick = { vm.controller.clearSelection() }) },
+        {
             ToolButton(
                 TrazoIcons.Rotate, "Girar −15°", onClick = { vm.controller.rotateSelection(-15f) },
                 modifier = Modifier.graphicsLayer(scaleX = -1f),
             )
-            ToolButton(TrazoIcons.Rotate, "Girar +15°", onClick = { vm.controller.rotateSelection(15f) })
-            ToolButton(TrazoIcons.Shrink, "Achicar", onClick = { vm.controller.scaleSelection(0.85f) })
-            ToolButton(TrazoIcons.Grow, "Agrandar", onClick = { vm.controller.scaleSelection(1.15f) })
-            ToolButton(TrazoIcons.Duplicate, "Duplicar", onClick = vm::duplicateSelection)
+        },
+        { ToolButton(TrazoIcons.Rotate, "Girar +15°", onClick = { vm.controller.rotateSelection(15f) }) },
+        { ToolButton(TrazoIcons.Shrink, "Achicar", onClick = { vm.controller.scaleSelection(0.85f) }) },
+        { ToolButton(TrazoIcons.Grow, "Agrandar", onClick = { vm.controller.scaleSelection(1.15f) }) },
+        { ToolButton(TrazoIcons.Duplicate, "Duplicar", onClick = vm::duplicateSelection) },
+        {
+            ToolButton(TrazoIcons.Copy, "Copiar", onClick = {
+                vm.copySelection { Toast.makeText(context, "Copiado", Toast.LENGTH_SHORT).show() }
+            })
+        },
+        {
             ToolButton(TrazoIcons.Calculate, "Calcular", onClick = {
                 vm.calculateSelection()?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
             })
+        },
+        {
             Box {
                 ToolButton(TrazoIcons.Palette, "Color de la selección", onClick = { colors = true }, selected = colors)
                 PanelMenu(colors, { colors = false }) {
@@ -605,7 +645,139 @@ fun SelectionPill(vm: EditorViewModel, onCustomColor: () -> Unit, modifier: Modi
                     }
                 }
             }
-            ToolButton(Icons.Filled.Delete, "Borrar selección", onClick = { vm.controller.deleteSelection() })
+        },
+        { ToolButton(Icons.Filled.Delete, "Borrar selección", onClick = { vm.controller.deleteSelection() }) },
+    )
+    Surface(
+        shape = RoundedCornerShape(if (dock == BarDock.FREE) 20.dp else 28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 6.dp,
+        modifier = modifier,
+    ) {
+        when (dock) {
+            BarDock.TOP, BarDock.BOTTOM -> Row(
+                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                handle?.invoke()
+                items.first()()
+                BarDivider()
+                items.drop(1).forEach { it() }
+            }
+            BarDock.LEFT, BarDock.RIGHT -> Column(
+                Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                handle?.invoke()
+                items.forEach { it() }
+            }
+            BarDock.FREE -> Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                handle?.invoke()
+                items.chunked(4).forEach { row ->
+                    Row { row.forEach { item -> Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { item() } } }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ barra compacta
+
+/**
+ * La barra suelta (o pegada a un costado): arriba la agarradera y 4 colores; debajo los mismos botones
+ * que la barra superior, en el mismo orden, en [columns] columnas.
+ */
+@Composable
+fun CompactToolbar(
+    vm: EditorViewModel,
+    settings: TrazoSettings,
+    update: ((TrazoSettings) -> TrazoSettings) -> Unit,
+    actions: EditorActions,
+    columns: Int,
+    handle: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var panel by remember { mutableStateOf<BarPanel?>(null) }
+    val highlighter = vm.editorTool == EditorTool.HIGHLIGHTER
+    val colors = (if (highlighter) HighlighterPalette else settings.quickColors).take(4)
+    val current = if (highlighter) settings.highlighterColor else settings.penColor
+    val items = buildList<@Composable () -> Unit> {
+        add { ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "Volver", onClick = actions.onBack) }
+        add { ToolButton(TrazoIcons.Pages, "Páginas (${vm.pageIndex + 1}/${vm.pageCount})", onClick = actions.onPages, selected = actions.pagesOpen) }
+        add {
+            ToolButton(
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Página anterior",
+                onClick = { vm.goToPage(vm.pageIndex - 1) }, enabled = vm.pageIndex > 0,
+            )
+        }
+        add {
+            if (vm.pageIndex < vm.pageCount - 1) {
+                ToolButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Página siguiente", onClick = { vm.goToPage(vm.pageIndex + 1) })
+            } else {
+                ToolButton(Icons.Filled.Add, "Nueva página", onClick = { vm.addPage() })
+            }
+        }
+        add { ToolButton(TrazoIcons.Undo, "Deshacer", onClick = vm::undo, enabled = vm.canUndo) }
+        add { ToolButton(TrazoIcons.Redo, "Rehacer", onClick = vm::redo, enabled = vm.canRedo) }
+        addAll(toolItems(vm, settings, update, actions, panel) { panel = it })
+        add {
+            ToolButton(
+                TrazoIcons.Wand, if (settings.gesturesEnabled) "Gestos activados" else "Gestos desactivados",
+                onClick = { update { it.copy(gesturesEnabled = !it.gesturesEnabled) } },
+                selected = settings.gesturesEnabled,
+            )
+        }
+        add {
+            ToolButton(
+                TrazoIcons.Align, if (settings.autoAlign) "Auto-alineado activado" else "Auto-alineado desactivado",
+                onClick = { update { it.copy(autoAlign = !it.autoAlign) } },
+                selected = settings.autoAlign,
+            )
+        }
+        add { ToolButton(TrazoIcons.Patterns, "Insertar patrón", onClick = actions.onInsert) }
+        add {
+            RainbowDot(
+                onClick = { actions.onPickColor(if (highlighter) ColorTarget.Highlighter else ColorTarget.Pen) },
+                size = 26.dp,
+                description = "Otro color",
+            )
+        }
+        add { ToolButton(TrazoIcons.ZoomOut, "Alejar", onClick = { actions.onZoom(1f / 1.25f) }) }
+        add { ToolButton(TrazoIcons.Fit, "Zoom ${vm.zoomPercent} %. Ajustar a la página", onClick = vm::fitToPage) }
+        add { ToolButton(TrazoIcons.ZoomIn, "Acercar", onClick = { actions.onZoom(1.25f) }) }
+        add {
+            Box {
+                ToolButton(TrazoIcons.Paper, "Hoja", onClick = { panel = BarPanel.PAPER }, selected = panel == BarPanel.PAPER)
+                PanelMenu(panel == BarPanel.PAPER, { panel = null }) { PaperPanel(vm, settings, update) }
+            }
+        }
+        add { EditorMenu(vm, actions) }
+    }
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 8.dp,
+        modifier = modifier,
+    ) {
+        Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            handle()
+            Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                colors.forEachIndexed { i, c ->
+                    ColorDot(
+                        c,
+                        selected = c == current,
+                        onClick = { actions.onQuickColor(c) },
+                        size = 24.dp,
+                        onLongClick = if (highlighter) null else ({ actions.onPickColor(ColorTarget.Quick(i)) }),
+                    )
+                }
+            }
+            items.chunked(columns).forEach { row ->
+                Row {
+                    row.forEach { item -> Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { item() } }
+                    repeat(columns - row.size) { Spacer(Modifier.size(44.dp)) }
+                }
+            }
         }
     }
 }

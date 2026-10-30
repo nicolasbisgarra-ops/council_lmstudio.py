@@ -137,6 +137,30 @@ class CapabilitiesTest {
         controller.attach(PageState(s.toList()), History())
     }
 
+    @Test fun `pasteStrokes centers a copy with new ids, selects it and undoes in one step`() {
+        withPage(st("a", 0f, 0f, group = "g1"), st("b", 20f, 0f, group = "g1"))
+        controller.select(listOf("a", "b"))
+        val copied = controller.copySelection()
+        assertEquals(listOf("a", "b"), copied.map { it.id })
+        val ids = controller.pasteStrokes(copied, 500f, 700f)
+        assertEquals(2, ids.size)
+        assertEquals(ids, controller.selection)
+        val pasted = controller.strokesById(ids)!!
+        assertTrue(pasted.none { it.id in setOf("a", "b") })
+        assertEquals(pasted[0].groupId, pasted[1].groupId)
+        assertTrue(pasted[0].groupId != "g1")
+        val b = pasted.bounds()
+        assertEquals(500f, b.centerX, 0.01f)
+        assertEquals(700f, b.centerY, 0.01f)
+        // Cerca del borde queda dentro de la hoja.
+        val edge = controller.strokesById(controller.pasteStrokes(copied, -50f, Notebook.PAGE_HEIGHT + 50f))!!.bounds()
+        assertTrue(edge.left >= -0.01f && edge.bottom <= Notebook.PAGE_HEIGHT + 0.01f)
+        assertEquals(6, strokes.size)
+        controller.undo(); controller.undo()
+        assertEquals(listOf("a", "b"), strokes.map { it.id })
+        assertTrue(controller.pasteStrokes(emptyList(), 0f, 0f).isEmpty())
+    }
+
     @Test fun `duplicateSelection copies with new ids, consistent groups and offset`() {
         withPage(st("a", 0f, 0f, group = "g1"), st("b", 20f, 0f, group = "g1"), st("c", 40f, 0f), st("d", 60f, 0f, group = "g2"))
         controller.select(listOf("a", "b", "c", "d"))

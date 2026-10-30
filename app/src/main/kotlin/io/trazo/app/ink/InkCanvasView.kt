@@ -118,6 +118,32 @@ class InkCanvasView @JvmOverloads constructor(
                 invalidate()
             }
         }
+    /**
+     * Lazo apoyado y quieto un momento sobre un lugar vacío: se ofrece pegar ahí. Recibe el punto en
+     * coordenadas de la vista y de documento.
+     */
+    var onLassoLongPress: ((x: Float, y: Float, docX: Float, docY: Float) -> Unit)? = null
+    private var holdDownX = 0f
+    private var holdDownY = 0f
+    private var lassoHoldPending = false
+    private val lassoHold = Runnable {
+        lassoHoldPending = false
+        val c = controller ?: return@Runnable
+        if (drawingPointerId == INVALID) return@Runnable
+        // El contacto deja de ser un lazo: lo que siga hasta levantar no dibuja nada.
+        c.cancel()
+        drawingPointerId = INVALID
+        removeCallbacks(ticker)
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        val (dx, dy) = screenToDocument(holdDownX, holdDownY)
+        onLassoLongPress?.invoke(holdDownX, holdDownY, dx, dy)
+        invalidate()
+    }
+
+    private fun cancelLassoHold() {
+        if (lassoHoldPending) { removeCallbacks(lassoHold); lassoHoldPending = false }
+    }
+
     /** Cambió el zoom o el desplazamiento (para mostrar el porcentaje). */
     var onViewportChanged: (() -> Unit)? = null
 
@@ -390,6 +416,7 @@ class InkCanvasView @JvmOverloads constructor(
             invalidate()
         }
         removeCallbacks(ticker)
+        cancelLassoHold()
         resetPenButton()
     }
 
@@ -504,6 +531,13 @@ class InkCanvasView @JvmOverloads constructor(
                     panLastX = event.getX(index); panLastY = event.getY(index)
                     val (x, y) = screenToDocument(event.getX(index), event.getY(index))
                     c.penDown(x, y, event.getPressure(index), event.eventTime, kind, pxPerUnit)
+                    cancelLassoHold()
+                    val onSelection = c.selectionBounds?.let { c.handleBounds(it) }?.contains(x, y) == true
+                    if (onLassoLongPress != null && c.contactTool == Tool.LASSO && !onSelection) {
+                        holdDownX = event.getX(index); holdDownY = event.getY(index)
+                        lassoHoldPending = true
+                        postDelayed(lassoHold, LASSO_HOLD_MS)
+                    }
                     parent?.requestDisallowInterceptTouchEvent(true)
                     removeCallbacks(ticker)
                     postOnAnimation(ticker)
@@ -524,6 +558,7 @@ class InkCanvasView @JvmOverloads constructor(
                             drawingKind = kind
                         }
                     }
+                    if (lassoHoldPending && i >= 0 && hypot(event.getX(i) - holdDownX, event.getY(i) - holdDownY) > tapSlop) cancelLassoHold()
                     if (i >= 0 && c.contactTool == Tool.PAN) {
                         panBy(event.getX(i) - panLastX, event.getY(i) - panLastY)
                         panLastX = event.getX(i); panLastY = event.getY(i)
@@ -543,6 +578,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP -> {
                 if (drawingPointerId != INVALID && event.getPointerId(index) == drawingPointerId) {
+                    cancelLassoHold()
                     if (isCanceled(event)) {
                         c.cancel()
                     } else {
@@ -557,6 +593,7 @@ class InkCanvasView @JvmOverloads constructor(
                 if (action == MotionEvent.ACTION_UP) navigating = false
             }
             MotionEvent.ACTION_CANCEL -> {
+                cancelLassoHold()
                 if (drawingPointerId != INVALID) c.cancel()
                 drawingPointerId = INVALID
                 navigating = false
@@ -778,6 +815,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val PEN_CLICK_WAIT_MS = 350L
         private val BUTTON_ACTIONS = setOf(MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE)
         /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
+        /** Cuánto se deja quieto el lazo para que aparezca «Pegar». */
+        private const val LASSO_HOLD_MS = 550L
         private const val SPEN_ACTION_DOWN = 211
         private const val SPEN_ACTION_UP = 212
         private const val SPEN_ACTION_MOVE = 213

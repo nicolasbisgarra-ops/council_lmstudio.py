@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -66,6 +67,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.trazo.app.data.BarDock
 import io.trazo.app.ink.InkCanvasView
 import io.trazo.app.trazo
 import io.trazo.core.InkEvent
@@ -104,6 +106,8 @@ fun EditorScreen(
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
     var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
     var wheelAt by remember { mutableStateOf<Offset?>(null) }
+    // Lazo apretado sobre un lugar vacío: dónde ofrecer «Pegar» (vista) y dónde pegar (documento).
+    var pasteAt by remember { mutableStateOf<Pair<Offset, Offset>?>(null) }
     // El panel lateral de patrones se puede minimizar para dejarle todo el ancho a la hoja.
     var railOpen by rememberSaveable { mutableStateOf(true) }
     val paper = paperColors(settings.paperTone)
@@ -223,133 +227,175 @@ fun EditorScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            EditorTopBar(
-                vm, notebook.name, settings, store::update,
-                EditorActions(
-                    onBack = { vm.saveNow(); onBack() },
-                    onRename = { renaming = true },
-                    onInsert = { showInsert = true },
-                    onZoom = { f -> canvas.view?.zoomStep(f) },
-                    onPickColor = { colorTarget = it },
-                    onQuickColor = ::quickColor,
-                    onClearPage = ::clearPage,
-                    onDeletePage = { deletePageAt = vm.pageIndex },
-                    onPages = { pagesOpen = !pagesOpen },
-                    pagesOpen = pagesOpen,
-                    onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
-                    onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
-                    onPatterns = onPatterns,
-                    onSettings = onSettings,
-                ),
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbar) },
-        containerColor = Color(paper.desk),
-    ) { padding ->
-        BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
-            // En tablet los patrones quedan en un panel lateral; en teléfono, en la hoja inferior.
-            val wide = maxWidth >= 840.dp
-            Row(Modifier.fillMaxSize()) {
-                if (pagesOpen) {
-                    PagesPanel(vm, paper, onDelete = { deletePageAt = it }, onClose = { pagesOpen = false })
-                }
-                Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
-                    AndroidView(
-                        factory = { ctx ->
-                            InkCanvasView(ctx).apply {
-                                viewport = vm.viewport
-                                controller = vm.controller
-                                onTwoFingerTap = vm::undo
-                                val toggleGestures = {
-                                    store.update { it.copy(gesturesEnabled = !it.gesturesEnabled) }
-                                    val on = store.settings.value.gesturesEnabled
-                                    scope.launch {
-                                        snackbar.currentSnackbarData?.dismiss()
-                                        snackbar.showSnackbar(
-                                            if (on) "Detección automática activada" else "Detección automática desactivada",
-                                            duration = SnackbarDuration.Short,
-                                        )
+    val actions = EditorActions(
+        onBack = { vm.saveNow(); onBack() },
+        onRename = { renaming = true },
+        onInsert = { showInsert = true },
+        onZoom = { f -> canvas.view?.zoomStep(f) },
+        onPickColor = { colorTarget = it },
+        onQuickColor = ::quickColor,
+        onClearPage = ::clearPage,
+        onDeletePage = { deletePageAt = vm.pageIndex },
+        onPages = { pagesOpen = !pagesOpen },
+        pagesOpen = pagesOpen,
+        onPdf = { pdfLauncher.launch("${notebook.name}.pdf") },
+        onPng = { pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") },
+        onPatterns = onPatterns,
+        onSettings = onSettings,
+    )
+    val toolMover = rememberBarMover { d, f -> store.update { it.copy(toolbarDock = d, toolbarFree = f) } }
+    val selectionMover = rememberBarMover { d, f -> store.update { it.copy(selectionDock = d, selectionFree = f) } }
+    val dock = settings.toolbarDock
+    val toolHandle: @Composable () -> Unit = { DragHandle(toolMover) }
+    val sideToolbar: @Composable () -> Unit = {
+        CompactToolbar(
+            vm, settings, store::update, actions, columns = 2, handle = toolHandle,
+            modifier = Modifier.fillMaxHeight().verticalScroll(rememberScrollState()),
+        )
+    }
+
+    Box(Modifier.fillMaxSize().barContainer(toolMover)) {
+        Scaffold(
+            topBar = {
+                if (dock == BarDock.TOP) EditorTopBar(vm, notebook.name, settings, store::update, actions, handle = toolHandle)
+            },
+            bottomBar = {
+                if (dock == BarDock.BOTTOM) EditorTopBar(vm, notebook.name, settings, store::update, actions, handle = toolHandle, atTop = false)
+            },
+            snackbarHost = { SnackbarHost(snackbar) },
+            containerColor = Color(paper.desk),
+        ) { padding ->
+            BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
+                // En tablet los patrones quedan en un panel lateral; en teléfono, en la hoja inferior.
+                val wide = maxWidth >= 840.dp
+                Row(Modifier.fillMaxSize()) {
+                    if (dock == BarDock.LEFT) sideToolbar()
+                    if (pagesOpen) {
+                        PagesPanel(vm, paper, onDelete = { deletePageAt = it }, onClose = { pagesOpen = false })
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight().barContainer(selectionMover).onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
+                        AndroidView(
+                            factory = { ctx ->
+                                InkCanvasView(ctx).apply {
+                                    viewport = vm.viewport
+                                    controller = vm.controller
+                                    onTwoFingerTap = vm::undo
+                                    val toggleGestures = {
+                                        store.update { it.copy(gesturesEnabled = !it.gesturesEnabled) }
+                                        val on = store.settings.value.gesturesEnabled
+                                        scope.launch {
+                                            snackbar.currentSnackbarData?.dismiss()
+                                            snackbar.showSnackbar(
+                                                if (on) "Detección automática activada" else "Detección automática desactivada",
+                                                duration = SnackbarDuration.Short,
+                                            )
+                                        }
+                                        Unit
                                     }
-                                    Unit
-                                }
-                                onThreeFingerTap = toggleGestures
-                                onHoldSecondDoubleTap = toggleGestures
-                                onHoldDoubleTap = {
-                                    store.update { it.copy(autoAlign = !it.autoAlign) }
-                                    val on = store.settings.value.autoAlign
-                                    scope.launch {
-                                        snackbar.currentSnackbarData?.dismiss()
-                                        snackbar.showSnackbar(
-                                            if (on) "Auto-alineado activado" else "Auto-alineado desactivado",
-                                            duration = SnackbarDuration.Short,
-                                        )
+                                    onThreeFingerTap = toggleGestures
+                                    onHoldSecondDoubleTap = toggleGestures
+                                    onHoldDoubleTap = {
+                                        store.update { it.copy(autoAlign = !it.autoAlign) }
+                                        val on = store.settings.value.autoAlign
+                                        scope.launch {
+                                            snackbar.currentSnackbarData?.dismiss()
+                                            snackbar.showSnackbar(
+                                                if (on) "Auto-alineado activado" else "Auto-alineado desactivado",
+                                                duration = SnackbarDuration.Short,
+                                            )
+                                        }
                                     }
+                                    onPenButtonClicks = ::penButtonClicks
+                                    onViewportChanged = { vm.zoomPercent = this.zoomPercent; vm.mathExplanation = null; vm.viewportTick++; pasteAt = null }
+                                    onLassoLongPress = { x, y, dx, dy -> pasteAt = Offset(x, y) to Offset(dx, dy) }
+                                    canvas.view = this
                                 }
-                                onPenButtonClicks = ::penButtonClicks
-                                onViewportChanged = { vm.zoomPercent = this.zoomPercent; vm.mathExplanation = null }
-                                canvas.view = this
-                            }
-                        },
-                        onRelease = { v -> if (canvas.view === v) canvas.view = null },
-                        update = { v ->
-                            vm.pageIndex // releer al cambiar de página
-                            vm.fitRequest // y al pedir "Ajustar a la página"
-                            v.controller = vm.controller
-                            v.viewport = vm.viewport
-                            v.paper = vm.paper
-                            v.fingerDraws = settings.fingerDraws
-                            v.showHoldIndicator = settings.showHoldIndicator
-                            v.hapticsEnabled = settings.haptics
-                            v.paperColors = paper
-                            v.accentColor = accent
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    vm.selectedShape?.let { shape ->
-                        ShapeInspector(vm, shape, Modifier.align(Alignment.BottomCenter).padding(16.dp))
-                    }
-                    vm.mathExplanation?.let { e ->
-                        MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null })
-                    }
-                    // Se muestra al levantar el lápiz, encima de donde quedó la punta.
-                    vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
-                        LaunchedEffect(amb) { vm.ambiguousShown() }
-                        AmbiguityBubble(amb, vm.penOf(amb), vm.viewport, onChoose = vm::chooseAmbiguous)
-                    }
-                    if (vm.hasSelection) {
-                        SelectionPill(
-                            vm,
-                            onCustomColor = { colorTarget = ColorTarget.Selection },
-                            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
-                        )
-                    }
-                    wheelAt?.let { at ->
-                        ToolWheel(
-                            vm, settings, at,
-                            onColor = ::quickColor,
-                            onCustomColor = {
-                                colorTarget = if (vm.editorTool == EditorTool.HIGHLIGHTER) ColorTarget.Highlighter else ColorTarget.Pen
                             },
-                            onDismiss = { wheelAt = null },
-                            // La ruleta tapa el lienzo: escucha ella misma el botón para cerrarse o cambiar.
-                            onPenButtonClicks = { n -> penButtonClicks(n, at.x, at.y) },
+                            onRelease = { v -> if (canvas.view === v) canvas.view = null },
+                            update = { v ->
+                                vm.pageIndex // releer al cambiar de página
+                                vm.fitRequest // y al pedir "Ajustar a la página"
+                                v.controller = vm.controller
+                                v.viewport = vm.viewport
+                                v.paper = vm.paper
+                                v.fingerDraws = settings.fingerDraws
+                                v.showHoldIndicator = settings.showHoldIndicator
+                                v.hapticsEnabled = settings.haptics
+                                v.paperColors = paper
+                                v.accentColor = accent
+                            },
+                            modifier = Modifier.fillMaxSize(),
                         )
+                        vm.selectedShape?.let { shape ->
+                            ShapeInspector(vm, shape, Modifier.align(Alignment.BottomCenter).padding(16.dp))
+                        }
+                        vm.mathExplanation?.let { e ->
+                            MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null })
+                        }
+                        // Se muestra al levantar el lápiz, encima de donde quedó la punta.
+                        vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
+                            LaunchedEffect(amb) { vm.ambiguousShown() }
+                            AmbiguityBubble(amb, vm.penOf(amb), vm.viewport, onChoose = vm::chooseAmbiguous)
+                        }
+                        if (vm.hasSelection) {
+                            SelectionMenu(vm, onCustomColor = { colorTarget = ColorTarget.Selection })
+                            val selectionDock = settings.selectionDock
+                            SelectionPill(
+                                vm,
+                                onCustomColor = { colorTarget = ColorTarget.Selection },
+                                modifier = when (selectionDock) {
+                                    BarDock.BOTTOM -> Modifier.align(Alignment.BottomCenter).padding(16.dp)
+                                    BarDock.TOP -> Modifier.align(Alignment.TopCenter).padding(16.dp)
+                                    BarDock.LEFT -> Modifier.align(Alignment.CenterStart).padding(8.dp)
+                                    BarDock.RIGHT -> Modifier.align(Alignment.CenterEnd).padding(8.dp)
+                                    BarDock.FREE -> Modifier.freePlacement(selectionMover, settings.selectionFree)
+                                },
+                                dock = selectionDock,
+                                handle = { DragHandle(selectionMover) },
+                            )
+                        }
+                        DockPreview(selectionMover, showSquare = settings.selectionDock != BarDock.FREE)
+                        pasteAt?.let { (view, doc) ->
+                            PasteMenu(
+                                view, canPaste = vm.canPaste,
+                                onPaste = { pasteAt = null; vm.paste(doc.x, doc.y) },
+                                onDismiss = { pasteAt = null },
+                            )
+                        }
+                        wheelAt?.let { at ->
+                            ToolWheel(
+                                vm, settings, at,
+                                onColor = ::quickColor,
+                                onCustomColor = {
+                                    colorTarget = if (vm.editorTool == EditorTool.HIGHLIGHTER) ColorTarget.Highlighter else ColorTarget.Pen
+                                },
+                                onDismiss = { wheelAt = null },
+                                // La ruleta tapa el lienzo: escucha ella misma el botón para cerrarse o cambiar.
+                                onPenButtonClicks = { n -> penButtonClicks(n, at.x, at.y) },
+                            )
+                        }
                     }
-                }
-                if (wide && railOpen) {
-                    PatternRail(
-                        patterns = enabledPatterns,
-                        onInsert = { vm.insertPattern(it, canvasSize.first, canvasSize.second) },
-                        onLibrary = onPatterns,
-                        onMinimize = { railOpen = false },
-                    )
-                } else if (wide) {
-                    PatternRailTab(onOpen = { railOpen = true })
+                    if (wide && railOpen) {
+                        PatternRail(
+                            patterns = enabledPatterns,
+                            onInsert = { vm.insertPattern(it, canvasSize.first, canvasSize.second) },
+                            onLibrary = onPatterns,
+                            onMinimize = { railOpen = false },
+                        )
+                    } else if (wide) {
+                        PatternRailTab(onOpen = { railOpen = true })
+                    }
+                    if (dock == BarDock.RIGHT) sideToolbar()
                 }
             }
         }
+        if (dock == BarDock.FREE) {
+            CompactToolbar(
+                vm, settings, store::update, actions, columns = 4, handle = toolHandle,
+                modifier = Modifier.freePlacement(toolMover, settings.toolbarFree),
+            )
+        }
+        DockPreview(toolMover, showSquare = dock != BarDock.FREE)
     }
 
     // Los diálogos esperan a que se levante el lápiz para no interrumpir el trazo.

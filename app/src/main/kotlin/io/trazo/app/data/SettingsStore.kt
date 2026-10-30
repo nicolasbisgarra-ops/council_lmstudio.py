@@ -42,6 +42,9 @@ val DEFAULT_QUICK_COLORS: List<Int> = listOf(
 /** Los dos colores que alternan dos clics del botón del lápiz en el aire: tinta y azul. */
 val DEFAULT_SWAP_COLORS: List<Int> = listOf(DEFAULT_INK_COLOR, 0xFF1E4FA0.toInt())
 
+/** Dónde va una barra del editor: pegada a un borde o suelta (cuadrado compacto). */
+enum class BarDock { TOP, BOTTOM, LEFT, RIGHT, FREE }
+
 /** Ajustes globales. Valores iniciales de diseño, no medidos con S Pen real (ver DECISIONES.md). */
 data class TrazoSettings(
     val holdMillis: Long = 500L,
@@ -81,6 +84,11 @@ data class TrazoSettings(
     val toolbarTools: List<EditorTool> = DEFAULT_TOOLBAR_TOOLS,
     val wheelItems: List<WheelEntry> = DEFAULT_WHEEL_ITEMS,
     val toolbarButtonSize: ToolbarButtonSize = ToolbarButtonSize.MEDIUM,
+    /** Barra de herramientas y barra de la selección: borde o suelta, y dónde quedó suelta (0..1 de la pantalla). */
+    val toolbarDock: BarDock = BarDock.TOP,
+    val toolbarFree: Pair<Float, Float> = 0.05f to 0.15f,
+    val selectionDock: BarDock = BarDock.BOTTOM,
+    val selectionFree: Pair<Float, Float> = 0.7f to 0.6f,
 )
 
 class SettingsStore(context: Context) {
@@ -121,6 +129,10 @@ class SettingsStore(context: Context) {
         wheelItems = readWheelItems(prefs.toolPreference("wheelItems")),
         toolbarButtonSize = ToolbarButtonSize.entries.firstOrNull { it.name == prefs.toolPreference("toolbarButtonSize") }
             ?: ToolbarButtonSize.MEDIUM,
+        toolbarDock = prefs.enum("toolbarDock", BarDock.TOP),
+        toolbarFree = prefs.getFloat("toolbarFreeX", 0.05f) to prefs.getFloat("toolbarFreeY", 0.15f),
+        selectionDock = prefs.enum("selectionDock", BarDock.BOTTOM),
+        selectionFree = prefs.getFloat("selectionFreeX", 0.7f) to prefs.getFloat("selectionFreeY", 0.6f),
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
@@ -160,6 +172,12 @@ class SettingsStore(context: Context) {
             .putString("toolbarTools", ToolPreferences.serializeToolbar(s.toolbarTools.map { it.name }))
             .putString("wheelItems", ToolPreferences.serializeWheel(s.wheelItems.map { it.name }))
             .putString("toolbarButtonSize", s.toolbarButtonSize.name)
+            .putString("toolbarDock", s.toolbarDock.name)
+            .putFloat("toolbarFreeX", s.toolbarFree.first)
+            .putFloat("toolbarFreeY", s.toolbarFree.second)
+            .putString("selectionDock", s.selectionDock.name)
+            .putFloat("selectionFreeX", s.selectionFree.first)
+            .putFloat("selectionFreeY", s.selectionFree.second)
             .apply()
         _settings.value = s
     }

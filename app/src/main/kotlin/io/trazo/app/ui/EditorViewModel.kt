@@ -299,6 +299,54 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     }
 
     fun duplicateSelection() { controller.duplicateSelection() }
+
+    /** Límites de la selección en documento, para ubicar el menú debajo. */
+    val selectionBounds: io.trazo.core.Bounds? get() { revision; hasSelection; viewportTick; return controller.selectionBounds }
+
+    /** Cambia al desplazar o hacer zoom: lo que flota sobre la hoja se reubica. */
+    var viewportTick by mutableIntStateOf(0)
+
+    /**
+     * Copia la selección al portapapeles de Trazo (se pega en cualquier hoja o cuaderno) y su imagen al
+     * del sistema, para pegarla en otras apps.
+     */
+    fun copySelection(onDone: (Boolean) -> Unit) {
+        val strokes = controller.copySelection()
+        if (strokes.isEmpty()) return
+        TrazoClipboard.strokes = strokes
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            val uri = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = java.io.File(ctx.cacheDir, "clipboard").apply { mkdirs() }
+                    val file = java.io.File(dir, "trazo-seleccion.png")
+                    file.outputStream().use { PageExporter.writeStrokesPng(strokes, it) }
+                    androidx.core.content.FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
+                }.getOrNull()
+            }
+            if (uri != null) {
+                val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                runCatching { cm?.setPrimaryClip(android.content.ClipData.newUri(ctx.contentResolver, "Trazo", uri)) }
+            }
+            onDone(uri != null)
+        }
+    }
+
+    val canPaste: Boolean get() = TrazoClipboard.strokes.isNotEmpty()
+
+    /** Pega lo copiado centrado en (x, y) de documento; queda seleccionado para moverlo. */
+    fun paste(x: Float, y: Float) {
+        val strokes = TrazoClipboard.strokes
+        if (strokes.isEmpty()) return
+        selectTool(EditorTool.LASSO)
+        controller.pasteStrokes(strokes, x, y)
+    }
+
+    /** Pega en el centro de lo que se ve. */
+    fun pasteInView() {
+        val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
+        paste((viewSize.first / 2f - viewport.tx) / vpScale, (viewSize.second / 2f - viewport.ty) / vpScale)
+    }
     fun recolorSelection(color: Int) { controller.recolorSelection(color) }
     /** Color del primer trazo elegido (para marcarlo en la paleta). */
     val selectionColor: Int? get() { revision; return controller.strokesById(controller.selection.take(1))?.firstOrNull()?.color }

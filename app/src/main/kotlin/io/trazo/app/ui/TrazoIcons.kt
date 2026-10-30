@@ -135,6 +135,10 @@ object TrazoIcons {
         )
     }
     val Grow by lazy { icon("Grow", stroke("M14 4 H20 V10 M20 4 L13.5 10.5"), stroke("M10 20 H4 V14 M4 20 L10.5 13.5")) }
+    val Copy by lazy { icon("Copy", stroke("M8.5 8 H18.5 V20.5 H8.5 Z"), stroke("M5.5 16.5 V3.5 H15.5")) }
+    val Paste by lazy { icon("Paste", stroke("M8.5 5 H6 V20.5 H18 V5 H15.5"), stroke("M9 3.5 H15 V7 H9 Z"), stroke("M9.5 12 H14.5 M9.5 15.5 H13")) }
+    /** Agarradera para arrastrar una barra (seis puntos). */
+    val Drag by lazy { icon("Drag", stroke("M9 6 L9.01 6 M15 6 L15.01 6 M9 12 L9.01 12 M15 12 L15.01 12 M9 18 L9.01 18 M15 18 L15.01 18")) }
     val Shrink by lazy { icon("Shrink", stroke("M20 10 H14 V4 M14 10 L20.5 3.5"), stroke("M4 14 H10 V20 M10 14 L3.5 20.5")) }
 }
 

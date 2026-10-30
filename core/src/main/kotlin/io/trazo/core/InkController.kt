@@ -551,6 +551,28 @@ class InkController(
         return selection
     }
 
+    /** Copia de la selección para pegarla después (en esta hoja, en otra o en otro cuaderno). */
+    fun copySelection(): List<InkStroke> = selection.mapNotNull { page.find(it) }
+
+    /**
+     * Pega [strokes] centrados en (cx, cy), dentro de la hoja: ids y grupos nuevos, un solo paso deshacible
+     * (Kind.INSERT). Lo pegado queda seleccionado. Devuelve los ids nuevos.
+     */
+    fun pasteStrokes(strokes: List<InkStroke>, cx: Float, cy: Float): List<String> {
+        if (mode != Mode.NONE || strokes.isEmpty()) return emptyList()
+        val b = strokes.bounds()
+        // Que entre en la hoja aunque se pegue cerca de un borde.
+        val x = if (b.width >= Notebook.PAGE_WIDTH) Notebook.PAGE_WIDTH / 2f else cx.coerceIn(b.width / 2f, Notebook.PAGE_WIDTH - b.width / 2f)
+        val y = if (b.height >= Notebook.PAGE_HEIGHT) Notebook.PAGE_HEIGHT / 2f else cy.coerceIn(b.height / 2f, Notebook.PAGE_HEIGHT - b.height / 2f)
+        val copies = strokes.copiedWithNewIds(ids, Affine.translate(x - b.centerX, y - b.centerY))
+        clearShapeSelection()
+        history.perform(page, StrokeEdit(emptyList(), copies, StrokeEdit.Kind.INSERT))
+        refreshCalcs(copies)
+        selection = copies.map { it.id }
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+        return selection
+    }
+
     /** Cambia el color de la selección en un solo paso deshacible (mismos ids, Kind.TRANSFORM). */
     fun recolorSelection(color: Int) {
         if (mode != Mode.NONE) return

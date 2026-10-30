@@ -11,6 +11,7 @@ import io.trazo.core.LazyNotebook
 import io.trazo.core.Notebook
 import io.trazo.core.Page
 import io.trazo.core.Paper
+import io.trazo.core.bounds
 import java.io.OutputStream
 
 /**
@@ -64,6 +65,23 @@ object PageExporter {
         PaperPainter.draw(canvas, paper, colors = colors)
         StrokePainter.drawAll(canvas, page.allInk)
         return bmp
+    }
+
+    /** Imagen de unos trazos sueltos (lo copiado con el lazo), sobre blanco y con un margen. */
+    fun writeStrokesPng(strokes: List<InkStroke>, out: OutputStream, maxSide: Int = 1600) {
+        val b = strokes.bounds()
+        val margin = 16f
+        val w = b.width + margin * 2
+        val h = b.height + margin * 2
+        val scale = (maxSide / maxOf(w, h)).coerceAtMost(3f)
+        val bmp = Bitmap.createBitmap((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        canvas.scale(scale, scale)
+        canvas.translate(margin - b.left, margin - b.top)
+        StrokePainter.drawAll(canvas, strokes)
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        bmp.recycle()
     }
 
     private fun drawPage(canvas: Canvas, page: Page, paper: Paper, scale: Float, results: List<InkStroke>) {
