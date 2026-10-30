@@ -70,6 +70,11 @@ class OAuthEndpointPolicyRegressionTest {
         assertRejectsBeforeNetwork(AiProvider.GEMINI_GOOGLE, "https://evil.invalid/v1beta")
     }
 
+    @Test fun signedInEndpointRejectsQuery() {
+        assertRejectsBeforeNetwork(AiProvider.CHATGPT, "https://chatgpt.com/backend-api/codex?x=1")
+        assertRejectsBeforeNetwork(AiProvider.GEMINI_GOOGLE, "https://generativelanguage.googleapis.com/v1beta?key=x")
+    }
+
     @Test fun officialUrlsStillWork() {
         assertAllowed(AiProvider.CHATGPT, "https://chatgpt.com/backend-api/codex")
         assertAllowed(AiProvider.CHATGPT, " https://chatgpt.com/backend-api/codex/ ")

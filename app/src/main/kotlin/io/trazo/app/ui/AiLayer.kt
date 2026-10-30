@@ -123,7 +123,8 @@ private fun AiLegend() {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AiNoteBubble(vm: EditorViewModel, note: AiNote) {
-    val placed = remember(note) { AiNotes.layout(listOf(note)).single() }
+    val notes = vm.controller.page.ai?.notes.orEmpty()
+    val placed = remember(note, notes) { AiNotes.placed(notes, note) }
     val viewport = vm.viewport
     vm.viewportTick
     val scale = viewport.scale.takeIf { it > 0f } ?: 1f

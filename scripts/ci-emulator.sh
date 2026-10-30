@@ -96,7 +96,7 @@ adb shell svc data disable || true
 if has pruebas; then
 echo "== Pruebas instrumentadas =="
 diag "antes de pruebas"
-adb shell am instrument -w -e class io.trazo.app.EditorInstrumentedTest,io.trazo.app.ExportInstrumentedTest,io.trazo.app.ParametricExportInstrumentedTest "$RUNNER" | tee "$OUT/pruebas-instrumentadas.txt"
+adb shell am instrument -w -e class io.trazo.app.EditorInstrumentedTest,io.trazo.app.ExportInstrumentedTest,io.trazo.app.ParametricExportInstrumentedTest,io.trazo.app.PageHistoryInstrumentedTest "$RUNNER" | tee "$OUT/pruebas-instrumentadas.txt"
 diag "tras pruebas"
 fi
 

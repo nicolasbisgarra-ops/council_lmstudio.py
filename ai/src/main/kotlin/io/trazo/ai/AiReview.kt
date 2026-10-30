@@ -84,9 +84,16 @@ object AiReviewParser {
         val rawMarks = root.field("marcas", "marks", "errores", "errors") as? JsonArray
         if (rawMarks == null && root.field("correcto", "correct") == null) return null
         val marks = rawMarks.orEmpty().mapNotNull { (it as? JsonObject)?.let(::markOf) }
-        val correct = (root.field("correcto", "correct") as? JsonPrimitive)?.booleanOrNull ?: marks.isEmpty()
+        // QA53: una marca ilegible no es «sin errores». Si no se pudo leer ninguna, se pide el arreglo.
+        val dropped = rawMarks.orEmpty().size - marks.size
+        if (dropped > 0 && marks.isEmpty()) return null
+        val rawCorrect = root.field("correcto", "correct")
+        val correct = when (rawCorrect) {
+            null -> marks.isEmpty()
+            else -> (rawCorrect as? JsonPrimitive)?.booleanOrNull ?: false
+        }
         val score = root.field("puntaje", "score", "nota").number()?.coerceIn(0.0, 10.0)
-        return AiReview(correct && marks.isEmpty(), score, marks)
+        return AiReview(correct && marks.isEmpty() && dropped == 0, score, marks)
     }
 
     /** Una marca del JSON (acepta los nombres en español y en inglés); null si no dice el renglón. */
@@ -118,9 +125,16 @@ object AiReviewParser {
                 detail = body,
             )
         }.toList()
-        val sinErrores = reply.searchKey().let { "sin errores" in it || "es correct" in it || "no hay errores" in it }
+        val key = reply.searchKey()
+        // QA53: «no es correcto» o «incorrecto» no cuentan como hoja bien.
+        val sinErrores = POSITIVE.containsMatchIn(key) && !NEGATIVE.containsMatchIn(key)
         return AiReview(correct = marks.isEmpty() && sinErrores, score = null, marks = marks, fromFreeText = true)
     }
+
+    private val POSITIVE = Regex("""\bsin errores\b|\bno hay errores\b|\b(?:es|esta) correct[oa]s?\b""")
+    private val NEGATIVE = Regex(
+        """incorrect|\bno (?:es|esta|son|estan|parece|resulta) (?:del todo |completamente |totalmente )?correct|(?<!no )\bhay (?:un |varios |algunos )?errores?\b|\bcon errores\b|\bpero\b""",
+    )
 
     internal fun JsonObject.field(vararg names: String): JsonElement? = names.firstNotNullOfOrNull { this[it] }
 

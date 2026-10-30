@@ -226,7 +226,8 @@ object MathNotes {
         return rows(known + unread).mapIndexed { i, row ->
             val box = row.map { it.bounds }.reduce(Bounds::union)
             val text = if (row.any { it.label == UNREAD }) "?" else convert(row, fractions(row, unit(row) ?: box.height).keys).ifBlank { "?" }
-            AiNotes.ReviewLine(i + 1, text, box, row.flatMap { it.ids })
+            val ids = row.flatMap { it.ids }
+            AiNotes.ReviewLine(i + 1, text, box, ids, AiNotes.fingerprint(ids, pool))
         }
     }
 

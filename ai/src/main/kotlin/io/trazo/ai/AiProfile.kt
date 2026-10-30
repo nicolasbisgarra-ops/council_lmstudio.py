@@ -32,7 +32,7 @@ object AiEndpoints {
         val official = URI(provider.defaultBaseUrl)
         val u = runCatching { URI(url.trim()) }.getOrNull() ?: return false
         val path = u.rawPath.orEmpty()
-        return u.scheme == "https" && u.rawUserInfo == null && u.host == official.host && u.port == -1 && u.rawFragment == null &&
+        return u.scheme == "https" && u.rawUserInfo == null && u.host == official.host && u.port == -1 && u.rawFragment == null && u.rawQuery == null &&
             (path == official.rawPath || path.startsWith(official.rawPath + "/")) && ".." !in path && "%" !in path
     }
 }

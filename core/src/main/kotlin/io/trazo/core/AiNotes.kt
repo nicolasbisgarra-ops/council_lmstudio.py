@@ -6,6 +6,7 @@ import io.trazo.core.math.hasLetters
 import kotlinx.serialization.Serializable
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToLong
 
 /**
  * Una marca del Modo IA guardada en la hoja. El tipo va como texto (`CALCULATION`, `CONCEPT`,
@@ -28,6 +29,8 @@ data class AiNote(
     /** La agregó el motor (la IA no la vio): una igualdad sin letras que no se cumple. */
     val fromEngine: Boolean = false,
     val reviewId: String = "",
+    /** Huella del contenido de [strokeIds] al marcar (QA53); vacía en hojas viejas. */
+    val fingerprint: String = "",
 )
 
 /** Una revisión hecha, para el historial de la hoja. */
@@ -45,6 +48,7 @@ data class AiReviewRecord(
     /** Caja de lo revisado: ahí va el tilde verde si no hubo errores. */
     val area: Bounds? = null,
     val strokeIds: List<String> = emptyList(),
+    val fingerprint: String = "",
 )
 
 /** Lo del Modo IA en una hoja: las marcas visibles y el historial de revisiones. */
@@ -57,7 +61,7 @@ data class PageAi(
     fun verdict(strokes: List<InkStroke>): AiReviewRecord? {
         val last = history.lastOrNull() ?: return null
         if (!last.correct || notes.any { it.reviewId == last.id } || last.area == null) return null
-        return last.takeIf { AiNotes.unchanged(last.strokeIds, last.area, strokes) }
+        return last.takeIf { AiNotes.unchanged(last.strokeIds, last.area, strokes, last.fingerprint) }
     }
 
     fun without(noteId: String): PageAi = copy(notes = notes.filterNot { it.id == noteId })
@@ -70,7 +74,28 @@ object AiNotes {
     const val HISTORY_LIMIT = 30
 
     /** Un renglón numerado para el pedido: su texto («?» si el motor no lo leyó), su caja y sus trazos. */
-    data class ReviewLine(val number: Int, val text: String, val bounds: Bounds, val strokeIds: List<String>)
+    data class ReviewLine(val number: Int, val text: String, val bounds: Bounds, val strokeIds: List<String>, val fingerprint: String = "")
+
+    /**
+     * Huella del contenido de los trazos [ids] (puntos, grosor, pincel), independiente del orden: cambia si
+     * se edita un trazo aunque conserve su id y la caja total no se mueva.
+     */
+    fun fingerprint(ids: Collection<String>, strokes: List<InkStroke>): String {
+        val wanted = ids.toSet()
+        var h = FNV_OFFSET
+        fun mix(v: Long) { h = (h xor v) * FNV_PRIME }
+        for (s in strokes.filter { it.id in wanted }.sortedBy { it.id }) {
+            s.id.forEach { mix(it.code.toLong()) }
+            mix(s.brush.ordinal.toLong())
+            mix((s.width * 10f).roundToLong())
+            mix(s.points.size.toLong())
+            for (p in s.points) { mix((p.x * 10f).roundToLong()); mix((p.y * 10f).roundToLong()) }
+        }
+        return java.lang.Long.toHexString(h)
+    }
+
+    private const val FNV_OFFSET = -0x340d631b7bdddcdbL
+    private const val FNV_PRIME = 0x100000001b3L
 
     /**
      * Agrega una revisión: sus marcas reemplazan a las anteriores de los mismos renglones (por trazos en
@@ -89,24 +114,38 @@ object AiNotes {
      */
     fun prune(ai: PageAi?, strokes: List<InkStroke>): PageAi? {
         if (ai == null || ai.notes.isEmpty()) return ai
-        val kept = ai.notes.filter { unchanged(it.strokeIds, it.bounds, strokes) }
+        val kept = ai.notes.filter { unchanged(it.strokeIds, it.bounds, strokes, it.fingerprint) }
         return if (kept.size == ai.notes.size) ai else ai.copy(notes = kept)
     }
 
-    internal fun unchanged(ids: List<String>, bounds: Bounds, strokes: List<InkStroke>): Boolean {
+    internal fun unchanged(ids: List<String>, bounds: Bounds, strokes: List<InkStroke>, fingerprint: String = ""): Boolean {
         if (ids.isEmpty()) return true
         val wanted = ids.toSet()
         val own = strokes.filter { it.id in wanted }
         if (own.size != wanted.size) return false
         val now = own.bounds()
         if (!close(now, bounds)) return false
-        // Tinta nueva sobre el renglón (no la del resaltador).
+        if (fingerprint.isNotEmpty() && fingerprint != fingerprint(wanted, own)) return false
+        // Tinta nueva sobre el renglón (no la del resaltador): con el centro adentro o que lo cruce (tachar).
         val area = bounds.inflate(2f)
-        return strokes.none { s ->
-            s.id !in wanted && s.brush != Brush.HIGHLIGHTER && s.calc == null && s.bounds.let { b ->
-                b.centerX in area.left..area.right && b.centerY in area.top..area.bottom
-            }
+        return strokes.none { s -> s.id !in wanted && s.brush != Brush.HIGHLIGHTER && s.calc == null && covers(s, area) }
+    }
+
+    /** El trazo cae sobre [area]: su centro adentro o al menos la mitad de su largo la atraviesa. */
+    private fun covers(s: InkStroke, area: Bounds): Boolean {
+        val b = s.bounds
+        if (area.contains(b.centerX, b.centerY)) return true
+        if (b.right < area.left || b.left > area.right || b.bottom < area.top || b.top > area.bottom) return false
+        var inside = 0f
+        var total = 0f
+        for (i in 1 until s.points.size) {
+            val a = s.points[i - 1]
+            val c = s.points[i]
+            val d = kotlin.math.hypot(c.x - a.x, c.y - a.y)
+            total += d
+            if (area.contains((a.x + c.x) / 2f, (a.y + c.y) / 2f)) inside += d
         }
+        return total > 0f && inside >= total / 2f
     }
 
     private fun close(a: Bounds, b: Bounds, eps: Float = 0.5f) =
@@ -156,7 +195,7 @@ object AiNotes {
                 id = ids.next(), line = l.number, kind = "CALCULATION",
                 short = "Trazo calcula otro resultado",
                 detail = "Según el motor de Trazo, el lado izquierdo vale ${c.left} y el derecho ${c.right}.",
-                bounds = l.bounds, strokeIds = l.strokeIds, fromEngine = true, reviewId = reviewId,
+                bounds = l.bounds, strokeIds = l.strokeIds, fromEngine = true, reviewId = reviewId, fingerprint = l.fingerprint,
             )
         }
         return out + engine
@@ -169,7 +208,7 @@ object AiNotes {
     fun place(marks: List<Mark>, lines: List<ReviewLine>, ids: IdGenerator, reviewId: String): List<AiNote> =
         marks.mapNotNull { m ->
             val l = lines.getOrNull(m.line - 1) ?: return@mapNotNull null
-            AiNote(ids.next(), m.line, m.kind, m.short, m.detail, m.fix, l.bounds, l.strokeIds, reviewId = reviewId)
+            AiNote(ids.next(), m.line, m.kind, m.short, m.detail, m.fix, l.bounds, l.strokeIds, reviewId = reviewId, fingerprint = l.fingerprint)
         }
 
     // ------------------------------------------------------------------ disposición en la hoja
@@ -210,6 +249,12 @@ object AiNotes {
             placedLabels += box
             Placed(n, ring, box, wrapped)
         }
+    }
+
+    /** Dónde quedó [note] entre todas las de la hoja ([notes]); sola si ya no está. */
+    fun placed(notes: List<AiNote>, note: AiNote, pageWidth: Float = Notebook.PAGE_WIDTH): Placed {
+        val all = if (notes.any { it.id == note.id }) notes.map { if (it.id == note.id) note else it } else notes + note
+        return layout(all, pageWidth).first { it.note.id == note.id }
     }
 
     /** La nota que hay en ([x], [y]) (sobre su texto), o null. */

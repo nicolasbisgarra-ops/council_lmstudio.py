@@ -99,8 +99,9 @@ object AiMarkPainter {
      * La marca como tinta común (11): el óvalo, la flecha y el contorno de cada letra de la nota, en su color.
      * Así queda en la hoja aunque se oculte la capa o se borre la marca.
      */
-    fun toInk(note: AiNote, ids: IdGenerator, width: Float = 1.6f): List<InkStroke> {
-        val p = AiNotes.layout(listOf(note)).single()
+    fun toInk(note: AiNote, ids: IdGenerator, width: Float = 1.6f, all: List<AiNote> = listOf(note)): List<InkStroke> {
+        // Con todas las notas de la hoja: la tinta queda donde se veía la marca (QA53).
+        val p = AiNotes.placed(all, note)
         val color = colorOf(note)
         val out = mutableListOf<InkStroke>()
         val group = ids.next()

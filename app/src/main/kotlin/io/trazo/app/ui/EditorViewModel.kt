@@ -607,7 +607,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
                 val record = AiReviewRecord(
                     id = reviewId, at = System.currentTimeMillis(), model = profile.model.ifBlank { profile.name },
                     correct = r.correct, score = r.score, selection = only != null, lineCount = lines.size,
-                    notes = notes, area = captured.bounds(), strokeIds = lineIds,
+                    notes = notes, area = captured.bounds(), strokeIds = lineIds, fingerprint = AiNotes.fingerprint(lineIds, captured),
                 )
                 updateAi(pageId) { a -> AiNotes.record(a?.copy(notes = a.notes.filterNot { it.reviewId == reviewId }), record) }
                 aiProgress = AiProgress(
@@ -643,6 +643,9 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         val n = notebook ?: return
         if (aiJob?.isActive == true || !connectivity.online) return
         val pageId = n.slots.getOrNull(pageIndex)?.id ?: return
+        // QA52: la cola se vacía solo si el pedido puede salir; si falta el perfil o la sesión, queda guardada.
+        val profile = ai.settings.value.current ?: return
+        if (profile.problem != null || (profile.provider.signIn && ai.session(profile.id) == null)) return
         val queued = journal.take(notebookId, pageId)
         if (queued.isEmpty()) return
         // Si hay uno de la hoja entera, alcanza con ese; si no, se revisa lo que queda de lo elegido.
@@ -681,8 +684,9 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     /** La marca pasa a ser tinta común de la hoja (se puede mover, borrar o deshacer). */
     fun aiNoteToInk(note: AiNote) {
+        val all = controller.page.ai?.notes.orEmpty()
         removeAiNote(note)
-        controller.addInk(AiMarkPainter.toInk(note, IdGenerator.RANDOM))
+        controller.addInk(AiMarkPainter.toInk(note, IdGenerator.RANDOM, all = all))
     }
 
     /**
@@ -710,7 +714,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
             }
             aiDiscussing = false
             result.onSuccess { d ->
-                aiAnswer = d.answer.ifBlank { if (d.keep) "El modelo mantiene la marca." else "El modelo retira la marca." }
+                // QA53: la respuesta es de esta marca; si ya se abrió otra burbuja, no se muestra ahí.
+                if (aiNote?.id == note.id) aiAnswer = d.answer.ifBlank { if (d.keep) "El modelo mantiene la marca." else "El modelo retira la marca." }
                 when {
                     !d.keep -> updateAi(pageId) { it?.without(note.id) }
                     d.mark != null -> {
@@ -720,7 +725,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
                         if (aiNote?.id == note.id) aiNote = changed
                     }
                 }
-            }.onFailure { e -> aiAnswer = "No se pudo consultar: ${e.message ?: e.javaClass.simpleName}" }
+            }.onFailure { e -> if (aiNote?.id == note.id) aiAnswer = "No se pudo consultar: ${e.message ?: e.javaClass.simpleName}" }
         }
     }
 
@@ -799,6 +804,12 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     override fun onCleared() {
         connectivity.stop()
+        // Una revisión a medias no se guarda: sus marcas parciales se quitan (QA53).
+        if (aiJob?.isActive == true && pendingReview.isNotEmpty()) {
+            val id = pendingReview
+            aiJob?.cancel()
+            updateAi(pendingPage) { a -> a?.copy(notes = a.notes.filterNot { it.reviewId == id }) }
+        }
         if (!controller.isContactActive) saveNow()
         super.onCleared()
     }

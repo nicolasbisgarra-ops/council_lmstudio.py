@@ -344,7 +344,8 @@ class AiClient(
 
     /** Última barrera antes de la red: la sesión de un perfil con inicio de sesión solo va al servidor oficial. */
     private fun guard(p: AiProfile, url: String) {
-        if (!AiEndpoints.isOfficial(p.provider, url)) {
+        // La URL del perfil, sin query; la del pedido puede llevar la que agrega este cliente.
+        if (!AiEndpoints.isOfficial(p.provider, p.endpoint) || !AiEndpoints.isOfficial(p.provider, url.substringBefore('?'))) {
             throw AiException("Por seguridad, la sesión solo se envía a ${p.provider.defaultBaseUrl}. Corrija la URL del perfil.")
         }
     }
