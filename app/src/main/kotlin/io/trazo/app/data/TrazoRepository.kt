@@ -185,7 +185,7 @@ class TrazoRepository(root: File) {
     }
 
     /** Mueve el cuaderno a [folderId] (null: «Sin carpeta») sin cambiar su fecha de modificación. */
-    fun moveToFolder(id: String, folderId: String?) = synchronized(lock) {
+    fun moveToFolder(id: String, folderId: String?): Unit = synchronized(lock) {
         if (folderId != null && folders()[folderId] == null) return
         loadLazy(id)?.let { if (it.folderId != folderId) saveLazy(it.copy(folderId = folderId)) }
     }
@@ -216,7 +216,7 @@ class TrazoRepository(root: File) {
     }
 
     /** Vuelve a mostrar la primera hoja; la imagen se borra si ningún otro cuaderno la usa. */
-    fun clearCover(id: String) = synchronized(lock) {
+    fun clearCover(id: String): Unit = synchronized(lock) {
         val n = loadLazy(id) ?: return
         if (n.coverKind == CoverKind.FIRST_PAGE && n.coverImage == null) return
         saveLazy(n.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null))
