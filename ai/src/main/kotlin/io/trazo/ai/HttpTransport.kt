@@ -46,6 +46,8 @@ object UrlConnectionTransport : HttpTransport {
         }
         try {
             conn.requestMethod = request.method
+            // Sin redirecciones: la clave o la sesión no deben seguir a otro servidor.
+            conn.instanceFollowRedirects = false
             conn.connectTimeout = (request.timeoutSeconds * 1000).coerceAtMost(15_000)
             conn.readTimeout = request.timeoutSeconds * 1000
             if (request.body != null) conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")

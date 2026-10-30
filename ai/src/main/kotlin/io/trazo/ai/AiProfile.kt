@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import java.net.URI
 
 /** Servicio que atiende al modelo. Cada uno arma la petición a su manera (ver [AiClient]). */
 @Serializable
@@ -19,6 +20,21 @@ enum class AiProvider(val label: String, val defaultBaseUrl: String, val needsKe
     @SerialName("openai_compatible") OPENAI_COMPATIBLE("Compatible con OpenAI (LM Studio, Ollama, OpenRouter)", "http://192.168.0.10:1234/v1", false),
     /** Modelo en la tableta (llama.cpp, MediaPipe, Gemini Nano): llega en la etapa 3. */
     @SerialName("on_device") ON_DEVICE("En la tableta (próximamente)", "", false),
+}
+
+/**
+ * Adónde puede ir la sesión de un perfil con inicio de sesión (QA51): solo al servidor oficial, por HTTPS,
+ * sin usuario, puerto ni fragmento y bajo su ruta. Así un perfil editado o importado no manda el token a otro lado.
+ */
+object AiEndpoints {
+    fun isOfficial(provider: AiProvider, url: String): Boolean {
+        if (!provider.signIn) return true
+        val official = URI(provider.defaultBaseUrl)
+        val u = runCatching { URI(url.trim()) }.getOrNull() ?: return false
+        val path = u.rawPath.orEmpty()
+        return u.scheme == "https" && u.rawUserInfo == null && u.host == official.host && u.port == -1 && u.rawFragment == null &&
+            (path == official.rawPath || path.startsWith(official.rawPath + "/")) && ".." !in path && "%" !in path
+    }
 }
 
 /** Tamaño de la captura que se envía: el lado mayor de la imagen, en píxeles. */
@@ -75,6 +91,7 @@ data class AiProfile(
             provider == AiProvider.ON_DEVICE -> "Los modelos en la tableta llegan en una próxima versión."
             baseUrl.isBlank() -> "Falta la URL."
             !baseUrl.trim().startsWith("http://") && !baseUrl.trim().startsWith("https://") -> "La URL debe empezar con http:// o https://."
+            provider.signIn && !AiEndpoints.isOfficial(provider, endpoint) -> "Con inicio de sesión la URL es fija: ${provider.defaultBaseUrl}"
             provider == AiProvider.GEMINI_GOOGLE && oauthClientId.isBlank() -> "Falta el ID de cliente OAuth de su proyecto de Google Cloud."
             model.isBlank() -> "Falta elegir el modelo."
             else -> null

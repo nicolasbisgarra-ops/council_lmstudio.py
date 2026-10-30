@@ -74,7 +74,7 @@ class AiClient(
                 post("$base/chat/completions", bearer(key), openAiBody(profile, system, text, image, maxTokens), profile)
             AiProvider.CHATGPT -> {
                 // El servidor de Codex solo contesta en streaming (SSE): se lee entero y se juntan los trozos.
-                val body = check(transport.send(HttpRequest("POST", "$base/responses", chatGptHeaders(key), chatGptBody(profile, system, text, image).toString(), profile.timeoutSeconds)))
+                val body = check(send(profile, HttpRequest("POST", "$base/responses", chatGptHeaders(key), chatGptBody(profile, system, text, image).toString(), profile.timeoutSeconds)))
                 return streamedText(body)
             }
             AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> post(
@@ -111,6 +111,7 @@ class AiClient(
         }
         val out = StringBuilder()
         var events = 0
+        guard(profile, url)
         val response = transport.stream(HttpRequest("POST", url, headers + ("Accept" to "text/event-stream"), body.toString(), profile.timeoutSeconds)) { line ->
             if (!line.startsWith("data:")) return@stream
             val data = line.removePrefix("data:").trim()
@@ -331,10 +332,22 @@ class AiClient(
         key?.trim()?.takeIf { it.isNotEmpty() } ?: throw AiException("Falta la clave de API de este perfil.")
 
     private fun get(url: String, headers: Map<String, String>, p: AiProfile) =
-        check(transport.send(HttpRequest("GET", url, headers, timeoutSeconds = p.timeoutSeconds)))
+        check(send(p, HttpRequest("GET", url, headers, timeoutSeconds = p.timeoutSeconds)))
 
     private fun post(url: String, headers: Map<String, String>, body: JsonObject, p: AiProfile) =
-        check(transport.send(HttpRequest("POST", url, headers, body.toString(), p.timeoutSeconds)))
+        check(send(p, HttpRequest("POST", url, headers, body.toString(), p.timeoutSeconds)))
+
+    private fun send(p: AiProfile, request: HttpRequest): HttpResponse {
+        guard(p, request.url)
+        return transport.send(request)
+    }
+
+    /** Última barrera antes de la red: la sesión de un perfil con inicio de sesión solo va al servidor oficial. */
+    private fun guard(p: AiProfile, url: String) {
+        if (!AiEndpoints.isOfficial(p.provider, url)) {
+            throw AiException("Por seguridad, la sesión solo se envía a ${p.provider.defaultBaseUrl}. Corrija la URL del perfil.")
+        }
+    }
 
     private fun check(r: HttpResponse): String {
         if (r.status in 200..299) return r.body

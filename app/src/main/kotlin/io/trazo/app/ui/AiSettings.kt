@@ -31,6 +31,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -214,11 +215,18 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
         Text("Proveedor", style = MaterialTheme.typography.bodyMedium)
         ChoiceRow(AiProvider.entries.filter { it != AiProvider.ON_DEVICE }, p.provider, { it.label.substringBefore(" (") }, { provider ->
             // Cambiar de proveedor trae su URL, salvo que el usuario ya haya escrito otra.
-            val url = if (p.baseUrl == p.provider.defaultBaseUrl || p.baseUrl.isBlank()) provider.defaultBaseUrl else p.baseUrl
+            // Con inicio de sesión la URL es siempre la oficial.
+            val url = if (provider.signIn || p.baseUrl == p.provider.defaultBaseUrl || p.baseUrl.isBlank()) provider.defaultBaseUrl else p.baseUrl
             p = p.copy(provider = provider, baseUrl = url)
             models = emptyList()
         })
-        OutlinedTextField(
+        LaunchedEffect(p.provider) {
+            // Un perfil viejo o importado con otra URL vuelve a la oficial.
+            if (p.provider.signIn && p.baseUrl != p.provider.defaultBaseUrl) p = p.copy(baseUrl = p.provider.defaultBaseUrl)
+        }
+        if (p.provider.signIn) {
+            AiHint("Servidor: ${p.provider.defaultBaseUrl} (fijo: la sesión solo se envía ahí)")
+        } else OutlinedTextField(
             p.baseUrl, { p = p.copy(baseUrl = it.trim()) }, label = { Text("URL de la API") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth(),
         )
