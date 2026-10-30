@@ -1,7 +1,7 @@
-source_sha=f335439a1b66534eaf7a2f9753f22f793990bbfd
-run_id=40987373595
+source_sha=b2e8afd367eca75e497be92c27913be318971b45
+run_id=40982723726
 run_attempt=1
-tests_started_at=2026-10-30T02:24:19Z
-tests_finished_at=2026-10-30T02:24:48Z
+tests_started_at=2026-10-30T01:37:45Z
+tests_finished_at=2026-10-30T01:38:22Z
 task :core:test
 task :app:testDebugUnitTest
