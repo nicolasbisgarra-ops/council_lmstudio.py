@@ -76,7 +76,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: trazo-build
+          name: trazo-build-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             output/
             core/build/reports/tests/
@@ -85,11 +85,6 @@ jobs:
             ai/build/test-results/
             app/build/reports/tests/
             app/build/test-results/
-      # La APK queda en la rama apenas compila, sin esperar al emulador.
-      - name: Publicar APK en la rama
-        if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
-        continue-on-error: true
-        run: bash scripts/ci-publish.sh "${{ github.ref_name }}" "APK de prueba y evidencias JVM [skip ci]" output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/build-provenance.txt output/jvm-provenance.txt output/jvm
 
   emulator:
     name: Emulador (${{ matrix.fase }})
@@ -113,7 +108,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: trazo-build
+          name: trazo-build-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifact
       # Cada fase escribe en un directorio vacío propio: el artifact lleva solo lo de esta fase y
       # de este run, con la procedencia de la compilación que probó.
@@ -121,6 +116,7 @@ jobs:
         run: |
           grep -qx "source_sha=$GITHUB_SHA" artifact/output/build-provenance.txt
           grep -qx "run_id=$GITHUB_RUN_ID" artifact/output/build-provenance.txt
+          grep -qx "run_attempt=$GITHUB_RUN_ATTEMPT" artifact/output/build-provenance.txt
           (cd artifact && sed -n 's/^sha256 //p' output/build-provenance.txt | sha256sum -c -)
           mkdir -p "$RUNNER_TEMP/fase"
           { cat artifact/output/build-provenance.txt; echo "fase=${{ matrix.fase }}"; } > "$RUNNER_TEMP/fase/build-provenance-$(echo '${{ matrix.fase }}' | tr , -).txt"
@@ -147,24 +143,37 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: trazo-emulator-${{ strategy.job-index }}
+          name: trazo-emulator-${{ strategy.job-index }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/fase/
-      - name: Publicar evidencias en la rama
-        if: ${{ success() && (contains(github.event.head_commit.message, '[publicar]') || github.event_name == 'workflow_dispatch') }}
-        run: |
-          # Si un run más nuevo ya publicó su APK, el emulador de este no la pisa con una vieja.
-          git fetch -q --depth=1 origin "${{ github.ref_name }}"
-          published=$(git show FETCH_HEAD:output/build-provenance.txt 2>/dev/null | sed -n 's/^run_id=//p')
-          if [ -n "$published" ] && [ "$published" -gt "$GITHUB_RUN_ID" ]; then
-            echo "Ya hay una APK del run $published, más nuevo: no se publican estas evidencias"; exit 0
-          fi
-          # Respaldo por si falló la publicación de la compilación (agregar lo mismo no choca al rebasar).
-          mkdir -p output
-          cp artifact/output/Trazo-debug.apk artifact/output/SHA256SUMS-apk.txt output/
-          mkdir -p output/jvm && cp artifact/output/jvm/*.png artifact/output/jvm/*.txt output/jvm/ 2>/dev/null || true
-          # Solo se reemplazan los archivos de esta fase: los de la otra quedan como están en la rama.
-          mkdir -p output/emulator
-          cp -r "$RUNNER_TEMP/fase/." output/emulator/
-          mv output/emulator/demo-real-android-emulador.mp4 output/demo-real-android.mp4 || true
-          bash scripts/ci-publish.sh "${{ github.ref_name }}" "Evidencias del emulador (${{ matrix.fase }}) [skip ci]" \
-            output/Trazo-debug.apk output/SHA256SUMS-apk.txt output/jvm output/emulator output/demo-real-android.mp4
+
+  # Una sola publicación por run, con todo junto: la APK solo llega a la rama si la compilación y las
+  # dos fases del emulador pasaron, en un commit completo que no mezcla evidencias de otro run.
+  publish:
+    name: Publicar APK y evidencias
+    needs: [build, emulator]
+    if: ${{ success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[publicar]'))) }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: android-publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: trazo-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bundle/build
+      - uses: actions/download-artifact@v4
+        with:
+          name: trazo-emulator-0-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bundle/emulator-demo
+      - uses: actions/download-artifact@v4
+        with:
+          name: trazo-emulator-1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bundle/emulator-ui
+      - name: Armar la publicación y validar procedencia
+        run: bash scripts/ci-stage.sh "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/publication/output"
+      - name: Publicar un commit completo
+        run: bash scripts/ci-publish.sh "${{ github.ref_name }}" "$RUNNER_TEMP/publication/output" "APK y evidencias del run $GITHUB_RUN_ID [skip ci]"
