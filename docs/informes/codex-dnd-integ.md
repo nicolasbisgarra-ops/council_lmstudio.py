@@ -74,6 +74,13 @@ y contadores. Recientes/Nombre siguen disponibles como grillas. Con una
 búsqueda activa se ocultan los handles y se rechazan movimientos para evitar
 reordenar solo una parte filtrada. Cada menú y fila conserva su key por id.
 
+**Al integrar con carpetas y portadas:** la lista usa un solo mecanismo de orden,
+`NotebookOrder` (core, mismo `notebook-order.json`). Los cuadernos que no figuran
+(nuevos o importados) van primero, del más reciente al más viejo, y `listNotebooks`
+ya no reescribe el archivo. Dentro de una carpeta, arrastrar reacomoda solo los
+cuadernos visibles y deja los demás en sus lugares (`NotebookOrder.withSubset`).
+Subir/Bajar sigue en el menú de cada cuaderno como alternativa sin gesto.
+
 ## Integración común y rendimiento
 
 Se respetan las firmas reales: `onMove` ocurre en cada cruce y no al soltar.
