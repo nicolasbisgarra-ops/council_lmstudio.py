@@ -842,12 +842,16 @@ class EditorViewModel(
                 // Engine verification stays local; interpreted expressions never enter the request.
                 val localLines = MathNotes.reviewLines(strokes.filter { it.calc?.result != true }, repo.patterns.value, only)
                 val checkedLines = lines.map { raw ->
-                    raw.copy(text = localLines.firstOrNull { it.strokeIds.toSet() == raw.strokeIds.toSet() }?.text ?: "?")
+                    val local = localLines.firstOrNull { it.strokeIds.toSet() == raw.strokeIds.toSet() }?.text
+                    // Si el motor no lee el renglón, prueba con la lectura que devolvió el modelo; la cuenta la hace Trazo.
+                    raw.copy(text = local ?: resultValue.readings[raw.number]?.let(AiNotes::normalizeReading) ?: "?")
                 }
                 val notes = AiNotes.crossCheck(placed, checkedLines, ids, reviewId)
+                // Veredicto: el del modelo, corregido por el motor (sus marcas cuentan; las dudosas no).
+                val correct = AiNotes.correct(resultValue.correct, notes)
                 val record = AiReviewRecord(
                     id = reviewId, at = System.currentTimeMillis(), model = profile.model.ifBlank { profile.name },
-                    correct = resultValue.correct, score = resultValue.score, selection = only != null, lineCount = lines.size,
+                    correct = correct, score = resultValue.score, selection = only != null, lineCount = lines.size,
                     notes = notes, area = captured.bounds(), strokeIds = lineIds, fingerprint = AiNotes.fingerprint(lineIds, captured),
                 )
                 val actual = pageForReview(pageId)?.let { reviewScope(pageId, it) }
@@ -886,12 +890,7 @@ class EditorViewModel(
                 if (queuedLease != null) aiRevision++
                 aiProgress = AiProgress(
                     running = false, lines = lines.size, marks = notes.size,
-                    message = when {
-                        notes.isEmpty() && resultValue.correct -> "Sin errores" + (resultValue.score?.let { " · ${AiMarkPainter.formatScore(it)}/10" } ?: "")
-                        notes.isEmpty() -> "El modelo no marcó nada."
-                        notes.size == 1 -> "1 marca"
-                        else -> "${notes.size} marcas"
-                    },
+                    message = reviewMessage(notes, correct, resultValue.score),
                 )
                 log(AiSend(started, profile.name, profile.model, n.name, pageNumber, lines.size, imageBytes, only != null, millis, null, notes.size, resultValue.score, textChars, imageWidth, imageHeight, resultValue.usage))
             } finally {
@@ -971,6 +970,21 @@ class EditorViewModel(
                 queueClaimJob = null
                 claimed?.let { lease -> withContext(NonCancellable + Dispatchers.IO) { durableReviews?.release(lease) } }
             }
+        }
+    }
+
+    /** Resumen de una revisión: cuántas marcas firmes, cuántas comprobó el motor y cuántas quedaron dudosas. */
+    private fun reviewMessage(notes: List<AiNote>, correct: Boolean, score: Double?): String {
+        val firm = notes.filterNot { it.disputed }
+        val doubtful = notes.size - firm.size
+        val confirmed = firm.count { it.confirmed || it.fromEngine }
+        val tail = if (doubtful > 0) " · $doubtful dudosa" + (if (doubtful > 1) "s" else "") else ""
+        return when {
+            firm.isEmpty() && correct -> "Sin errores" + (score?.let { " · ${AiMarkPainter.formatScore(it)}/10" } ?: "") + tail
+            notes.isEmpty() -> "El modelo no marcó nada."
+            firm.isEmpty() -> "Sin errores firmes$tail"
+            else -> (if (firm.size == 1) "1 marca" else "${firm.size} marcas") +
+                (if (confirmed > 0) " · $confirmed comprobada" + (if (confirmed > 1) "s" else "") + " por Trazo" else "") + tail
         }
     }
 

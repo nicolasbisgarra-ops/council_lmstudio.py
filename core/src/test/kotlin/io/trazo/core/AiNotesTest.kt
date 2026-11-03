@@ -181,6 +181,36 @@ class AiNotesTest {
         assertTrue(engine.detail, engine.detail.contains("8") && engine.detail.contains("9"))
     }
 
+    @Test fun `el motor sigue la resolucion paso a paso`() {
+        val c = AiNotes.check(listOf(
+            line(1, "2x+3=7"), line(2, "2x=4"), line(3, "x=3"),
+            line(4, "x^2-5x+6=0"), line(5, "(x-2)(x-3)=0"),
+            line(6, "2x+3x"), line(7, "=5x"), line(8, "=6x"),
+        ))
+        assertEquals(AiNotes.Verdict.UNKNOWN, c[0].step)
+        assertEquals("2x+3=7 → 2x=4 conserva la solución", AiNotes.Verdict.HOLDS, c[1].step)
+        assertEquals("2x=4 → x=3 la cambia", AiNotes.Verdict.FAILS, c[2].step)
+        assertTrue(c[2].stepDetail, "x = 2" in c[2].stepDetail && "x = 3" in c[2].stepDetail)
+        assertEquals("factorizar conserva las dos soluciones", AiNotes.Verdict.HOLDS, c[4].step)
+        assertEquals(AiNotes.Verdict.HOLDS, c[6].step)
+        assertEquals(AiNotes.Verdict.FAILS, c[7].step)
+    }
+
+    @Test fun `una marca que el motor tambien encuentra queda comprobada y un paso malo sin marca recibe una del motor`() {
+        val lines = listOf(line(1, "2x+3=7"), line(2, "2x=4"), line(3, "x=3"), line(4, "3x=6"), line(5, "x=1"))
+        val ai = AiNotes.place(listOf(AiNotes.Mark(3, "CALCULATION", "dividiste mal"), AiNotes.Mark(2, "CALCULATION", "restaste mal")), lines, ids, "r2")
+        val out = AiNotes.crossCheck(ai, lines, ids, "r2")
+        assertTrue(out.single { it.line == 3 }.confirmed)
+        assertTrue("el paso 1 → 2 está bien: la marca queda dudosa", out.single { it.line == 2 }.disputed)
+        val engine = out.single { it.fromEngine }
+        assertEquals(5, engine.line)
+        assertTrue(engine.detail, "x = 2" in engine.detail && "x = 1" in engine.detail)
+        assertFalse(AiNotes.correct(true, out))
+        assertTrue("solo marcas dudosas: la hoja queda bien", AiNotes.correct(false, out.filter { it.disputed }))
+        assertTrue(AiNotes.correct(true, emptyList()))
+        assertFalse(AiNotes.correct(false, emptyList()))
+    }
+
     @Test fun `una marca se va sola si cambian los trazos de su renglon`() {
         val ink = row(0f, "2", "Más", "3", "Igual", "6")
         val lines = MathNotes.reviewLines(ink, patterns)
@@ -258,5 +288,11 @@ class AiNotesTest {
         c.penUp(label.centerX, label.centerY, 1f, 1050)
         assertTrue(c.page.ai!!.notes.isEmpty())
         assertEquals("la tinta queda", ink, c.page.strokes)
+    }
+
+    @Test fun `la lectura del modelo se pasa a la forma del motor`() {
+        assertEquals("2*x-3=7", AiNotes.normalizeReading("2·x − 3 = 7"))
+        assertEquals("x^2/4=1", AiNotes.normalizeReading("x² ÷ 4 = 1"))
+        assertEquals(null, AiNotes.normalizeReading("   "))
     }
 }

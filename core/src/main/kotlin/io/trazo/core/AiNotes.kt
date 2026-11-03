@@ -1,8 +1,16 @@
 package io.trazo.core
 
+import io.trazo.core.math.ExactValue
 import io.trazo.core.math.LineResult
+import io.trazo.core.math.MathParser
+import io.trazo.core.math.Poly
+import io.trazo.core.math.Polynomials
+import io.trazo.core.math.Root
+import io.trazo.core.math.Statement
 import io.trazo.core.math.VariableGraph
 import io.trazo.core.math.hasLetters
+import io.trazo.core.math.sameAs
+import io.trazo.core.math.variables
 import kotlinx.serialization.Serializable
 import kotlin.math.max
 import kotlin.math.min
@@ -28,6 +36,8 @@ data class AiNote(
     val disputed: Boolean = false,
     /** La agregó el motor (la IA no la vio): una igualdad sin letras que no se cumple. */
     val fromEngine: Boolean = false,
+    /** La IA la marcó y el motor llegó a lo mismo por su cuenta: el error está comprobado. */
+    val confirmed: Boolean = false,
     val reviewId: String = "",
     /** Huella del contenido de [strokeIds] al marcar (QA53); vacía en hojas viejas. */
     val fingerprint: String = "",
@@ -155,18 +165,54 @@ object AiNotes {
     /** Qué dice el motor de una igualdad del renglón. */
     enum class Verdict { HOLDS, FAILS, UNKNOWN }
 
-    /** Resultado del motor por renglón y, si no se cumple, los dos lados como los calcula Trazo. */
-    data class EngineCheck(val verdict: Verdict, val left: String = "", val right: String = "")
+    /**
+     * Resultado del motor por renglón. [verdict]: el renglón solo; si no se cumple, los dos lados como los
+     * calcula Trazo. [step]: el renglón como paso de la resolución que viene del anterior; [stepDetail]
+     * explica qué cambió si el paso está mal.
+     */
+    data class EngineCheck(
+        val verdict: Verdict,
+        val left: String = "",
+        val right: String = "",
+        val step: Verdict = Verdict.UNKNOWN,
+        val stepDetail: String = "",
+    ) {
+        /** El motor da el renglón por bueno, solo o como paso. */
+        val holds: Boolean get() = verdict == Verdict.HOLDS || step == Verdict.HOLDS
+        /** El motor encontró un error en el renglón, solo o como paso. */
+        val fails: Boolean get() = verdict == Verdict.FAILS || step == Verdict.FAILS
+    }
 
     /**
-     * La doble verificación (15): Trazo evalúa cada renglón con un «=» en el medio, solo (sin despejar
-     * con los demás, que podría dar por buena una cuenta con su propio error). Una identidad (`2x + 3x = 5x`)
-     * es [Verdict.HOLDS]; una igualdad sin letras que no se cumple, [Verdict.FAILS].
+     * La doble verificación (15), por renglón y por paso.
+     *
+     * - Solo: cada renglón con un «=» en el medio se evalúa aislado (sin despejar con los demás, que podría
+     *   dar por buena una cuenta con su propio error). Una identidad (`2x + 3x = 5x`) es [Verdict.HOLDS]; una
+     *   igualdad sin letras que no se cumple, [Verdict.FAILS].
+     * - Paso: una ecuación en una sola letra se compara con la del renglón anterior (la misma letra): el paso
+     *   está bien si las dos tienen las mismas soluciones (`2x + 3 = 7` → `2x = 4`) y mal si cambian
+     *   (`2x = 4` → `x = 3`). Un renglón que empieza con «=» sigue la cuenta del anterior: su lado derecho
+     *   tiene que valer lo mismo que el último lado de aquel (`2x + 3x` → `= 5x`).
      */
-    fun check(lines: List<ReviewLine>): List<EngineCheck> = lines.map { l ->
-        val text = l.text
-        if (text == "?" || '=' !in text || text.trimEnd().endsWith("=")) return@map EngineCheck(Verdict.UNKNOWN)
-        when (val r = runCatching { VariableGraph.evaluate(listOf(text), symbolic = true).first() }.getOrNull()) {
+    fun check(lines: List<ReviewLine>): List<EngineCheck> {
+        val alone = lines.map { checkAlone(it.text) }
+        val height = lines.map { it.bounds.height }.sorted().let { it.getOrNull(it.size / 2) } ?: 0f
+        return alone.mapIndexed { i, c ->
+            val before = lines.getOrNull(i - 1) ?: return@mapIndexed c
+            // Un renglón muy separado del anterior es otro ejercicio.
+            if (height > 0f && lines[i].bounds.top - before.bounds.bottom > STEP_GAP * height) return@mapIndexed c
+            val prev = before.text
+            val (step, detail) = runCatching { checkStep(prev, lines[i].text) }.getOrNull() ?: return@mapIndexed c
+            c.copy(step = step, stepDetail = detail)
+        }
+    }
+
+    /** Hueco máximo, en altos de renglón, entre dos pasos de una misma resolución. */
+    private const val STEP_GAP = 2.5f
+
+    private fun checkAlone(text: String): EngineCheck {
+        if (text == "?" || '=' !in text || text.trimEnd().endsWith("=") || text.trimStart().startsWith("=")) return EngineCheck(Verdict.UNKNOWN)
+        return when (val r = runCatching { VariableGraph.evaluate(listOf(text), symbolic = true).first() }.getOrNull()) {
             is LineResult.Check -> when {
                 r.holds -> EngineCheck(Verdict.HOLDS)
                 text.none { it.isLetter() && it != 'π' } && !r.left.hasLetters() && !r.right.hasLetters() ->
@@ -177,29 +223,116 @@ object AiNotes {
         }
     }
 
+    /** El paso de [prev] a [cur]; null si el motor no puede decir nada. */
+    private fun checkStep(prev: String, cur: String): Pair<Verdict, String>? {
+        if (prev == "?" || cur == "?" || prev.trimEnd().endsWith("=")) return null
+        val c = cur.trim()
+        if (c.startsWith("=")) {
+            // Sigue la cuenta: «2x + 3x» / «= 5x», o «a = b» / «= c».
+            val last = prev.split('=').last().trim().ifEmpty { return null }
+            val rest = c.removePrefix("=").trim().split('=').first().trim().ifEmpty { return null }
+            val d = VariableGraph.evaluate(listOf("($last)-($rest)"), symbolic = true).first() as? LineResult.Value ?: return null
+            return if (d.value.sameAs(ExactValue.ZERO)) Verdict.HOLDS to ""
+            else Verdict.FAILS to "«$rest» no es igual a «$last»: la diferencia es ${d.value.display()}."
+        }
+        // Después de una respuesta («x = 3») empieza otro ejercicio: no se compara con ella.
+        if (answer(prev)) return null
+        val a = equation(prev) ?: return null
+        val b = equation(cur) ?: return null
+        if (a.first != b.first) return null
+        val ra = solutions(a.second) ?: return null
+        val rb = solutions(b.second) ?: return null
+        if (ra == rb) return Verdict.HOLDS to ""
+        val x = a.first
+        return Verdict.FAILS to "Del renglón anterior sale ${shown(x, ra)}; de este, ${shown(x, rb)}."
+    }
+
+    /** «x = 3»: una letra igualada a un número, la respuesta de un ejercicio. */
+    private fun answer(text: String): Boolean =
+        (runCatching { MathParser.parseStatement(text) }.getOrNull() as? Statement.Assign)?.expr?.variables()?.isEmpty() == true
+
+    /** La letra y el polinomio (izquierda − derecha) de una ecuación en una sola letra; null si no lo es. */
+    private fun equation(text: String): Pair<String, Poly>? {
+        val vars = when (val st = runCatching { MathParser.parseStatement(text) }.getOrNull()) {
+            is Statement.Check -> st.left.variables() + st.right.variables()
+            // «x = 3» se lee como asignación: también es la ecuación final de una resolución.
+            is Statement.Assign -> st.expr.variables() + st.name
+            else -> return null
+        }
+        val letter = vars.filter { it != "π" }.toSet().singleOrNull() ?: return null
+        val parts = text.split('=')
+        if (parts.size != 2) return null
+        val diff = VariableGraph.evaluate(listOf("(${parts[0]})-(${parts[1]})"), symbolic = true).first() as? LineResult.Value ?: return null
+        val poly = Poly.of(diff.value, letter) ?: return null
+        return letter to poly
+    }
+
+    /** Soluciones (reales y complejas) redondeadas para compararlas; null si el motor no puede resolverla. */
+    private fun solutions(p: Poly): Set<Pair<Long, Long>>? {
+        if (p.degree < 1) return null
+        val roots = Polynomials.roots(p, complex = true) ?: return null
+        return roots.map { r ->
+            val (re, im) = when (r) {
+                is Root.Exact -> {
+                    val s = r.b.toDouble() * kotlin.math.sqrt(r.m.toDouble())
+                    if (r.imaginary) r.a.toDouble() to s else r.a.toDouble() + s to 0.0
+                }
+                is Root.Approx -> r.re to r.im
+            }
+            Math.round(re * 1e6) to Math.round(im * 1e6)
+        }.toSet()
+    }
+
+    private fun shown(x: String, roots: Set<Pair<Long, Long>>): String = when {
+        roots.isEmpty() -> "que no tiene solución"
+        else -> roots.sortedWith(compareBy({ it.first }, { it.second })).joinToString(" o ") { (re, im) ->
+            fun num(v: Long) = java.math.BigDecimal(v).movePointLeft(6).stripTrailingZeros().toPlainString().replace('.', ',')
+            "$x = " + if (im == 0L) num(re) else "${num(re)} ${if (im < 0) "−" else "+"} ${num(kotlin.math.abs(im))}i"
+        }
+    }
+
     /**
-     * Cruza las marcas de la IA con el motor: una marca de cuenta en un renglón que el motor da por bueno
-     * queda «dudosa», y un renglón que el motor da por malo sin marca de la IA recibe una marca del motor.
+     * Cruza las marcas de la IA con el motor:
+     * - una marca de cuenta en un renglón que el motor da por bueno (solo o como paso) queda «dudosa»;
+     * - una marca en un renglón donde el motor también encontró el error queda «comprobada»;
+     * - un renglón que el motor da por malo sin marca de la IA recibe una marca del motor.
      */
     fun crossCheck(notes: List<AiNote>, lines: List<ReviewLine>, ids: IdGenerator, reviewId: String): List<AiNote> {
         val checks = check(lines)
         val marked = notes.map { it.line }.toSet()
         val out = notes.map { n ->
-            val c = checks.getOrNull(n.line - 1)
-            if (n.kind == "CALCULATION" && c?.verdict == Verdict.HOLDS) n.copy(disputed = true) else n
+            val c = checks.getOrNull(n.line - 1) ?: return@map n
+            when {
+                c.fails -> n.copy(confirmed = true, disputed = false)
+                n.kind == "CALCULATION" && c.holds -> n.copy(disputed = true)
+                else -> n
+            }
         }
         val engine = lines.mapIndexedNotNull { i, l ->
             val c = checks[i]
-            if (c.verdict != Verdict.FAILS || l.number in marked) return@mapIndexedNotNull null
+            if (!c.fails || l.number in marked) return@mapIndexedNotNull null
+            val (short, detail) = if (c.verdict == Verdict.FAILS) {
+                "Trazo calcula otro resultado" to "Según el motor de Trazo, el lado izquierdo vale ${c.left} y el derecho ${c.right}."
+            } else {
+                "Este paso cambia la cuenta" to c.stepDetail
+            }
             AiNote(
-                id = ids.next(), line = l.number, kind = "CALCULATION",
-                short = "Trazo calcula otro resultado",
-                detail = "Según el motor de Trazo, el lado izquierdo vale ${c.left} y el derecho ${c.right}.",
+                id = ids.next(), line = l.number, kind = "CALCULATION", short = short, detail = detail,
                 bounds = l.bounds, strokeIds = l.strokeIds, fromEngine = true, reviewId = reviewId, fingerprint = l.fingerprint,
             )
         }
         return out + engine
     }
+
+    /** La revisión sale bien solo si el modelo la dio por buena y no queda ninguna marca firme (las dudosas no cuentan). */
+    fun correct(modelSaysCorrect: Boolean, notes: List<AiNote>): Boolean = notes.none { !it.disputed } && (modelSaysCorrect || notes.isNotEmpty())
+
+    /** Pasa la lectura del modelo («2·x − 3 = 7») a la forma que entiende el motor («2*x-3=7»). */
+    fun normalizeReading(text: String): String? = text
+        .replace('·', '*').replace('×', '*').replace('−', '-').replace('÷', '/').replace(':', '/')
+        .replace("²", "^2").replace("³", "^3")
+        .filterNot { it.isWhitespace() }
+        .takeIf { it.isNotEmpty() && it.length <= 200 }
 
     /** Una marca como la devuelve el modelo, antes de ubicarla en la hoja. */
     data class Mark(val line: Int, val kind: String, val short: String, val detail: String = "", val fix: String = "")
@@ -264,6 +397,7 @@ object AiNotes {
     private fun prefix(n: AiNote) = when {
         n.fromEngine -> "Trazo: "
         n.disputed -> "¿? "
+        n.confirmed -> "✓ "
         else -> ""
     }
 

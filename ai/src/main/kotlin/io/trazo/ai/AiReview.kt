@@ -48,6 +48,11 @@ data class AiReview(
     val marks: List<AiMark>,
     val fromFreeText: Boolean = false,
     val usage: AiTokenUsage? = null,
+    /**
+     * Cómo leyó el modelo cada renglón (número → expresión en texto plano, `2x+3=7`). Trazo la usa solo para
+     * verificar con su motor los renglones que no reconoció; nunca vuelve al modelo.
+     */
+    val readings: Map<Int, String> = emptyMap(),
 )
 
 /** Arma el pedido de revisión con las etiquetas originales de cada renglón y el rigor elegido. */
@@ -60,7 +65,15 @@ object AiReviewPrompt {
         appendLine("Revise la escritura directamente en la imagen y use estas etiquetas y posiciones solo como evidencia auxiliar. Si una etiqueta falta, está marcada «?», o no se entiende, identifíquela en la imagen si es posible; no la invente ni la complete a partir de una interpretación del motor.")
         appendLine()
         lines.forEachIndexed { i, l -> appendLine("${i + 1}: ${l.ifBlank { "?" }}") }
+        appendLine()
+        append(READING_REQUEST)
     }
+
+    /** Se pide en todos los perfiles (también los guardados con instrucciones viejas). */
+    const val READING_REQUEST: String =
+        "Agregue al JSON el campo «lectura»: lo que usted lee en cada renglón, en texto plano de una línea " +
+            "(por ejemplo [{\"renglon\": 1, \"texto\": \"2x+3=7\"}]). Use * para multiplicar, / para dividir y ^ para potencias; " +
+            "copie lo escrito tal como está, con sus errores, sin corregirlo ni completarlo. Si un renglón no se lee, omítalo."
 
     fun repairText(broken: String): String =
         "Su respuesta anterior no es JSON válido. Reformatee únicamente esa respuesta para que cumpla la forma JSON pedida. " +
@@ -127,8 +140,27 @@ object AiReviewParser {
             else -> (rawCorrect as? JsonPrimitive)?.booleanOrNull ?: false
         }
         val score = root.field("puntaje", "score", "nota").number()?.coerceIn(0.0, 10.0)
-        return AiReview(correct && marks.isEmpty() && dropped == 0, score, marks)
+        return AiReview(correct && marks.isEmpty() && dropped == 0, score, marks, readings = readings(root))
     }
+
+    /** El campo «lectura»: lista de {renglon, texto} (o de textos, en orden); se ignora lo que no se entienda. */
+    fun readings(root: JsonObject): Map<Int, String> {
+        val raw = root.field("lectura", "lecturas", "reading", "readings") as? JsonArray ?: return emptyMap()
+        val out = linkedMapOf<Int, String>()
+        raw.forEachIndexed { i, e ->
+            val (line, text) = when (e) {
+                is JsonObject -> (e.field("renglon", "renglón", "linea", "línea", "line").number()?.toInt() ?: return@forEachIndexed) to
+                    e.field("texto", "text", "lectura", "expresion", "expresión").string()
+                is JsonPrimitive -> (i + 1) to e.contentOrNull
+                else -> return@forEachIndexed
+            }
+            val t = text?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_READING && '\n' !in it } ?: return@forEachIndexed
+            if (line >= 1) out.putIfAbsent(line, t)
+        }
+        return out
+    }
+
+    private const val MAX_READING = 200
 
     /** Una marca del JSON (acepta los nombres en español y en inglés); null si no dice el renglón. */
     fun markOf(o: JsonObject): AiMark? {

@@ -85,6 +85,17 @@ class AiReviewParserTest {
         assertTrue(text.contains("identifíquela en la imagen"))
     }
 
+    @Test fun modelReadingPerLineIsRequestedAndParsed() {
+        assertTrue(AiReviewPrompt.userText(listOf("x"), Rigor.NORMAL).contains("lectura"))
+        val r = AiReviewParser.parseJson(
+            """{"correcto": false, "marcas": [], "lectura": [{"renglon": 1, "texto": "2x+3=7"}, {"renglon": 2, "texto": " "}, {"renglon": 3, "texto": "x=2"}]}"""
+        )!!
+        assertEquals(mapOf(1 to "2x+3=7", 3 to "x=2"), r.readings)
+        val plain = AiReviewParser.parseJson("""{"correcto": true, "lectura": ["a=1", "b=2"]}""")!!
+        assertEquals(mapOf(1 to "a=1", 2 to "b=2"), plain.readings)
+        assertTrue(AiReviewParser.parseJson("""{"correcto": true}""")!!.readings.isEmpty())
+    }
+
     @Test fun rawLinePayloadIsPassedThroughWithoutCallingItAnInterpretation() {
         val raw = """{"labels":[{"text":"x","box":[12,4,28,19]},{"text":"?","box":[31,4,42,19]}]}"""
         val text = AiReviewPrompt.userText(listOf(raw), Rigor.NORMAL)

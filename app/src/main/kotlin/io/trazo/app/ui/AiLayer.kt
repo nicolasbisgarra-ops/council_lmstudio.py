@@ -168,7 +168,8 @@ fun AiNoteBubble(vm: EditorViewModel, note: AiNote) {
             Text(note.short, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp, end = 8.dp))
             when {
                 note.fromEngine -> NoteHint("La marcó el motor de Trazo, no el modelo.")
-                note.disputed -> NoteHint("Dudosa: según el motor de Trazo esta cuenta está bien.")
+                note.disputed -> NoteHint("Dudosa: según el motor de Trazo esta cuenta (o este paso) está bien.")
+                note.confirmed -> NoteHint("Comprobada: el motor de Trazo llegó al mismo error.")
             }
             if (more && note.detail.isNotBlank()) Text(note.detail, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp, end = 8.dp))
             if (fix && note.fix.isNotBlank()) {
