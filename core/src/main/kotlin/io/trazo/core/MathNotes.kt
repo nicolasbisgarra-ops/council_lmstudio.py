@@ -785,6 +785,7 @@ object MathNotes {
             Piece.Sep -> " ; "
             Piece.Eq -> " = "
             is Piece.Root -> "√" + plain(p.inner)
+            is Piece.Matrix -> p.rows.joinToString("; ", "[", "]") { r -> r.joinToString(" ") { plain(it) } }
         }
     }
 
@@ -1041,10 +1042,14 @@ object MathNotes {
         data object Eq : Piece
         /** Raíz cuadrada sobre [inner]. */
         data class Root(val inner: List<Piece>) : Piece
+        /** Matriz: filas de celdas, dibujada como grilla entre corchetes. */
+        data class Matrix(val rows: List<List<List<Piece>>>) : Piece
     }
 
     private fun pieces(v: MathValue): List<Piece>? = when (v) {
-        is TupleValue -> {
+        is TupleValue -> io.trazo.core.math.Calculus.rows(v)?.let { rows ->
+            listOf(Piece.Matrix(rows.map { r -> r.map { pieces(it) ?: return null } }))
+        } ?: run {
             val out = mutableListOf<Piece>(Piece.Open)
             for ((i, item) in v.items.withIndex()) {
                 if (i > 0) out += Piece.Sep
@@ -1205,6 +1210,7 @@ object MathNotes {
                     Piece.Sep -> comma(x, cy, h, style)
                     Piece.Eq -> pattern(EQUALS)?.let { glyph(it, x + h * 0.2f, cy, h, style, ids.next()) }?.strokes
                     is Piece.Root -> root(p, x, cy, h, style, row)
+                    is Piece.Matrix -> matrix(p, x, cy, h, style, row)
                 } ?: return null
                 if (part.isEmpty()) return null
                 out += part
@@ -1229,6 +1235,33 @@ object MathNotes {
                 InkPoint(x + h * 0.42f, top), InkPoint(b.right + h * 0.08f, top),
             ), style.color, style.width, groupId = ids.next(), brush = style.brush)
             return inner + mark
+        }
+
+        /** Matriz: celdas centradas en columnas, filas apiladas alrededor de [cy] y corchetes del alto de todo. */
+        private fun matrix(m: Piece.Matrix, x: Float, cy: Float, h: Float, style: InkStyle, row: List<Glyph>): List<InkStroke>? {
+            val size = h * 0.8f
+            val pitch = size * 1.5f
+            val first = cy - pitch * (m.rows.size - 1) / 2f
+            val cells = m.rows.mapIndexed { i, r -> r.map { draw(it, 0f, first + i * pitch, size, style, row)?.takeIf { s -> s.isNotEmpty() } ?: return null } }
+            val columns = m.rows[0].size
+            val widths = (0 until columns).map { j -> cells.maxOf { it[j].bounds().width } }
+            val arm = h * 0.18f
+            val out = mutableListOf<InkStroke>()
+            var left = x + arm + h * 0.2f
+            for (j in 0 until columns) {
+                for (r in cells) {
+                    val dx = left + widths[j] / 2f - r[j].bounds().centerX
+                    out += r[j].map { it.transformed(Affine.translate(dx, 0f), scaleWidth = false) }
+                }
+                left += widths[j] + h * 0.55f
+            }
+            val right = left - h * 0.55f + h * 0.2f + arm
+            val top = minOf(out.bounds().top, first - size / 2f) - h * 0.15f
+            val bottom = maxOf(out.bounds().bottom, first + (m.rows.size - 1) * pitch + size / 2f) + h * 0.15f
+            fun bracket(spine: Float, tip: Float) = InkStroke(ids.next(), listOf(
+                InkPoint(tip, top), InkPoint(spine, top), InkPoint(spine, bottom), InkPoint(tip, bottom),
+            ), style.color, style.width, groupId = ids.next(), brush = style.brush)
+            return listOf(bracket(x, x + arm)) + out + bracket(right, right - arm)
         }
 
         /** Una «i» de imaginario cuando el usuario no tiene patrón para la i: palito y punto. */
