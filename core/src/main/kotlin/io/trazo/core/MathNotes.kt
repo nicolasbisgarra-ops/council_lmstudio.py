@@ -299,7 +299,21 @@ object MathNotes {
 
     /** Valores de cada renglón, en el orden de [lines]; null donde no hay un resultado para mostrar. */
     private fun values(lines: List<Line>): List<MathValue?> =
-        evaluate(lines.map { it.text }).mapIndexed { i, r -> shownValue(lines[i].text, r) }
+        evaluate(lines.map { it.text }).mapIndexed { i, r -> shownValue(lines[i].text, r)?.let { asWritten(lines[i].text, it) } }
+
+    /**
+     * Una cuenta escrita con decimales («1,5 + 1 =») responde con decimales (2,5), como una calculadora; si el
+     * resultado no termina (1/3) queda la fracción exacta. Sin decimales escritos, la fracción (5/2) se mantiene.
+     */
+    internal fun asWritten(text: String, value: MathValue): MathValue {
+        if (!DECIMAL_WRITTEN.containsMatchIn(text) || value !is ExactValue) return value
+        val r = value.rational?.takeIf { !it.isInteger } ?: return value
+        var d = r.den.abs()
+        for (f in listOf(2, 5).map { java.math.BigInteger.valueOf(it.toLong()) }) while (d.mod(f).signum() == 0) d /= f
+        return if (d == java.math.BigInteger.ONE) ApproxValue(r.toDouble()) else value
+    }
+
+    private val DECIMAL_WRITTEN = Regex("\\d[.,]\\d")
 
     /** El valor para escribir después del «=»; null si no hay, o si con letras no se pudo simplificar nada. */
     private fun shownValue(text: String, r: LineResult): MathValue? =
@@ -1272,10 +1286,10 @@ object MathNotes {
             return out
         }
 
-        /** La coma del usuario si tiene un patrón «Coma»; si no, un trazo corto. */
+        /** La coma del usuario si tiene un patrón «Coma»; si no, la de la biblioteca. */
         private fun comma(x: Float, cy: Float, h: Float, style: InkStyle): List<InkStroke> {
             val top = cy + h * 0.38f
-            user["Coma"]?.takeIf { it.outputInk.isNotEmpty() }?.let { p ->
+            (user["Coma"]?.takeIf { it.outputInk.isNotEmpty() } ?: presets["Coma"])?.let { p ->
                 val src = p.outputInk.bounds()
                 val ch = h * 0.3f
                 val w = if (src.height > 0.5f) ch * src.width / src.height else ch * 0.4f

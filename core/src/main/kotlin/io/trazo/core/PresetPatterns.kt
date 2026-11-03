@@ -23,8 +23,8 @@ import kotlin.math.sin
  * usuario manda y así nunca compiten.
  */
 object PresetPatterns {
-    /** Versión: 5 = gestos divididos para formas v4; los ids nuevos conservan since=4. */
-    const val VERSION = 5
+    /** Versión: 5 = gestos divididos para formas v4; 6 = letras latinas (a–z, A–Z) y coma. */
+    const val VERSION = 6
     const val PREFIX = "preset-"
 
     /** Línea de escritura de las salidas de la biblioteca: los números van de y = 0 a 100 y las colas bajan de ahí. */
@@ -88,7 +88,10 @@ object PresetPatterns {
 
     /** Patrón activo que no es un signo y se llama igual que [p] (sin distinguir mayúsculas); null si no hay. */
     fun sameNameAs(p: InkPattern, active: List<InkPattern>): InkPattern? =
-        active.firstOrNull { it.id != p.id && !isSign(it) && it.name.trim().equals(p.name.trim(), ignoreCase = true) }
+        active.firstOrNull { it.id != p.id && !isSign(it) && sameName(it.name.trim(), p.name.trim()) }
+
+    /** Sin distinguir mayúsculas, salvo en una letra suelta: la «A» y la «a» son signos distintos. */
+    private fun sameName(a: String, b: String) = if (a.length == 1 || b.length == 1) a == b else a.equals(b, ignoreCase = true)
 
     /**
      * [p] sin los ejemplos que se confunden con algún patrón de [active]; desactivado (con sus ejemplos
@@ -131,12 +134,14 @@ object PresetPatterns {
         bundle.filterNot { it.id in coreIds }
     }
 
-    private val signsCache: List<InkPattern> by lazy { Glyphs.parse(Glyphs.SOURCES) }
+    private val firstSigns: List<InkPattern> by lazy { Glyphs.parse(Glyphs.SOURCES) }
+    private val letterSigns: List<InkPattern> by lazy { Glyphs.parse(Glyphs.LETTER_SOURCES) }
+    private val signsCache: List<InkPattern> by lazy { firstSigns + letterSigns }
 
     private val entries: List<Entry> by lazy {
         // Los patrones del usuario solo se instalan en una biblioteca nueva: si ya los tiene (o los borró) no vuelven.
-        coreWithUserExamples.map { Entry(it, 1) } + bundledUser.map { Entry(it, 1) } + signsCache.map { Entry(it, 2) } +
-            GeoPatterns.all().map { Entry(it, if (it.id in GeoPatterns.V4_IDS) 4 else 3) }
+        coreWithUserExamples.map { Entry(it, 1) } + bundledUser.map { Entry(it, 1) } + firstSigns.map { Entry(it, 2) } +
+            GeoPatterns.all().map { Entry(it, if (it.id in GeoPatterns.V4_IDS) 4 else 3) } + letterSigns.map { Entry(it, 6) }
     }
 
     /**
@@ -327,6 +332,174 @@ object PresetPatterns {
         private fun round2(v: Float) = (v * 100f).roundToInt() / 100f
 
         val SOURCES: String get() = NUMBERS + OPERATORS + GROUPING + CALCULUS + GREEK + SETS + ARROWS
+
+        /** Letras latinas y coma (versión 6). Minúsculas primero: si una mayúscula tiene la misma forma, cede. */
+        val LETTER_SOURCES: String get() = LOWER + UPPER + PUNCTUATION
+
+        private const val PUNCTUATION = """
+@ coma | Coma | O | H | 1 | on
+o S 14,86 20,84 22,92 18,106 6,120
+"""
+
+        private const val LOWER = """
+@ letra-a | a | L | H | 1 | on
+o S 56,50 44,40 24,44 12,64 16,88 32,100 48,92 56,70* + L 56,40 56,90 + S 56,90 60,100 68,98
+
+@ letra-b | b | L | H | 1 | on
+o S 14,0 14,100* 16,70 30,46 46,40 60,52 62,76 50,96 30,100 14,92
+
+@ letra-c | c | L | H | 1 | on
+o S 58,48 44,40 26,44 12,64 14,88 30,100 46,98 60,88
+
+@ letra-d | d | L | H | 1 | on
+o S 56,58 44,42 26,44 12,64 16,90 32,100 48,92 56,70* + L 56,0 56,100
+
+@ letra-e | e | L | H | 1 | on
+o S 14,72 58,70 56,52 42,40 24,44 12,66 16,90 34,100 52,96 60,88
+
+@ letra-f | f | L | H | 1 | on
+o S 56,6 44,0 32,4 28,22 28,100 / L 10,44 50,44
+
+@ letra-g | g | L | H | 1 | on
+o S 56,56 44,40 24,44 12,62 18,82 34,86 50,78 56,60* + L 56,40 56,118 + S 56,118 46,134 26,136 10,124
+
+@ letra-h | h | L | H | 1 | on
+o S 14,0 14,100* 16,70 30,46 46,40 58,52 60,100
+
+@ letra-i | i | L | H | 1 | on
+o S 30,44 30,90 34,100 44,98 / D 30,22
+
+@ letra-j | j | L | H | 1 | on
+o S 40,44 40,112 34,130 20,136 6,124 / D 40,22
+
+@ letra-k | k | L | H | 1 | on
+o L 14,0 14,100 / L 50,40 16,74 52,100
+
+@ letra-l | l | L | H | 1 | on
+o S 12,74 30,52 42,26 40,6 30,2 22,16 20,56 24,90 36,100 50,94
+
+@ letra-m | m | L | H | 1 | on
+o S 8,40 8,100* 10,60 22,42 34,46 36,100* 38,60 50,42 62,46 64,100
+
+@ letra-n | n | L | H | 1 | on
+o S 10,40 10,100* 12,62 26,42 42,40 54,52 56,100
+
+@ letra-o | o | L | H | 1 | on
+o O 34,70,24,30,270,-90
+
+@ letra-p | p | L | H | 1 | on
+o S 12,40 12,135* 12,60 26,42 44,40 58,54 58,80 44,98 26,100 12,88
+
+@ letra-q | q | L | H | 1 | on
+o S 56,56 44,40 24,44 12,62 16,88 32,100 48,92 56,70* + L 56,40 56,135 66,124
+
+@ letra-r | r | L | H | 1 | on
+o S 12,40 12,100* 14,64 26,46 40,40 54,44
+
+@ letra-s | s | L | H | 1 | on
+o S 54,46 40,40 22,42 16,56 30,68 48,76 54,90 40,100 20,100 8,92
+
+@ letra-t | t | L | H | 1 | on
+o S 26,8 24,84 30,98 42,100 52,94 / L 8,40 48,40
+
+@ letra-u | u | L | H | 1 | on
+o S 10,40 10,82 20,98 36,100 50,90 56,70* + L 56,40 56,100
+
+@ letra-v | v | L | H | 1 | on
+o L 8,40 32,100 56,40
+
+@ letra-w | w | L | H | 1 | on
+o L 4,40 18,100 34,56 50,100 64,40
+
+@ letra-x | x | L | H | 1 | on
+o L 10,40 56,100 / L 56,40 10,100
+
+@ letra-y | y | L | H | 1 | on
+o S 10,40 12,78 24,96 40,96 54,80* + S 56,40 56,118 46,134 26,136 10,124
+
+@ letra-z | z | L | H | 1 | on
+o L 10,42 56,42 10,100 58,100
+"""
+
+        private const val UPPER = """
+@ letra-mayus-a | A | L | H | 1 | on
+o L 6,100 32,0 58,100 / L 16,62 48,62
+
+@ letra-mayus-b | B | L | H | 1 | on
+o L 12,0 12,100 / S 12,0 38,0 52,10 52,28 38,46 12,48* 42,50 58,62 58,84 42,100 12,100
+
+@ letra-mayus-c | C | L | H | 1 | on
+o S 64,14 50,2 30,2 12,20 6,50 12,80 30,98 50,98 64,86
+
+@ letra-mayus-d | D | L | H | 1 | on
+o S 12,100 12,0* 36,2 56,18 62,50 56,82 36,98 12,100
+
+@ letra-mayus-e | E | L | H | 1 | on
+o L 56,0 12,0 12,100 56,100 / L 12,50 46,50
+
+@ letra-mayus-f | F | L | H | 1 | on
+o L 56,0 12,0 12,100 / L 12,48 46,48
+
+@ letra-mayus-g | G | L | H | 1 | on
+o S 62,14 48,2 28,2 10,20 6,50 12,82 30,98 50,98 62,84 62,56* 40,56
+
+@ letra-mayus-h | H | L | H | 1 | on
+o L 10,0 10,100 / L 56,0 56,100 / L 10,50 56,50
+
+@ letra-mayus-i | I | L | H | 1 | on
+o L 30,0 30,100 / L 12,0 48,0 / L 12,100 48,100
+
+@ letra-mayus-j | J | L | H | 1 | on
+o S 52,0 52,74 44,94 26,100 8,86
+
+@ letra-mayus-k | K | L | H | 1 | on
+o L 12,0 12,100 / L 56,0 14,56 58,100
+
+@ letra-mayus-l | L | L | H | 1 | on
+o L 12,0 12,100 56,100
+
+@ letra-mayus-m | M | L | H | 1 | on
+o L 6,100 10,0 34,64 58,0 62,100
+
+@ letra-mayus-n | N | L | H | 1 | on
+o L 10,100 10,0 56,100 56,0
+
+@ letra-mayus-o | O | L | H | 1 | on
+o O 34,50,28,50,270,-90
+
+@ letra-mayus-p | P | L | H | 1 | on
+o L 12,0 12,100 / S 12,0 38,0 54,10 56,28 42,46 12,50
+
+@ letra-mayus-q | Q | L | H | 1 | on
+o O 34,50,28,50,270,-90 / L 38,72 62,104
+
+@ letra-mayus-r | R | L | H | 1 | on
+o L 12,0 12,100 / S 12,0 38,0 54,10 56,28 42,46 12,50* 58,100
+
+@ letra-mayus-s | S | L | H | 1 | on
+o S 60,14 46,2 26,2 10,14 12,34 32,48 52,58 60,78 48,96 26,100 6,88
+
+@ letra-mayus-t | T | L | H | 1 | on
+o L 4,0 62,0 / L 33,0 33,100
+
+@ letra-mayus-u | U | L | H | 1 | on
+o S 8,0 8,70 18,92 34,100 50,92 60,70 60,0
+
+@ letra-mayus-v | V | L | H | 1 | on
+o L 4,0 32,100 60,0
+
+@ letra-mayus-w | W | L | H | 1 | on
+o L 2,0 16,100 34,30 52,100 66,0
+
+@ letra-mayus-x | X | L | H | 1 | on
+o L 6,0 60,100 / L 60,0 6,100
+
+@ letra-mayus-y | Y | L | H | 1 | on
+o L 6,0 34,50 62,0 / L 34,50 34,100
+
+@ letra-mayus-z | Z | L | H | 1 | on
+o L 6,0 60,0 6,100 62,100
+"""
 
         private const val NUMBERS = """
 @ 0 | 0 | N | H | 1 | on

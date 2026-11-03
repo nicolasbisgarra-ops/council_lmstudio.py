@@ -76,7 +76,8 @@ class PresetPatternsTest {
         val existing = listOf(DefaultPatterns.integral(), mine, oldRoot)
         val lib = PresetPatterns.install(existing, 1)
         assertEquals(existing, lib.take(existing.size))
-        assertEquals(signs.map { it.id } + GeoPatterns.all().map { it.id }, lib.drop(existing.size).map { it.id })
+        val letters = signs.filter { it.category == PatternCategory.LETTERS || it.id == PresetPatterns.PREFIX + "coma" }
+        assertEquals((signs - letters.toSet()).map { it.id } + GeoPatterns.all().map { it.id } + letters.map { it.id }, lib.drop(existing.size).map { it.id })
         // La fracción que el usuario borró y sus patrones incluidos no vuelven en una actualización.
         assertTrue(lib.none { it.id == DefaultPatterns.FRACTION || it.id in bundled.map { b -> b.id } })
     }

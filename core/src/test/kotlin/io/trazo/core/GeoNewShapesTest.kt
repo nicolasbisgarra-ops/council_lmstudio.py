@@ -27,7 +27,7 @@ class GeoNewShapesTest {
 
     @Test fun `six v4 presets correspond to native geometric shapes`() {
         assertEquals(28, GeoPatterns.all().size)
-        assertEquals(5, PresetPatterns.VERSION)
+        assertTrue(PresetPatterns.VERSION >= 5)
         newKinds.forEach { (slug, kind) ->
             val pattern = geo(slug)
             assertEquals(kind, ParametricTemplates.recommendedKindFor(pattern.id))

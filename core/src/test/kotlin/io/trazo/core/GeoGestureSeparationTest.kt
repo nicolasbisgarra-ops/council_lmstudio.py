@@ -46,7 +46,7 @@ class GeoGestureSeparationTest {
     }
 
     @Test fun `old library v4 IDs are never reinstalled or silently overwritten`() {
-        assertEquals(5, PresetPatterns.VERSION)
+        assertTrue(PresetPatterns.VERSION >= 5)
         for (slug in targetSlugs) assertEquals(4, PresetPatterns.since(GeoPatterns.PREFIX + slug))
         val old = PresetPatterns.install(emptyList(), 0)
         val deletedId = GeoPatterns.PREFIX + "octagono"

@@ -132,7 +132,7 @@ object AutoAlign {
     fun isSign(p: InkPattern): Boolean {
         if (p.stretch != null) return false
         val key = p.id.removePrefix(PresetPatterns.PREFIX)
-        if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) return p.category == PatternCategory.OPERATORS && key !in TALL_OPERATORS
+        if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) return p.category == PatternCategory.OPERATORS && key !in TALL_OPERATORS && key !in BASELINE_MARKS
         return isSignName(p.name)
     }
 
@@ -144,6 +144,7 @@ object AutoAlign {
         if (p.stretch != null) return false
         val u = p.unknown?.trim()
         if (u != null) return u.isNotEmpty()
+        if (p.builtIn && p.id.removePrefix(PresetPatterns.PREFIX) in BASELINE_MARKS) return true
         if (p.category == PatternCategory.GREEK || p.category == PatternCategory.LETTERS) return true
         return letterOf(p) != null
     }
@@ -176,6 +177,9 @@ object AutoAlign {
 
     /** Operadores de la biblioteca con alto de letra: sí sirven de referencia. */
     private val TALL_OPERATORS = setOf("porcentaje", "factorial", "barra")
+
+    /** Signos que se apoyan en la línea como una letra (la coma cuelga de ella), no centrados como un «+». */
+    private val BASELINE_MARKS = setOf("coma")
 
     private val SIGN_NAMES = listOf(
         "Más", "Menos", "Por", "Multiplicación", "Dividido", "División", "Igual", "Más o menos", "Distinto",
