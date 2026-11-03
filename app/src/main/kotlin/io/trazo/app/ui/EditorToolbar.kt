@@ -196,9 +196,11 @@ fun EditorTopBar(
                             Row(Modifier.heightIn(min = if (tablet) 52.dp else 44.dp), verticalAlignment = Alignment.CenterVertically) { group() }
                         }
                     }
-                    if (tablet) Row(
+                    // En pantallas bajas (teléfono acostado) la barra no crece: la hoja necesita el alto.
+                    val wrap = !tablet && androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp >= 600
+                    if (!wrap) Row(
                         railModifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (tablet) 16.dp else 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) { rail() } else FlowRow(
                         railModifier,
