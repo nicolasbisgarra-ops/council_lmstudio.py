@@ -59,6 +59,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.trazo.app.data.BarDock
 import io.trazo.app.data.EraserMode
@@ -111,6 +112,8 @@ class EditorActions(
     val pagesOpen: Boolean = false,
     /** Abre el menú del Modo IA. */
     val onAi: () -> Unit = {},
+    val onPractice: () -> Unit = {},
+    val onExam: () -> Unit = {},
 )
 
 /**
@@ -136,14 +139,19 @@ fun EditorTopBar(
     val scheme = MaterialTheme.colorScheme
     Surface(color = scheme.surfaceContainer, shadowElevation = 3.dp) {
         BoxWithConstraints(if (atTop) Modifier.statusBarsPadding() else Modifier.navigationBarsPadding()) {
-            val compact = maxWidth < 1100.dp
-            val nav: @Composable () -> Unit = { NavGroup(vm, title, actions, Modifier.widthIn(max = if (compact) 400.dp else 240.dp)) }
-            val history: @Composable () -> Unit = {
-                ToolButton(TrazoIcons.Undo, "Deshacer", onClick = vm::undo, enabled = vm.canUndo)
-                ToolButton(TrazoIcons.Redo, "Rehacer", onClick = vm::redo, enabled = vm.canRedo)
-                ToolButton(AiStarsIcon, "Modo IA", onClick = actions.onAi, tint = Color.Unspecified)
+            val layout = ToolbarPreferences.layoutForWidth(maxWidth.value, androidx.compose.ui.platform.LocalDensity.current.fontScale)
+            val compact = layout != ToolbarLayoutMode.WIDE_SINGLE_ROW
+            val tablet = layout == ToolbarLayoutMode.TABLET_COMPACT
+            val chromeButtonSize = ToolbarPreferences.chromeButtonSizeDp(layout).dp
+            val nav: @Composable () -> Unit = {
+                NavGroup(vm, title, actions, Modifier.widthIn(max = if (compact) 400.dp else 240.dp), chromeButtonSize)
             }
-            // Grupos de la barra: en el teléfono cada grupo baja de renglón entero, sin partirse.
+            val history: @Composable () -> Unit = {
+                ToolButton(TrazoIcons.Undo, "Deshacer", onClick = vm::undo, enabled = vm.canUndo, size = chromeButtonSize)
+                ToolButton(TrazoIcons.Redo, "Rehacer", onClick = vm::redo, enabled = vm.canRedo, size = chromeButtonSize)
+                ToolButton(AiStarsIcon, "Modo IA", onClick = actions.onAi, tint = Color.Unspecified, size = chromeButtonSize)
+            }
+            // Mantener los grupos completos deja el rail inferior desplazable sin cortar acciones.
             val drawGroup: @Composable () -> Unit = {
                 ToolsGroup(vm, settings, update, actions, panel) { panel = it }
                 ToolButton(
@@ -169,19 +177,27 @@ fun EditorTopBar(
             val groups = listOf(drawGroup, colorGroup, viewGroup)
             if (compact) {
                 Column {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = if (tablet) 56.dp else 52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         handle?.invoke()
                         Box(Modifier.weight(1f)) { nav() }
-                        history()
-                        EditorMenu(vm, actions)
+                        // En teléfono los tres controles de historial pasan al rail desplazable:
+                        // así las cuatro acciones de navegación no estrangulan el título.
+                        if (tablet) history()
+                        EditorMenu(vm, actions, chromeButtonSize)
                     }
-                    FlowRow(
-                        Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(start = 6.dp, end = 6.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (tablet) 16.dp else 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        if (!tablet) {
+                            Row(Modifier.heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) { history() }
+                        }
                         groups.forEach { group ->
-                            Row(Modifier.heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) { group() }
+                            Row(Modifier.heightIn(min = if (tablet) 52.dp else 44.dp), verticalAlignment = Alignment.CenterVertically) { group() }
                         }
                     }
                 }
@@ -201,7 +217,7 @@ fun EditorTopBar(
                             group()
                         }
                     }
-                    EditorMenu(vm, actions)
+                    EditorMenu(vm, actions, chromeButtonSize)
                 }
             }
         }
@@ -209,10 +225,10 @@ fun EditorTopBar(
 }
 
 @Composable
-private fun NavGroup(vm: EditorViewModel, title: String, actions: EditorActions, modifier: Modifier = Modifier) {
+private fun NavGroup(vm: EditorViewModel, title: String, actions: EditorActions, modifier: Modifier = Modifier, buttonSize: Dp = 40.dp) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "Volver", onClick = actions.onBack)
-        ToolButton(TrazoIcons.Pages, "Páginas", onClick = actions.onPages, selected = actions.pagesOpen)
+        ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "Volver", onClick = actions.onBack, size = buttonSize)
+        ToolButton(TrazoIcons.Pages, "Páginas", onClick = actions.onPages, selected = actions.pagesOpen, size = buttonSize)
         Column(
             Modifier
                 .weight(1f, fill = false)
@@ -229,12 +245,12 @@ private fun NavGroup(vm: EditorViewModel, title: String, actions: EditorActions,
         }
         ToolButton(
             Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Página anterior",
-            onClick = { vm.goToPage(vm.pageIndex - 1) }, enabled = vm.pageIndex > 0, size = 36.dp,
+            onClick = { vm.goToPage(vm.pageIndex - 1) }, enabled = vm.pageIndex > 0, size = buttonSize,
         )
         if (vm.pageIndex < vm.pageCount - 1) {
-            ToolButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Página siguiente", onClick = { vm.goToPage(vm.pageIndex + 1) }, size = 36.dp)
+            ToolButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Página siguiente", onClick = { vm.goToPage(vm.pageIndex + 1) }, size = buttonSize)
         } else {
-            ToolButton(Icons.Filled.Add, "Nueva página", onClick = vm::addPage, size = 36.dp)
+            ToolButton(Icons.Filled.Add, "Nueva página", onClick = vm::addPage, size = buttonSize)
         }
     }
 }
@@ -566,7 +582,7 @@ private fun Hint(text: String) {
 // ------------------------------------------------------------------ menú
 
 @Composable
-private fun EditorMenu(vm: EditorViewModel, actions: EditorActions) {
+private fun EditorMenu(vm: EditorViewModel, actions: EditorActions, buttonSize: Dp = 40.dp) {
     var open by remember { mutableStateOf(false) }
     fun item(text: String, icon: ImageVector?, enabled: Boolean = true, action: () -> Unit): @Composable () -> Unit = {
         DropdownMenuItem(
@@ -577,7 +593,7 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions) {
         )
     }
     Box {
-        ToolButton(Icons.Filled.MoreVert, "Más opciones", onClick = { open = true })
+        ToolButton(Icons.Filled.MoreVert, "Más opciones", onClick = { open = true }, size = buttonSize)
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, shape = RoundedCornerShape(16.dp)) {
             item("Nueva página", TrazoIcons.Pages, action = vm::addPage)()
             item("Duplicar página", TrazoIcons.Duplicate, action = vm::duplicatePage)()
@@ -594,6 +610,9 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions) {
             HorizontalDivider()
             item("Biblioteca de patrones", TrazoIcons.Patterns, action = actions.onPatterns)()
             item("Preferencias", Icons.Filled.Settings, action = actions.onSettings)()
+            HorizontalDivider()
+            item("Practicar errores frecuentes", null, action = actions.onPractice)()
+            item("Modo examen", null, action = actions.onExam)()
         }
     }
 }
@@ -762,19 +781,21 @@ fun CompactToolbar(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         shadowElevation = 8.dp,
-        modifier = modifier,
+        modifier = modifier.width((columns * 44 + 12).dp),
     ) {
-        Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             handle()
-            Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                colors.forEachIndexed { i, c ->
-                    ColorDot(
-                        c,
-                        selected = c == current,
-                        onClick = { actions.onQuickColor(c) },
-                        size = 24.dp,
-                        onLongClick = if (highlighter) null else ({ actions.onPickColor(ColorTarget.Quick(i)) }),
-                    )
+            colors.withIndex().chunked(columns).forEach { row ->
+                Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { (i, c) ->
+                        ColorDot(
+                            c,
+                            selected = c == current,
+                            onClick = { actions.onQuickColor(c) },
+                            size = 24.dp,
+                            onLongClick = if (highlighter) null else ({ actions.onPickColor(ColorTarget.Quick(i)) }),
+                        )
+                    }
                 }
             }
             items.chunked(columns).forEach { row ->

@@ -7,20 +7,20 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -54,6 +54,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -88,6 +89,8 @@ fun EditorScreen(
     onTeachNewPattern: (List<InkStroke>) -> Unit,
     /** Abre las preferencias directo en la página del Modo IA. */
     onAiSettings: () -> Unit = onSettings,
+    onPractice: () -> Unit = {},
+    onExam: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -95,6 +98,7 @@ fun EditorScreen(
     val store = app.trazo.settings
     val settings by store.settings.collectAsState()
     val patterns by app.trazo.repository.patterns.collectAsState()
+    val study by app.trazo.study.state.collectAsState()
     val enabledPatterns = remember(patterns) { patterns.filter { it.enabled } }
     val density = LocalDensity.current.density
     val snackbar = remember { SnackbarHostState() }
@@ -105,6 +109,7 @@ fun EditorScreen(
     var renaming by remember { mutableStateOf(false) }
     // Página por borrar (pide confirmación): la actual desde el menú o cualquiera desde el panel.
     var deletePageAt by remember { mutableStateOf<Int?>(null) }
+    // Each editor starts minimized; an explicit choice survives configuration restoration.
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
     var aiMenu by rememberSaveable { mutableStateOf(false) }
     // Exportar con marcas de la IA: se pregunta solo a quien usa el Modo IA. true = PDF, false = PNG.
@@ -170,6 +175,17 @@ fun EditorScreen(
         vm.teachOffer = null
     }
 
+    vm.pageLoadError?.let {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("No se pudo abrir la página", style = MaterialTheme.typography.titleLarge)
+                Text("La página guardada contiene datos que no se pueden leer.")
+                Text("Los datos originales se conservaron. Volvé a la lista para exportar una copia del cuaderno.")
+                TextButton(onClick = onBack) { Text("Volver a mis cuadernos") }
+            }
+        }
+        return
+    }
     val notebook = vm.notebook
     if (notebook == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -233,42 +249,52 @@ fun EditorScreen(
         }
     }
 
-    val actions = EditorActions(
-        onBack = { vm.saveNow(); onBack() },
-        onRename = { renaming = true },
-        onInsert = { showInsert = true },
-        onZoom = { f -> canvas.view?.zoomStep(f) },
-        onPickColor = { colorTarget = it },
-        onQuickColor = ::quickColor,
-        onClearPage = ::clearPage,
-        onDeletePage = { deletePageAt = vm.pageIndex },
-        onPages = { pagesOpen = !pagesOpen },
-        pagesOpen = pagesOpen,
-        onAi = { aiMenu = true },
-        onPdf = {
-            if (vm.usesAi) exportAsk = true else { exportAi = false; pdfLauncher.launch("${notebook.name}.pdf") }
-        },
-        onPng = {
-            if (vm.usesAi) exportAsk = false else { exportAi = false; pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") }
-        },
-        onPatterns = onPatterns,
-        onSettings = onSettings,
-    )
     val toolMover = rememberBarMover { d, f -> store.update { it.copy(toolbarDock = d, toolbarFree = f) } }
     val selectionMover = rememberBarMover { d, f -> store.update { it.copy(selectionDock = d, selectionFree = f) } }
     val dock = settings.toolbarDock
     val toolHandle: @Composable () -> Unit = { DragHandle(toolMover) }
-    val sideToolbar: @Composable () -> Unit = {
-        CompactToolbar(
-            vm, settings, store::update, actions, columns = 2, handle = toolHandle,
-            modifier = Modifier.fillMaxHeight().verticalScroll(rememberScrollState()),
+    BoxWithConstraints(Modifier.fillMaxSize().barContainer(toolMover)) {
+        val actions = EditorActions(
+            onBack = { vm.saveNow(); onBack() },
+            onRename = { renaming = true },
+            onInsert = { showInsert = true },
+            onZoom = { f -> canvas.view?.zoomStep(f) },
+            onPickColor = { colorTarget = it },
+            onQuickColor = ::quickColor,
+            onClearPage = ::clearPage,
+            onDeletePage = { deletePageAt = vm.pageIndex },
+            onPages = { pagesOpen = !pagesOpen },
+            pagesOpen = pagesOpen,
+            onAi = { aiMenu = true },
+            onPdf = {
+                if (vm.usesAi) exportAsk = true else { exportAi = false; pdfLauncher.launch("${notebook.name}.pdf") }
+            },
+            onPng = {
+                if (vm.usesAi) exportAsk = false else { exportAi = false; pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") }
+            },
+            onPatterns = onPatterns,
+            onSettings = onSettings,
+            onPractice = { vm.saveNow(); onPractice() },
+            onExam = { vm.saveNow(); onExam() },
         )
-    }
+        val sideToolbar: @Composable () -> Unit = {
+            CompactToolbar(
+                vm, settings, store::update, actions, columns = 2, handle = toolHandle,
+                modifier = Modifier.fillMaxHeight(),
+            )
+        }
 
-    Box(Modifier.fillMaxSize().barContainer(toolMover)) {
         Scaffold(
             topBar = {
-                if (dock == BarDock.TOP) EditorTopBar(vm, notebook.name, settings, store::update, actions, handle = toolHandle)
+                // An empty layout here would suppress Scaffold's status-bar inset in side/free mode.
+                if (dock == BarDock.TOP || study.examActive) {
+                    Column(if (study.examActive) Modifier.statusBarsPadding() else Modifier) {
+                        if (study.examActive) Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                            TextButton(onClick = onExam) { Text("Examen activo · Volver a las preguntas") }
+                        }
+                        if (dock == BarDock.TOP) EditorTopBar(vm, notebook.name, settings, store::update, actions, handle = toolHandle)
+                    }
+                }
             },
             bottomBar = {
                 if (dock == BarDock.BOTTOM) EditorTopBar(vm, notebook.name, settings, store::update, actions, handle = toolHandle, atTop = false)
@@ -279,10 +305,23 @@ fun EditorScreen(
             BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
                 // En tablet los patrones quedan en un panel lateral; en teléfono, en la hoja inferior.
                 val wide = maxWidth >= 840.dp
+                val budget = TabletLayoutPolicy.decide(TabletLayoutPolicy.Input(
+                    availableWidthDp = maxWidth.value.toInt(),
+                    fontScale = LocalDensity.current.fontScale,
+                    sideToolbarWidthDp = if (dock == BarDock.LEFT || dock == BarDock.RIGHT) ToolbarPreferences.SIDE_WIDTH_DP else 0,
+                    pagesRequested = true,
+                    pagesPanelWidthDp = if (pagesOpen) TabletLayoutPolicy.DEFAULT_PAGES_PANEL_DP else 40,
+                    patternRailRequested = wide,
+                    patternRailWidthDp = if (railOpen) 232 else 40,
+                ))
+                val previewOpen = pagesOpen
+                val fixedPages = budget.showFixedPages && previewOpen
                 Row(Modifier.fillMaxSize()) {
                     if (dock == BarDock.LEFT) sideToolbar()
-                    if (pagesOpen) {
-                        PagesPanel(vm, paper, onDelete = { deletePageAt = it }, onClose = { pagesOpen = false })
+                    if (fixedPages) {
+                        PagesPanel(vm, paper, onDelete = { deletePageAt = it }, onMinimize = { pagesOpen = false })
+                    } else if (!previewOpen && budget.tabletWindow) {
+                        PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true })
                     }
                     Box(Modifier.weight(1f).fillMaxHeight().barContainer(selectionMover).onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
                         AndroidView(
@@ -335,7 +374,7 @@ fun EditorScreen(
                                 v.paperColors = paper
                                 v.accentColor = accent
                             },
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().clipToBounds(),
                         )
                         vm.selectedShape?.let { shape ->
                             ShapeInspector(vm, shape, Modifier.align(Alignment.BottomCenter).padding(16.dp))
@@ -388,17 +427,28 @@ fun EditorScreen(
                             )
                         }
                     }
-                    if (wide && railOpen) {
+                    if (budget.showPatternRail && railOpen) {
                         PatternRail(
                             patterns = enabledPatterns,
                             onInsert = { vm.insertPattern(it, canvasSize.first, canvasSize.second) },
                             onLibrary = onPatterns,
                             onMinimize = { railOpen = false },
                         )
-                    } else if (wide) {
+                    } else if (budget.showPatternRail) {
                         PatternRailTab(onOpen = { railOpen = true })
                     }
                     if (dock == BarDock.RIGHT) sideToolbar()
+                }
+                if (!previewOpen && !budget.tabletWindow) {
+                    PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true },
+                        modifier = Modifier.align(Alignment.TopStart)
+                            .padding(start = if (dock == BarDock.LEFT) ToolbarPreferences.SIDE_WIDTH_DP.dp else 0.dp))
+                }
+                if (previewOpen && !fixedPages) {
+                    PagesPanel(vm, paper, onDelete = { deletePageAt = it },
+                        onMinimize = { pagesOpen = false },
+                        modifier = Modifier.align(Alignment.TopStart)
+                            .padding(start = if (dock == BarDock.LEFT) ToolbarPreferences.SIDE_WIDTH_DP.dp else 0.dp))
                 }
             }
         }
@@ -410,6 +460,7 @@ fun EditorScreen(
         }
         DockPreview(toolMover, showSquare = dock != BarDock.FREE)
     }
+
 
     // Los diálogos esperan a que se levante el lápiz para no interrumpir el trazo.
     vm.complexPrompt?.let { msg ->

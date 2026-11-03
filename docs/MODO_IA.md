@@ -22,7 +22,7 @@ Las 50 decisiones salen del cuestionario respondido por el usuario. El número e
 | Compatible con OpenAI (LM Studio, Ollama, OpenRouter) | Igual que OpenAI, con `max_tokens` | Opcional |
 | Gemini | `POST /models/{m}:generateContent`, `inline_data` | `x-goog-api-key` |
 | Gemini con cuenta de Google | Igual que Gemini | Inicio de sesión con Google (OAuth); cuota del proyecto en `x-goog-user-project` |
-| En la tableta | llama.cpp (GGUF con visión), MediaPipe LLM, Gemini Nano | — (etapa 3) |
+| En la tableta | llama.cpp (GGUF con visión y proyector), MediaPipe LLM solo texto con consentimiento | Sin clave; archivos de modelo separados |
 
 - **«Obtener modelos»** pide la lista al servidor (`/v1/models`, `/models`). En Gemini quedan solo los modelos que generan contenido.
 - **«Probar conexión»** envía una imagen chica con «1+2» escrito y mide la latencia. Si el modelo contesta 3, lee imágenes.
@@ -110,8 +110,8 @@ El modelo debe responder con este JSON:
 |---|---|---|
 | 1 | Módulo `:ai` (proveedores, «Obtener modelos», «Probar conexión», lector de respuestas con arreglo y regex), perfiles con clave cifrada, Preferencias → Modo IA, botón de estrellas en la barra, permiso de internet | Hecha |
 | 2 | Captura de la hoja y numeración de renglones; revisión con marcas en streaming; capa de marcas, burbujas y leyenda; «Revisar con IA» en la selección; doble verificación con el motor; historial en `.trazo`; registro de envíos; cola sin conexión; exportar con correcciones | Hecha |
-| 3 | Modelos en la tableta: llama.cpp (GGUF con visión) y MediaPipe LLM / Gemini Nano. Se descargan desde una lista recomendada o desde Hugging Face, o se importa un archivo | Pendiente |
-| Después | Ejercicios de práctica a partir de los errores frecuentes; modo examen que bloquea la IA y la calculadora (46) | Pendiente |
+| 3 | Modelos en la tableta: llama.cpp con GGUF y proyector de visión, MediaPipe solo texto; importación de archivos | Implementados importación, descargador HTTPS con verificación y leases del modelo cargado. Inferencia real y validación física pendientes. Gemini Nano y catálogo automático no implementados. |
+| Después | Ejercicios deterministas a partir de errores frecuentes; modo examen que bloquea la IA y la calculadora (46) | Implementados progreso adaptativo persistente, ejercicios lineales exactos y examen con recuperación y reloj. Práctica y transición de examen comparten un bloqueo de persistencia. La cola de revisión remota es durable y confirma solo después de guardar el resultado. |
 
 **Pruebas (42).** La parte de reconocimiento se prueba con agent manager, usando un agente «luna 6 med» con razonamiento medio.
 
@@ -134,6 +134,6 @@ El modelo debe responder con este JSON:
 - **`app/.../ai/`.** La única letra sobre la hoja vive acá, fuera de `ink/` (lo verifica `SourcePolicyTest`).
   - `AiMarkPainter` dibuja óvalos, flechas, el texto y el tilde con puntaje, y convierte una marca en tinta.
   - `AiCapture` arma la captura (tinta negra sobre blanco con el número de cada renglón); `AiConnectivity` avisa cuando vuelve la red.
-- **`app/.../data/AiJournal.kt`.** Registro de envíos (`ai_log.json`, últimos 200) y cola sin conexión (`ai_queue.json`). No guarda la imagen ni el texto.
+- **`app/.../data/AiJournal.kt`.** Registro de envíos (`ai_log.json`, últimos 200) y cola antigua (`ai_queue.json`), que se migra al abrir el cuaderno. La cola actual `DurableReviewQueue` guarda IDs y huellas de tinta en un archivo con reemplazo atómico; no guarda imágenes, texto ni credenciales.
 - **`app/.../ui/AiLayer.kt`.** Barra de progreso, ojo, leyenda de colores y la burbuja de cada marca (ver más, corrección, discutir, convertir en tinta, quitar).
 - **`EditorViewModel`, sección «Modo IA».** Revisión en streaming, cola, registro, discusión y marcas de una hoja aunque se haya pasado a otra.

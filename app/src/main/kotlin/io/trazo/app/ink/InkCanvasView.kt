@@ -32,14 +32,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Zoom/desplazamiento de la hoja; vive en el ViewModel para sobrevivir a rotaciones. */
-class Viewport {
-    var scale = 0f
-    var tx = 0f
-    var ty = 0f
-    val isSet get() = scale > 0f
-}
-
 /**
  * Superficie de tinta nativa (sin WebView). Traduce `MotionEvent` al [InkController]:
  *
@@ -69,7 +61,13 @@ class InkCanvasView @JvmOverloads constructor(
     private val density = resources.displayMetrics.density
 
     var mode: Mode = Mode.NOTEBOOK
-        set(value) { field = value; fitIfNeeded(force = true) }
+        set(value) {
+            if (field != value) {
+                field = value
+                fitIfNeeded(force = true)
+                invalidateContent()
+            }
+        }
 
     /** El controlador vive más que la vista (ViewModel): solo se escucha mientras está en pantalla. */
     var controller: InkController? = null
@@ -136,7 +134,7 @@ class InkCanvasView @JvmOverloads constructor(
         drawingPointerId = INVALID
         removeCallbacks(ticker)
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-        val (dx, dy) = screenToDocument(holdDownX, holdDownY)
+        val (dx, dy) = boundedScreenInkPoint(holdDownX, holdDownY)
         onLassoLongPress?.invoke(holdDownX, holdDownY, dx, dy)
         invalidate()
     }
@@ -225,6 +223,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var inkOverlay: Bitmap? = null
     private var inkOverlayVersion = -1L
     private val inkOverlayMatrixValues = FloatArray(9)
+    private var inkOverlayMath: List<InkStroke> = emptyList()
     private val deskColor get() = paperColors.desk
     private val holdPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeWidth = 3f * density
@@ -247,6 +246,11 @@ class InkCanvasView @JvmOverloads constructor(
     }
     private val shadowPaint = Paint().apply { color = PaperColors.LIGHT.shadow }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val workspaceBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+        pathEffect = DashPathEffect(floatArrayOf(8f * density, 5f * density), 0f)
+    }
     private val lassoPath = Path()
     private val arcRect = RectF()
 
@@ -311,10 +315,29 @@ class InkCanvasView @JvmOverloads constructor(
         tmp[0] = x; tmp[1] = y; docToScreen.mapPoints(tmp); return tmp[0] to tmp[1]
     }
 
+    /** 100% remains the central page fitted to the view width, as in 0.2.4. */
     private fun fitScale(): Float =
         if (width == 0 || height == 0) 0f
         else if (mode == Mode.PAD) min(width / pageWidth, height / pageHeight)
         else width / pageWidth
+
+    /** Minimum notebook zoom that keeps the entire three-page workspace available. */
+    private fun minNotebookScale(): Float = viewport.workspaceFit(width, height, canvasBounds())
+
+    /** The original page fit used by initial layout and the "Fit page" command. */
+    private fun fitPageScale(): Float = if (width <= 0 || pageWidth <= 0f) 0f else width / pageWidth
+
+    private fun canvasBounds() = CanvasBounds.aroundPage(pageWidth, pageHeight)
+
+    /** Stylus samples may use the full 3×3 workspace, but never create ink outside it. */
+    private fun boundedInkPoint(x: Float, y: Float): Pair<Float, Float> {
+        if (mode == Mode.PAD) return x to y
+        val bounds = canvasBounds()
+        return bounds.clampX(x) to bounds.clampY(y)
+    }
+
+    private fun boundedScreenInkPoint(x: Float, y: Float): Pair<Float, Float> =
+        screenToDocument(x, y).let { boundedInkPoint(it.first, it.second) }
 
     /** Vuelve a encajar la hoja al ancho de la vista (botón "Ajustar"). */
     fun fitToPage() = fitIfNeeded(force = true)
@@ -322,11 +345,12 @@ class InkCanvasView @JvmOverloads constructor(
     private fun fitIfNeeded(force: Boolean) {
         if (width == 0 || height == 0) return
         if (force || !viewport.isSet || mode == Mode.PAD) {
-            val s = fitScale()
+            val s = if (mode == Mode.PAD) fitScale() else fitPageScale()
             viewport.scale = s
             viewport.tx = (width - pageWidth * s) / 2f
             viewport.ty = if (mode == Mode.PAD) (height - pageHeight * s) / 2f else 0f
         }
+        if (mode == Mode.NOTEBOOK) viewport.rememberSize(width, height)
         applyViewport()
     }
 
@@ -355,7 +379,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun zoomBy(factor: Float, fx: Float, fy: Float) {
         if (mode == Mode.PAD) return
         val fit = fitScale()
-        val newScale = (viewport.scale * factor).coerceIn(fit * 0.5f, fit * 8f)
+        val newScale = (viewport.scale * factor).coerceIn(minNotebookScale(), fit * 8f)
         val f = newScale / viewport.scale
         viewport.tx = fx - (fx - viewport.tx) * f
         viewport.ty = fy - (fy - viewport.ty) * f
@@ -372,20 +396,28 @@ class InkCanvasView @JvmOverloads constructor(
         applyViewport()
     }
 
-    /** Deja siempre visible al menos un tercio de la hoja. */
+    /** Keep panning within the 3×3 writing area. PAD keeps its existing one-page bounds. */
     private fun clampPan() {
         val w = pageWidth * viewport.scale
         val h = pageHeight * viewport.scale
-        viewport.tx = viewport.tx.coerceIn(-w + width / 3f, width - width / 3f)
-        viewport.ty = viewport.ty.coerceIn(-h + height / 3f, height - height / 3f)
+        if (mode == Mode.NOTEBOOK) {
+            viewport.clampToCanvas(width, height, canvasBounds())
+        } else {
+            viewport.tx = viewport.tx.coerceIn(-w + width / 3f, width - width / 3f)
+            viewport.ty = viewport.ty.coerceIn(-h + height / 3f, height - height / 3f)
+        }
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         cache?.recycle(); cache = null
-        fitIfNeeded(force = mode == Mode.PAD || !viewport.isSet)
-        // Recortar el paneo cambia tx/ty: hay que rehacer las matrices o el dedo y la tinta quedan desfasados.
-        if (mode == Mode.NOTEBOOK && viewport.isSet) { clampPan(); applyViewport() }
+        inkOverlay?.recycle(); inkOverlay = null; inkOverlayVersion = -1L
+        if (mode == Mode.NOTEBOOK) {
+            viewport.resizeNotebook(w, h, pageWidth, pageHeight, fitPageScale())
+            applyViewport()
+        } else {
+            fitIfNeeded(force = true)
+        }
         invalidateContent()
     }
 
@@ -400,6 +432,7 @@ class InkCanvasView @JvmOverloads constructor(
         cancelContact()
         controller?.removeListener(listener)
         cache?.recycle(); cache = null
+        inkOverlay?.recycle(); inkOverlay = null; inkOverlayVersion = -1L
         super.onDetachedFromWindow()
     }
 
@@ -492,6 +525,9 @@ class InkCanvasView @JvmOverloads constructor(
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val c = controller ?: return false
+        // EditorViewModel can reset this shared mutable viewport on page navigation before
+        // AndroidView receives its next Compose update. Refit before mapping any input.
+        if (!viewport.isSet) fitIfNeeded(force = true)
         // Galaxy antiguos: el botón lateral apretado llega como acciones propias de Samsung.
         val spenButton = event.actionMasked in SPEN_ACTION_DOWN..SPEN_ACTION_MOVE
         val action = when (event.actionMasked) {
@@ -537,7 +573,7 @@ class InkCanvasView @JvmOverloads constructor(
                     drawingPointerId = event.getPointerId(index)
                     drawingKind = kind
                     panLastX = event.getX(index); panLastY = event.getY(index)
-                    val (x, y) = screenToDocument(event.getX(index), event.getY(index))
+                    val (x, y) = boundedScreenInkPoint(event.getX(index), event.getY(index))
                     c.penDown(x, y, event.getPressure(index), event.eventTime, kind, pxPerUnit)
                     cancelLassoHold()
                     val onSelection = c.selectionBounds?.let { c.handleBounds(it) }?.contains(x, y) == true
@@ -561,7 +597,7 @@ class InkCanvasView @JvmOverloads constructor(
                         // Botón lateral apretado o soltado sin levantar el lápiz.
                         val kind = kindOf(event, i, spenButton)
                         if (kind != drawingKind) {
-                            val (x, y) = screenToDocument(event.getX(i), event.getY(i))
+                            val (x, y) = boundedScreenInkPoint(event.getX(i), event.getY(i))
                             c.changeKind(kind, x, y, event.getPressure(i), event.eventTime)
                             drawingKind = kind
                         }
@@ -573,10 +609,10 @@ class InkCanvasView @JvmOverloads constructor(
                         if (drawingKind != PointerKind.FINGER) stylusNearUntil = event.eventTime + PALM_WINDOW_MS
                     } else if (i >= 0) {
                         for (h in 0 until event.historySize) {
-                            val (x, y) = screenToDocument(event.getHistoricalX(i, h), event.getHistoricalY(i, h))
+                            val (x, y) = boundedScreenInkPoint(event.getHistoricalX(i, h), event.getHistoricalY(i, h))
                             c.penMove(x, y, event.getHistoricalPressure(i, h), event.getHistoricalEventTime(h))
                         }
-                        val (x, y) = screenToDocument(event.getX(i), event.getY(i))
+                        val (x, y) = boundedScreenInkPoint(event.getX(i), event.getY(i))
                         c.penMove(x, y, event.getPressure(i), event.eventTime)
                         if (drawingKind != PointerKind.FINGER) stylusNearUntil = event.eventTime + PALM_WINDOW_MS
                     }
@@ -590,7 +626,7 @@ class InkCanvasView @JvmOverloads constructor(
                     if (isCanceled(event)) {
                         c.cancel()
                     } else {
-                        val (x, y) = screenToDocument(event.getX(index), event.getY(index))
+                        val (x, y) = boundedScreenInkPoint(event.getX(index), event.getY(index))
                         c.penUp(x, y, event.getPressure(index), event.eventTime)
                     }
                     drawingPointerId = INVALID
@@ -689,10 +725,25 @@ class InkCanvasView @JvmOverloads constructor(
     // ------------------------------------------------------------------ dibujo
 
     override fun onDraw(canvas: Canvas) {
+        // A draw may arrive before AndroidView.update after navigation. Keep the cached and
+        // inverse matrices in sync with a zero-scale reset before rendering this frame.
+        if (!viewport.isSet) fitIfNeeded(force = true)
+        // AndroidView does not guarantee clipping against Compose siblings. In particular,
+        // drawColor must never paint over a toolbar laid out to the left of this View.
+        val saved = canvas.save()
+        try {
+            canvas.clipRect(0, 0, width, height)
+            drawContent(canvas)
+        } finally {
+            canvas.restoreToCount(saved)
+        }
+    }
+
+    private fun drawContent(canvas: Canvas) {
         val c = controller
         canvas.drawColor(deskColor)
         drawDryLayer(canvas)
-        if (c == null) return
+        if (c == null) { drawWorkspaceBoundary(canvas); return }
 
         val wet = c.wetInk
         if (wet.any { it.brush == Brush.HIGHLIGHTER }) {
@@ -753,6 +804,18 @@ class InkCanvasView @JvmOverloads constructor(
             canvas.drawArc(arcRect, 0f, 360f, false, holdTrackPaint)
             canvas.drawArc(arcRect, -90f, 360f * progress, false, holdPaint)
         }
+        drawWorkspaceBoundary(canvas)
+    }
+
+    /** A visible frame marks the finite 3×3 area while leaving the central paper unchanged. */
+    private fun drawWorkspaceBoundary(canvas: Canvas) {
+        if (mode != Mode.NOTEBOOK) return
+        val bounds = canvasBounds()
+        val topLeft = documentToScreen(bounds.left, bounds.top)
+        val bottomRight = documentToScreen(bounds.right, bounds.bottom)
+        workspaceBorderPaint.color = paperColors.border.takeIf { it != 0 }
+            ?: if (paperColors.dark) Color.argb(210, 230, 230, 235) else Color.argb(210, 94, 86, 70)
+        canvas.drawRect(topLeft.first, topLeft.second, bottomRight.first, bottomRight.second, workspaceBorderPaint)
     }
 
     private fun drawDryLayer(canvas: Canvas) {
@@ -762,6 +825,8 @@ class InkCanvasView @JvmOverloads constructor(
         var bmp = cache
         if (bmp == null || bmp.width != width || bmp.height != height) {
             bmp?.recycle()
+            cache = null
+            cacheValid = false
             if (width <= 0 || height <= 0) return
             bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             cache = bmp
@@ -797,12 +862,16 @@ class InkCanvasView @JvmOverloads constructor(
         var bmp = inkOverlay
         if (bmp == null || bmp.width != width || bmp.height != height) {
             bmp?.recycle()
+            inkOverlay = null
+            inkOverlayVersion = -1L
             if (width <= 0 || height <= 0) return
             bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             inkOverlay = bmp
             inkOverlayVersion = -1L
         }
-        if (page.version != inkOverlayVersion || !currentMatrixValues.contentEquals(inkOverlayMatrixValues)) {
+        if (page.version != inkOverlayVersion || inkOverlayMath !== cacheMath ||
+            !currentMatrixValues.contentEquals(inkOverlayMatrixValues)
+        ) {
             bmp.eraseColor(0)
             val oc = Canvas(bmp)
             oc.concat(docToScreen)
@@ -810,6 +879,7 @@ class InkCanvasView @JvmOverloads constructor(
             StrokePainter.drawInkOnly(oc, cacheMath, paperColors.dark)
             System.arraycopy(currentMatrixValues, 0, inkOverlayMatrixValues, 0, 9)
             inkOverlayVersion = page.version
+            inkOverlayMath = cacheMath
         }
         canvas.drawBitmap(bmp, 0f, 0f, null)
     }

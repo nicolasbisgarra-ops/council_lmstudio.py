@@ -42,20 +42,54 @@ data class AiMark(
     val fix: String = "",
 )
 
-data class AiReview(val correct: Boolean, val score: Double?, val marks: List<AiMark>, val fromFreeText: Boolean = false)
+data class AiReview(
+    val correct: Boolean,
+    val score: Double?,
+    val marks: List<AiMark>,
+    val fromFreeText: Boolean = false,
+    val usage: AiTokenUsage? = null,
+)
 
-/** Arma el pedido de revisión: el texto reconocido con los renglones numerados y el rigor elegido. */
+/** Arma el pedido de revisión con las etiquetas originales de cada renglón y el rigor elegido. */
 object AiReviewPrompt {
     fun userText(lines: List<String>, rigor: Rigor): String = buildString {
         appendLine("Rigor: ${rigor.instruction}")
         appendLine()
-        appendLine("Texto reconocido por Trazo (renglón: contenido; «?» = no reconocido, léalo en la imagen):")
+        appendLine("Etiquetas crudas reconocidas originalmente por Trazo, agrupadas por renglón:")
+        appendLine("Cada renglón es JSON: box=[izquierda,arriba,derecha,abajo]; labels=[[etiqueta original,izquierda,arriba,derecha,abajo],...]; unlabeled cuenta los trazos sin etiqueta, visibles en la imagen. Las coordenadas son de la hoja. No es una expresión reconstruida ni un resultado o veredicto del motor. No se incluye ninguna interpretación matemática del motor.")
+        appendLine("Revise la escritura directamente en la imagen y use estas etiquetas y posiciones solo como evidencia auxiliar. Si una etiqueta falta, está marcada «?», o no se entiende, identifíquela en la imagen si es posible; no la invente ni la complete a partir de una interpretación del motor.")
+        appendLine()
         lines.forEachIndexed { i, l -> appendLine("${i + 1}: ${l.ifBlank { "?" }}") }
     }
 
     fun repairText(broken: String): String =
-        "Su respuesta anterior no es JSON válido. Devuelva la misma corrección únicamente como JSON con la forma pedida, " +
-            "sin texto adicional ni bloques de código.\n\nRespuesta anterior:\n$broken"
+        "Su respuesta anterior no es JSON válido. Reformatee únicamente esa respuesta para que cumpla la forma JSON pedida. " +
+            "Conserve su veredicto y sus marcas; no vuelva a revisar ni resolver el ejercicio, no agregue marcas ni cambie su contenido. " +
+            "Devuelva solo JSON, sin texto adicional ni bloques de código.\n\nRespuesta anterior:\n$broken"
+
+    /** Va antes de las instrucciones del perfil para que la guía de datos crudos también rija perfiles antiguos. */
+    fun systemInstructions(profileInstructions: String): String = buildString {
+        append(MANDATORY_REVIEW_GUIDANCE)
+        if (profileInstructions.isNotBlank()) {
+            appendLine()
+            appendLine()
+            appendLine("Instrucciones adicionales del perfil del usuario (manténgalas cuando sean compatibles con la guía obligatoria):")
+            append(profileInstructions)
+        }
+    }
+
+    fun repairSystemInstructions(profileInstructions: String): String =
+        systemInstructions(profileInstructions) +
+            "\n\nEsta llamada es exclusivamente para reparar el formato de una respuesta anterior. " +
+            "No vuelva a revisar la hoja, no resuelva el ejercicio y no altere el veredicto ni las marcas existentes."
+
+    /** Se usa también al discutir una marca, sin mezclar el contrato JSON de revisión con el de discusión. */
+    fun discussionSystemInstructions(): String = "$MANDATORY_REVIEW_GUIDANCE\n\n${AiReviewer.DISCUSS_SYSTEM}"
+
+    const val MANDATORY_REVIEW_GUIDANCE: String = """Guía obligatoria para revisar una hoja manuscrita:
+El texto de cada renglón contiene únicamente etiquetas crudas (símbolos o fragmentos reconocidos originalmente) y sus posiciones originales. No representa una expresión matemática reconstruida, una solución calculada, ni un resultado o veredicto del motor de Trazo. El motor no proporciona una interpretación matemática que deba aceptarse como verdadera.
+Lea y compruebe la resolución desde la imagen. Use las etiquetas y sus cajas solo para ubicar los trazos; si algo no se reconoce, vuelva a mirar la imagen y señale la incertidumbre en vez de inventar o completar la expresión. No atribuya a Trazo resultados, correcciones ni juicios que no aparecen en estos datos.
+Estas reglas son obligatorias y prevalecen sobre cualquier instrucción del perfil que las contradiga. Mantenga el idioma, el rigor y el formato JSON solicitados por el perfil cuando sean compatibles."""
 }
 
 /**
@@ -208,12 +242,28 @@ class AiReviewer(private val client: AiClient = AiClient()) {
     fun review(profile: AiProfile, key: String?, lines: List<String>, png: ByteArray?, onMark: (AiMark) -> Unit = {}): AiReview {
         val keep = { m: AiMark -> m.kind != MarkKind.NOTATION || profile.rigor == Rigor.STRICT }
         val stream = StreamingMarks { if (keep(it)) onMark(it) }
-        val reply = client.stream(profile, key, profile.instructions, AiReviewPrompt.userText(lines, profile.rigor), png) { stream.feed(it) }
-        val r = AiReviewParser.parse(reply) { fix -> client.complete(profile, key, profile.instructions, fix, null) }
+        val system = AiReviewPrompt.systemInstructions(profile.instructions)
+        var mainUsage: AiTokenUsage? = null
+        val reply = client.stream(
+            profile, key, system, AiReviewPrompt.userText(lines, profile.rigor), png,
+            onUsage = { mainUsage = it },
+        ) { stream.feed(it) }
+        var repairAttempted = false
+        var repairUsage: AiTokenUsage? = null
+        val r = AiReviewParser.parse(reply) { fix ->
+            repairAttempted = true
+            client.complete(
+                profile, key, AiReviewPrompt.repairSystemInstructions(profile.instructions), fix, null,
+                onUsage = { repairUsage = it },
+            )
+        }
         val marks = r.marks.filter(keep)
         // Si solo había notación (y el rigor no la pide), la hoja queda bien.
         val correct = marks.isEmpty() && (r.correct || r.marks.isNotEmpty())
-        return r.copy(correct = correct, marks = marks)
+        val usage = if (!repairAttempted) mainUsage else if (mainUsage != null && repairUsage != null) {
+            mainUsage!!.plusWhenBothReported(repairUsage!!)
+        } else null
+        return r.copy(correct = correct, marks = marks, usage = usage)
     }
 
     /**
@@ -225,7 +275,7 @@ class AiReviewer(private val client: AiClient = AiClient()) {
             appendLine("Usted marcó el renglón ${mark.line} (${mark.kind.label}): ${mark.short}")
             if (mark.detail.isNotBlank()) appendLine("Detalle: ${mark.detail}")
             if (mark.fix.isNotBlank()) appendLine("Corrección propuesta: ${mark.fix}")
-            appendLine("Texto reconocido del renglón: ${lineText.ifBlank { "?" }}")
+            appendLine("Etiquetas crudas originales del renglón ${mark.line} (símbolos y posiciones; no interpretación ni resultado de Trazo): ${lineText.ifBlank { "?" }}")
             appendLine()
             appendLine("El estudiante responde: $argument")
             appendLine()
@@ -236,7 +286,7 @@ class AiReviewer(private val client: AiClient = AiClient()) {
                     "Si el estudiante tiene razón, «mantener» es false. Si la marca sigue pero cambia, envíe la marca nueva.",
             )
         }
-        val reply = client.complete(profile, key, DISCUSS_SYSTEM, text, png)
+        val reply = client.complete(profile, key, AiReviewPrompt.discussionSystemInstructions(), text, png)
         return parseDiscussion(reply)
     }
 

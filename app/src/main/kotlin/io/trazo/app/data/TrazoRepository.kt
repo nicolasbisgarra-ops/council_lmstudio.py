@@ -23,11 +23,13 @@ import io.trazo.core.LazyNotebook
 import io.trazo.core.NotebookOrder
 import io.trazo.core.TrazoFormat
 import io.trazo.core.normalizedCover
+import io.trazo.core.remapPatternIds
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,6 +60,7 @@ class TrazoRepository(root: File) {
     private val orderFile = AtomicFile(File(root, "notebook-order.json"))
     private val coversDir = File(root, "covers").apply { mkdirs() }
     private val lock = Any()
+    private val manualOrderRevision = AtomicLong()
 
     private val _patterns = MutableStateFlow(loadPatterns())
     val patterns: StateFlow<List<InkPattern>> = _patterns.asStateFlow()
@@ -128,7 +131,7 @@ class TrazoRepository(root: File) {
 
     /** Fusiona los patrones de un archivo exportado; devuelve cuántos se agregaron. */
     fun importPatterns(input: InputStream): Int =
-        mergePatterns(TrazoFormat.decodePatterns(input.readBytes().toString(Charsets.UTF_8)))
+        mergePatterns(TrazoFormat.decodePatterns(input))
 
     private fun mergePatterns(incoming: List<InkPattern>): Int = synchronized(lock) {
         val before = _patterns.value
@@ -194,8 +197,15 @@ class TrazoRepository(root: File) {
         NotebookOrder.decode(runCatching { orderFile.readFully().toString(Charsets.UTF_8) }.getOrNull())
     }
 
-    /** Guarda el orden manual tal como se ve ([ids] completos, de arriba hacia abajo). */
-    fun saveManualOrder(ids: List<String>) = synchronized(lock) { write(orderFile, NotebookOrder.encode(ids)) }
+    /** Reserva una versión antes de despachar una escritura fuera del hilo principal. */
+    fun beginManualOrderSave(): Long = manualOrderRevision.incrementAndGet()
+
+    /** Guarda el orden manual; escrituras de versiones viejas no pueden pisar una más nueva. */
+    fun saveManualOrder(ids: List<String>) = saveManualOrder(ids, beginManualOrderSave())
+
+    fun saveManualOrder(ids: List<String>, revision: Long) = synchronized(lock) {
+        if (revision == manualOrderRevision.get()) write(orderFile, NotebookOrder.encode(ids))
+    }
 
     // ------------------------------------------------------------------ portadas
 
@@ -309,30 +319,61 @@ class TrazoRepository(root: File) {
         val cover = loadLazy(id)?.coverImage
         fileFor(id).delete()
         cover?.let { dropCoverIfUnused(it) }
+        // An old queued order may still include this deleted notebook: invalidate its revision.
+        val current = manualOrder()
+        if (id in current) saveManualOrder(current.filterNot { it == id }, beginManualOrderSave())
     }
 
     fun exportNotebook(id: String, out: OutputStream) {
         val n = loadNotebook(id) ?: error("Notebook $id not found")
-        val used = n.pages.flatMap { p -> p.strokes.mapNotNull { it.patternId } }.toSet()
+        val used = n.pages.flatMap { p ->
+            p.strokes.mapNotNull { it.patternId } + p.parametricShapes.mapNotNull { it.sourcePatternId }
+        }.toSet()
         TrazoFormat.exportArchive(n, patterns.value.filter { it.id in used }, out, coverBytes(n))
     }
 
-    /** Importa un `.trazo`; si el id ya existe crea una copia. Agrega patrones que falten. */
+    /**
+     * Valida el archivo antes de modificar datos. El cuaderno y la biblioteca de patrones
+     * se escriben bajo un mismo lock; si falla guardar el cuaderno se intenta revertir
+     * el cambio previo de patrones y se elimina la portada recién creada.
+     */
     fun importNotebook(input: InputStream): Notebook {
         val archive = TrazoFormat.importArchive(input)
-        var n = archive.notebook
-        if (fileFor(n.id).baseFile.exists()) n = n.copy(id = IdGenerator.RANDOM.next(), name = n.name + " (importado)")
-        n = n.copy(updatedAt = System.currentTimeMillis())
-        // La portada se guarda con el nombre de su contenido, sea cual sea el que traía el archivo.
-        val cover = archive.cover
-        n = if (cover != null) {
-            val name = sha256(cover) + "." + Covers.extensionOf(cover)
-            synchronized(lock) { File(coversDir, name).takeIf { !it.isFile }?.let { write(AtomicFile(it), cover) } }
-            n.copy(coverKind = CoverKind.IMAGE, coverImage = name)
-        } else n.normalizedCover()
-        saveNotebook(n)
-        mergePatterns(archive.patterns)
-        return n
+        return synchronized(lock) {
+            var n = archive.notebook
+            if (fileFor(n.id).baseFile.exists()) n = n.copy(id = IdGenerator.RANDOM.next(), name = n.name + " (importado)")
+            n = n.copy(updatedAt = System.currentTimeMillis())
+            val oldPatterns = _patterns.value
+            val merge = PatternLibrary.mergeWithRemapping(oldPatterns, PatternUpgrades.upgrade(archive.patterns))
+            val nextPatterns = merge.patterns
+            n = n.remapPatternIds(merge.idRemap)
+            var createdCover: File? = null
+            var patternsWritten = false
+            try {
+                val cover = archive.cover
+                n = if (cover == null) n.normalizedCover() else {
+                    val name = sha256(cover) + "." + Covers.extensionOf(cover)
+                    val f = File(coversDir, name)
+                    if (!f.isFile) {
+                        write(AtomicFile(f), cover)
+                        createdCover = f
+                    }
+                    n.copy(coverKind = CoverKind.IMAGE, coverImage = name)
+                }
+                if (nextPatterns != oldPatterns) {
+                    writePatterns(nextPatterns)
+                    patternsWritten = true
+                }
+                saveNotebook(n)
+                _patterns.value = nextPatterns
+            } catch (error: Exception) {
+                if (patternsWritten) runCatching { writePatterns(oldPatterns) }
+                    .onFailure { error.addSuppressed(it) }
+                createdCover?.delete()
+                throw error
+            }
+            n
+        }
     }
 
     private fun write(file: AtomicFile, text: String) = write(file, text.toByteArray(Charsets.UTF_8))

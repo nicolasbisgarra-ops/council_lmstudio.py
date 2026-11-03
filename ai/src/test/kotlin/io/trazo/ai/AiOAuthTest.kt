@@ -105,11 +105,16 @@ class AiOAuthTest {
 
             data: {"type":"response.output_text.delta","delta":"El resultado "}
             data: {"type":"response.output_text.delta","delta":"es 3"}
-            data: {"type":"response.completed","response":{"output":[]}}
+            data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":9,"output_tokens":3,"input_tokens_details":{"cached_tokens":2},"output_tokens_details":{"reasoning_tokens":1}}}}
         """.trimIndent()
         val fake = Fake(HttpResponse(200, sse))
-        val reply = AiClient(fake).complete(chatGpt, OAuthTokens("at", accountId = "acc").encode(), "sys", "hola", byteArrayOf(1))
+        var usage: AiTokenUsage? = null
+        val reply = AiClient(fake).complete(
+            chatGpt, OAuthTokens("at", accountId = "acc").encode(), "sys", "hola", byteArrayOf(1),
+            onUsage = { usage = it },
+        )
         assertEquals("El resultado es 3", reply)
+        assertEquals(AiTokenUsage(inputTokens = 9, outputTokens = 3, reasoningTokens = 1, cachedInputTokens = 2), usage)
         val r = fake.sent.single()
         assertEquals("https://chatgpt.com/backend-api/codex/responses", r.url)
         assertEquals("Bearer at", r.headers["Authorization"])

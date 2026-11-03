@@ -123,6 +123,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
     var deleting by remember { mutableStateOf<NotebookSummary?>(null) }
     var folders by remember { mutableStateOf(FolderCatalog()) }
     var order by remember { mutableStateOf(emptyList<String>()) }
+    var pendingOrderRevision by remember { mutableStateOf<Long?>(null) }
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
     var addingFolder by remember { mutableStateOf(false) }
     var folderMenu by remember { mutableStateOf(false) }
@@ -144,7 +145,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
             val (list, cat, ord) = withContext(Dispatchers.IO) { Triple(repo.listNotebooks(), repo.folders(), repo.manualOrder()) }
             items = list
             folders = cat
-            order = ord
+            if (pendingOrderRevision == null) order = ord
             // La carpeta elegida pudo haberse borrado.
             if (filter != FILTER_ALL && filter != FILTER_NONE && cat[filter] == null) filter = FILTER_ALL
             loaded = true
@@ -188,7 +189,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
         }
     }
 
-    val shown = remember(items, query, sort, filter, order) {
+    val shown = remember(items, query, sort, filter, order, folders) {
         val q = searchKey(query)
         val inFolder = when (filter) {
             FILTER_ALL -> items
@@ -218,25 +219,32 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
     PersistReorderOnEnd(reorder, { orderDirty }) {
         val next = order
         orderDirty = false
+        val revision = repo.beginManualOrderSave()
+        pendingOrderRevision = revision
         scope.launch {
-            val error = withContext(Dispatchers.IO) { runCatching { repo.saveManualOrder(next) }.exceptionOrNull() }
+            val error = withContext(Dispatchers.IO) { runCatching { repo.saveManualOrder(next, revision) }.exceptionOrNull() }
+            if (pendingOrderRevision == revision) pendingOrderRevision = null
             if (error != null) Toast.makeText(context, "No se pudo guardar el orden: ${error.message}", Toast.LENGTH_LONG).show()
         }
     }
 
     /** Sube o baja un cuaderno un lugar entre los que se ven, en el orden manual completo. */
     fun shift(nb: NotebookSummary, delta: Int) {
+        if (query.isNotBlank()) return // La búsqueda no permite ordenar un subconjunto incompleto.
         val i = shown.indexOfFirst { it.id == nb.id }
         val j = i + delta
         if (i < 0 || j !in shown.indices) return
         val full = NotebookOrder.sorted(items, order, { it.id }, { it.updatedAt }).map { it.id }
-        // Subir: antes del anterior. Bajar: antes del que sigue al siguiente (o al final).
-        val target = if (delta < 0) shown[j].id else shown.getOrNull(j + 1)?.id
-        val next = if (target == null && delta > 0) {
-            NotebookOrder.moved(full, nb.id, full.getOrNull(full.indexOf(shown[j].id) + 1))
-        } else NotebookOrder.moved(full, nb.id, target)
+        // Reordenar solo lo visible; los elementos ocultos conservan su posición en el orden completo.
+        val next = NotebookOrder.withSubset(full, moveItem(shown.map { it.id }, i, j))
         order = next
-        scope.launch { withContext(Dispatchers.IO) { repo.saveManualOrder(next) } }
+        val revision = repo.beginManualOrderSave()
+        pendingOrderRevision = revision
+        scope.launch {
+            val error = withContext(Dispatchers.IO) { runCatching { repo.saveManualOrder(next, revision) }.exceptionOrNull() }
+            if (pendingOrderRevision == revision) pendingOrderRevision = null
+            if (error != null) Toast.makeText(context, "No se pudo guardar el orden: ${error.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     Scaffold(
@@ -354,7 +362,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
                                 onDelete = { deleting = nb },
                                 onMove = { moving = nb },
                                 onCover = { coverFor = nb },
-                                onShift = { d -> shift(nb, d) },
+                                onShift = if (query.isBlank()) ({ d: Int -> shift(nb, d) }) else null,
                             )
                         }
                     }

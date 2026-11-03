@@ -1,4 +1,5 @@
 .gradle/
+.cxx/
 .kotlin/
 build/
 local.properties
@@ -8,3 +9,6 @@ local.properties
 captures/
 /output/*.apk
 .claude/worktrees/
+
+__pycache__/
+*.pyc

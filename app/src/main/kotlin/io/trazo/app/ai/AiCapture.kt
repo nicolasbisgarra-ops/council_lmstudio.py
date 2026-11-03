@@ -25,7 +25,7 @@ object AiCapture {
     private const val NUMBERS = 44f
 
     fun png(strokes: List<InkStroke>, lines: List<AiNotes.ReviewLine>, longEdgePx: Int): ByteArray {
-        val ink = strokes.filter { it.brush != Brush.HIGHLIGHTER }.map { it.copy(color = Color.BLACK) }
+        val ink = strokes.filter { it.brush != Brush.HIGHLIGHTER && it.calc?.result != true }.map { it.copy(color = Color.BLACK) }
         val b: Bounds = (ink.takeIf { it.isNotEmpty() }?.bounds() ?: Bounds(0f, 0f, 100f, 100f))
         val w = b.width + MARGIN * 2 + NUMBERS
         val h = b.height + MARGIN * 2

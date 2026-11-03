@@ -1,5 +1,7 @@
 package io.trazo.core
 
+import kotlinx.serialization.json.add
+
 import io.trazo.core.math.ApproxValue
 import io.trazo.core.math.ExactValue
 import io.trazo.core.math.LineResult
@@ -20,9 +22,13 @@ import io.trazo.core.math.hasLetters
 import io.trazo.core.math.variables
 import io.trazo.core.math.layout.LayoutSymbol
 import io.trazo.core.math.layout.MathLayoutConverter
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.math.BigDecimal
 import java.math.MathContext
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Cuentas en la hoja: lee la tinta reconocida (salidas de patrones), arma los renglones, los convierte
@@ -80,6 +86,9 @@ object MathNotes {
         "" -> null
         else -> u
     }
+
+    /** Significado actual de un patrón; también se usa al deduplicar/importar sin cambiar su función. */
+    internal fun patternSymbol(p: InkPattern): String? = symbol(p)
 
     /**
      * Un patrón del usuario con un nombre que no es número ni signo («Patrón», «mi k») es una letra sin
@@ -230,6 +239,63 @@ object MathNotes {
             AiNotes.ReviewLine(i + 1, text, box, ids, AiNotes.fingerprint(ids, pool))
         }
     }
+
+    /**
+     * Renglones para enviar a IA con etiquetas crudas, sin convertirlas a texto matemático. Cada [AiNotes.ReviewLine.text]
+     * es un objeto JSON compacto con la caja, las etiquetas originales y el total de trazos sin etiqueta. No incluye
+     * UUID ni datos del patrón. La geometría agrupa los glifos en renglones; no convierte barras en fracciones ni crea
+     * operadores, alias o resultados. Se excluyen el resaltador y los trazos de resultado generados por MathNotes.
+     *
+     * Las etiquetas salen de [InkPattern.name] tal cual: ni [InkPattern.unknown] ni las normalizaciones del motor
+     * intervienen. Los renglones se ordenan de arriba hacia abajo y los glifos de izquierda a derecha, igual que
+     * [reviewLines], para que sus números sirvan al asociar las marcas de IA con los chequeos locales.
+     */
+    fun reviewLabels(strokes: List<InkStroke>, patterns: List<InkPattern>, only: Set<String>? = null): List<AiNotes.ReviewLine> {
+        val pool = strokes.filter {
+            it.brush != Brush.HIGHLIGHTER && it.calc?.result != true && (only == null || it.id in only)
+        }
+        val byId = patterns.associateBy { it.id }
+        val rawByGlyph = java.util.IdentityHashMap<Glyph, RawReviewGlyph>()
+        val geometry = pool.groupBy { it.groupId ?: it.id }.map { (_, group) ->
+            val patternId = group.first().patternId
+            val name = patternId?.let { byId[it]?.name }
+            val bounds = group.map { it.bounds }.reduce(Bounds::union)
+            // This label is only a private hint for the existing geometric row grouper. The emitted label stays raw.
+            val glyph = Glyph(name?.let(::label) ?: UNREAD, bounds, group)
+            rawByGlyph[glyph] = RawReviewGlyph(name, bounds, group.map { it.id })
+            glyph
+        }
+
+        return rows(geometry).mapIndexed { i, row ->
+            val box = row.map { it.bounds }.reduce(Bounds::union)
+            val glyphs = row.mapNotNull(rawByGlyph::get)
+            val ids = glyphs.flatMap { it.strokeIds }
+            val text = buildJsonObject {
+                put("box", buildJsonArray {
+                    add(box.left.roundToInt()); add(box.top.roundToInt())
+                    add(box.right.roundToInt()); add(box.bottom.roundToInt())
+                })
+                put("labels", buildJsonArray {
+                    glyphs.filter { it.label != null }.forEach { item ->
+                        add(buildJsonArray {
+                            add(item.label!!)
+                            add(item.bounds.left.roundToInt()); add(item.bounds.top.roundToInt())
+                            add(item.bounds.right.roundToInt()); add(item.bounds.bottom.roundToInt())
+                        })
+                    }
+                })
+                // Count ink strokes, not unknown groups: a grouped handwriting shape may contain several strokes.
+                put("unlabeled", glyphs.filter { it.label == null }.sumOf { it.strokeIds.size })
+            }
+            AiNotes.ReviewLine(i + 1, text.toString(), box, ids, AiNotes.fingerprint(ids, pool))
+        }
+    }
+
+    private data class RawReviewGlyph(
+        val label: String?,
+        val bounds: Bounds,
+        val strokeIds: List<String>,
+    )
 
     /** Valores de cada renglón, en el orden de [lines]; null donde no hay un resultado para mostrar. */
     private fun values(lines: List<Line>): List<MathValue?> =

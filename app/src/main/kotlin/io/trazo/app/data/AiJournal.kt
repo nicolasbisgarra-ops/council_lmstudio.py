@@ -1,6 +1,7 @@
 package io.trazo.app.data
 
 import android.util.Log
+import io.trazo.ai.AiTokenUsage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,11 @@ data class AiSend(
     val marks: Int = 0,
     /** Así lo entendió el modelo (puntaje), si lo dio. */
     val score: Double? = null,
+    val textChars: Int? = null,
+    val imageWidth: Int? = null,
+    val imageHeight: Int? = null,
+    /** Actual provider counters; no estimate is substituted for a missing counter. */
+    val usage: AiTokenUsage? = null,
 )
 
 /** Un pedido que no salió por falta de conexión (37): se manda solo al volver la red, con la hoja abierta. */
@@ -97,6 +103,10 @@ class AiJournal(dir: File) {
                 imageBytes = o.optInt("imageBytes"), selection = o.optBoolean("selection"), millis = o.optLong("millis"),
                 error = o.optString("error").takeIf { o.has("error") }, marks = o.optInt("marks"),
                 score = if (o.has("score")) o.getDouble("score") else null,
+                textChars = o.optionalInt("textChars"), imageWidth = o.optionalInt("imageWidth"), imageHeight = o.optionalInt("imageHeight"),
+                usage = o.optJSONObject("usage")?.let { u -> AiTokenUsage(u.optionalInt("inputTokens"),
+                    u.optionalInt("outputTokens"), u.optionalInt("reasoningTokens"),
+                    u.optionalInt("cachedInputTokens"), u.optionalInt("imageInputTokens")) },
             )
         }.getOrNull()
     }
@@ -120,7 +130,16 @@ class AiJournal(dir: File) {
         error?.let { put("error", it) }
         put("marks", marks)
         score?.let { put("score", it) }
+        textChars?.let { put("textChars", it) }; imageWidth?.let { put("imageWidth", it) }; imageHeight?.let { put("imageHeight", it) }
+        usage?.let { u -> put("usage", JSONObject().apply {
+            u.inputTokens?.let { put("inputTokens", it) }; u.outputTokens?.let { put("outputTokens", it) }
+            u.reasoningTokens?.let { put("reasoningTokens", it) }; u.cachedInputTokens?.let { put("cachedInputTokens", it) }
+            u.imageInputTokens?.let { put("imageInputTokens", it) }
+        }) }
     }
+
+    private fun JSONObject.optionalInt(name: String): Int? =
+        if (has(name) && !isNull(name)) optInt(name).takeIf { it >= 0 } else null
 
     private fun AiQueued.toJson() = JSONObject().apply {
         put("notebookId", notebookId); put("pageId", pageId); put("at", at)

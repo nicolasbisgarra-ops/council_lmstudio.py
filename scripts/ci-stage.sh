@@ -15,7 +15,15 @@ cp -a "$bundle/emulator-demo/." "$out/emulator/pruebas-demo/"
 cp -a "$bundle/emulator-ui/." "$out/emulator/interfaz/"
 test -f "$out/emulator/pruebas-demo/build-provenance-pruebas-demo.txt"
 test -f "$out/emulator/interfaz/build-provenance-interfaz.txt"
-mv "$out/emulator/pruebas-demo/demo-real-android-emulador.mp4" "$out/demo-real-android.mp4" 2>/dev/null || true
+mv "$out/emulator/pruebas-demo/demo-real-android-emulador.mp4" "$out/demo-real-android.mp4"
+# Recheck the native libraries present in both APKs. The app APK must carry
+# the JNI target selected by the Gradle/CMake integration when configured.
+abi_args=()
+if [ -n "${TRAZO_NATIVE_REQUIRED_LIB:-}" ]; then
+  abi_args+=(--require-abi arm64-v8a --require-library "$TRAZO_NATIVE_REQUIRED_LIB")
+fi
+python3 -I scripts/ci-abi-audit.py "${abi_args[@]}" "$out/Trazo-debug.apk" "$out/Trazo-debug-androidTest.apk"
 id=(--source-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT")
 python3 -I scripts/ci-manifest.py create "$out" "${id[@]}" \
   --phase build=PASS --phase emulator_pruebas_demo=PASS --phase emulator_interfaz=PASS
+python3 -I scripts/ci-evidence-gate.py "$out"

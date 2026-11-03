@@ -14,6 +14,13 @@ trap 'rm -rf "$payload"' EXIT
 cp -a "$src/." "$payload/"
 python3 -I scripts/ci-manifest.py verify "$payload" \
   --source-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+# Defense in depth: publication independently checks required evidence and ELF files.
+python3 -I scripts/ci-evidence-gate.py "$payload"
+abi_args=()
+if [ -n "${TRAZO_NATIVE_REQUIRED_LIB:-}" ]; then
+  abi_args+=(--require-abi arm64-v8a --require-library "$TRAZO_NATIVE_REQUIRED_LIB")
+fi
+python3 -I scripts/ci-abi-audit.py "${abi_args[@]}" "$payload/Trazo-debug.apk" "$payload/Trazo-debug-androidTest.apk"
 # GitHub rechaza archivos de más de 100 MiB.
 big="$(find "$payload" -type f -size +90M -print -quit)"
 [[ -z "$big" ]] || { echo "archivo de más de 90 MiB: $big" >&2; exit 1; }

@@ -16,9 +16,30 @@ android {
         applicationId = "io.trazo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 10
+        versionName = "0.2.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters += setOf("arm64-v8a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                // Optional verified checkout for reproducible/offline builds; normal CI uses the pinned fetch.
+                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+                providers.gradleProperty("trazo.llamaSource").orNull?.let {
+                    arguments += "-DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$it"
+                }
+            }
+        }
+    }
+
+    ndkVersion = "27.2.12479018"
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // Clave debug fija (no secreta): las APK de prueba de cada compilación de CI se actualizan
@@ -49,6 +70,7 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
         animationsDisabled = true
     }
 
@@ -75,9 +97,15 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.core)
+    implementation("com.google.mediapipe:tasks-genai:0.10.27")
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     androidTestImplementation(testFixtures(project(":core")))
     androidTestImplementation(libs.junit)
@@ -86,4 +114,18 @@ dependencies {
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.androidx.test.uiautomator)
+}
+
+// Robolectric resolves its Android runtime in the test JVM, outside Gradle's resolver.
+tasks.withType<Test>().configureEach {
+    // Compose/Espresso idlers and Robolectric native graphics retain process-wide state.
+    // Run each test class in a fresh JVM so GUI checks cannot contaminate one another.
+    forkEvery = 1
+
+    System.getProperty("trazo.userPatterns")?.let { systemProperty("trazo.userPatterns", it) }
+    System.getProperty("trazo.userNotes")?.let { systemProperty("trazo.userNotes", it) }
+    systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+    listOf("http.proxyHost", "http.proxyPort", "https.proxyHost", "https.proxyPort", "javax.net.ssl.trustStore").forEach { name ->
+        System.getProperty(name)?.let { systemProperty(name, it) }
+    }
 }

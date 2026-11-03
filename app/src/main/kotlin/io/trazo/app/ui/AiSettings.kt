@@ -7,6 +7,8 @@ import android.os.Looper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -58,6 +60,7 @@ import io.trazo.ai.AiModelInfo
 import io.trazo.ai.AiOAuth
 import io.trazo.ai.AiProfile
 import io.trazo.ai.AiProvider
+import io.trazo.ai.AiReasoningEffortMode
 import io.trazo.ai.DEFAULT_INSTRUCTIONS
 import io.trazo.ai.ImageQuality
 import io.trazo.ai.OAuthTokens
@@ -79,6 +82,20 @@ internal fun AiSettingsPage() {
     val ai by store.settings.collectAsState()
     var editing by remember { mutableStateOf<AiProfile?>(null) }
     var deleting by remember { mutableStateOf<AiProfile?>(null) }
+    var localModels by remember { mutableStateOf(false) }
+    if (localModels) {
+        LocalModelsScreen(onBack = { localModels = false }, onUse = { model ->
+            val existing = store.settings.value.profiles.firstOrNull { it.provider == AiProvider.ON_DEVICE && it.model == model.id }
+            val profile = existing ?: store.newProfile(AiProvider.ON_DEVICE).copy(
+                name = model.modelFile.nameWithoutExtension.substringBeforeLast('-'), model = model.id,
+                localTextOnly = model.modelFile.extension.equals("task", true),
+            )
+            store.save(profile)
+            store.select(profile.id)
+            localModels = false
+        })
+        return
+    }
 
     var localOrder by remember { mutableStateOf<List<String>?>(null) }
     val profiles = remember(ai.profiles, localOrder) { applySavedOrder(ai.profiles, localOrder.orEmpty()) { it.id } }
@@ -106,6 +123,7 @@ internal fun AiSettingsPage() {
         )
     }
     PrefCard("Modelos") {
+        OutlinedButton(onClick = { localModels = true }) { Text("Modelos en la tableta · Importar y usar") }
         if (ai.profiles.isEmpty()) {
             AiHint("Todavía no hay ningún modelo. Agregá uno con tu clave de API, con tu cuenta (ChatGPT, Google) o un servidor de tu red (LM Studio, Ollama).")
         }
@@ -141,8 +159,10 @@ internal fun AiSettingsPage() {
                 AiProvider.entries.forEach { provider ->
                     DropdownMenuItem(
                         text = { Text(provider.label) },
-                        enabled = provider != AiProvider.ON_DEVICE,
-                        onClick = { choosing = false; editing = store.newProfile(provider) },
+                        onClick = {
+                            choosing = false
+                            if (provider == AiProvider.ON_DEVICE) localModels = true else editing = store.newProfile(provider)
+                        },
                     )
                 }
             }
@@ -168,7 +188,17 @@ internal fun AiSettingsPage() {
 private fun AiSendLog() {
     val journal = LocalContext.current.trazo.aiJournal
     val log by journal.log.collectAsState()
-    val queue by journal.queue.collectAsState()
+    val legacyQueue by journal.queue.collectAsState()
+    val app = LocalContext.current.trazo
+    val durablePending by androidx.compose.runtime.produceState(0, app) {
+        while (true) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { app.reviewQueue.pendingCount() }.getOrDefault(0)
+            }
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    val pending = durablePending + legacyQueue.size
     var all by remember { mutableStateOf(false) }
     PrefCard("Registro de envíos") {
         if (log.isEmpty()) AiHint("Todavía no se envió nada.")
@@ -189,10 +219,20 @@ private fun AiSendLog() {
                         s.error?.let { "error: $it" } ?: if (s.marks == 1) "1 marca" else "${s.marks} marcas",
                     ).joinToString(" · "),
                 )
+                s.textChars?.let { AiHint("Texto inicial: $it caracteres") }
+                if (s.imageWidth != null && s.imageHeight != null) AiHint("Imagen: ${s.imageWidth} × ${s.imageHeight} px")
+                val usage = s.usage
+                if (usage == null) AiHint("Consumo de tokens no disponible.") else {
+                    usage.inputTokens?.let { AiHint("Entrada total (texto e imagen): $it tokens") }
+                    usage.imageInputTokens?.let { AiHint("Imagen: $it tokens de la entrada") }
+                    usage.cachedInputTokens?.let { AiHint("Caché: $it tokens de la entrada") }
+                    usage.outputTokens?.let { AiHint("Salida total: $it tokens") }
+                    usage.reasoningTokens?.let { AiHint("Razonamiento: $it tokens, incluidos en la salida") }
+                }
             }
         }
         if (!all && log.size > shown.size) TextButton(onClick = { all = true }) { Text("Ver todo (${log.size})") }
-        if (queue.isNotEmpty()) AiHint(if (queue.size == 1) "1 revisión espera conexión." else "${queue.size} revisiones esperan conexión.")
+        if (pending > 0) AiHint(if (pending == 1) "1 revisión pendiente, sin envío automático." else "$pending revisiones pendientes, sin envío automático.")
         if (log.isNotEmpty()) OutlinedButton(onClick = journal::clearLog) { Text("Borrar registro") }
         AiHint("Solo se guarda este resumen; la imagen y el texto enviados no quedan en el equipo.")
     }
@@ -205,11 +245,14 @@ private sealed interface Remote {
     data class Done(val message: String, val ok: Boolean) : Remote
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val client = remember { AiClient() }
+    val localRuntime = remember(context) { io.trazo.app.ai.LocalCompletion(context) }
+    androidx.compose.runtime.DisposableEffect(localRuntime) { onDispose { localRuntime.close() } }
+    val client = remember(localRuntime) { AiClient(local = localRuntime) }
     val oauth = remember { AiOAuth() }
     var p by remember { mutableStateOf(initial) }
     // Si el perfil tenía una sesión guardada, no se muestra como si fuera una clave.
@@ -243,21 +286,43 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
             p.name, { p = p.copy(name = it) }, label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
         Text("Proveedor", style = MaterialTheme.typography.bodyMedium)
-        ChoiceRow(AiProvider.entries.filter { it != AiProvider.ON_DEVICE }, p.provider, { it.label.substringBefore(" (") }, { provider ->
+        ChoiceRow(AiProvider.entries, p.provider, { it.label.substringBefore(" (") }, { provider ->
             // Cambiar de proveedor trae su URL, salvo que el usuario ya haya escrito otra.
             // Con inicio de sesión la URL es siempre la oficial.
             val url = if (provider.signIn || p.baseUrl == p.provider.defaultBaseUrl || p.baseUrl.isBlank()) provider.defaultBaseUrl else p.baseUrl
-            p = p.copy(provider = provider, baseUrl = url)
-            models = emptyList()
+            if (provider != p.provider) {
+                p = p.copy(
+                    provider = provider,
+                    baseUrl = url,
+                ).resetReasoningEffortForTarget()
+                models = emptyList()
+                modelMenu = false
+            }
         })
         LaunchedEffect(p.provider) {
             // Un perfil viejo o importado con otra URL vuelve a la oficial.
-            if (p.provider.signIn && p.baseUrl != p.provider.defaultBaseUrl) p = p.copy(baseUrl = p.provider.defaultBaseUrl)
+            if (p.provider.signIn && p.baseUrl != p.provider.defaultBaseUrl) {
+                p = p.copy(baseUrl = p.provider.defaultBaseUrl).resetReasoningEffortForTarget()
+                models = emptyList()
+                modelMenu = false
+            }
         }
-        if (p.provider.signIn) {
+        if (p.provider == AiProvider.ON_DEVICE) {
+            AiHint("El identificador corresponde a un archivo importado desde Modelos en la tableta. No se usa internet.")
+            SwitchRow("Solo texto reconocido (sin imagen)", p.localTextOnly, { p = p.copy(localTextOnly = it) })
+            AiHint("Sin imagen el modelo solo comprueba los renglones que Trazo reconoció. No puede verificar símbolos desconocidos, gráficos ni figuras. MediaPipe requiere esta opción.")
+        } else if (p.provider.signIn) {
             AiHint("Servidor: ${p.provider.defaultBaseUrl} (fijo: la sesión solo se envía ahí)")
         } else OutlinedTextField(
-            p.baseUrl, { p = p.copy(baseUrl = it.trim()) }, label = { Text("URL de la API") }, singleLine = true,
+            p.baseUrl, { value ->
+                val baseUrl = value.trim()
+                if (baseUrl == p.baseUrl) p = p.copy(baseUrl = baseUrl)
+                else {
+                    p = p.copy(baseUrl = baseUrl).resetReasoningEffortForTarget()
+                    models = emptyList()
+                    modelMenu = false
+                }
+            }, label = { Text("URL de la API") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth(),
         )
         if (p.provider == AiProvider.OPENAI_COMPATIBLE) {
@@ -279,7 +344,7 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
             store.setKey(p.id, "")
             session = null
             login = Remote.Idle
-        }, onChange = { p = it }) else OutlinedTextField(
+        }, onChange = { p = it }) else if (p.provider != AiProvider.ON_DEVICE) OutlinedTextField(
             key, { key = it.trim() },
             label = { Text(if (p.provider.needsKey) "Clave de API" else "Clave de API (opcional)") },
             singleLine = true,
@@ -295,7 +360,11 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
 
         Box {
             OutlinedTextField(
-                p.model, { p = p.copy(model = it.trim()) }, label = { Text("Modelo") }, singleLine = true,
+                p.model, { value ->
+                    val model = value.trim()
+                    p = if (model == p.model) p.copy(model = model)
+                    else p.copy(model = model).resetReasoningEffortForTarget()
+                }, label = { Text("Modelo") }, singleLine = true,
                 trailingIcon = {
                     if (models.isNotEmpty()) IconButton(onClick = { modelMenu = true }) { Icon(Icons.Filled.KeyboardArrowDown, "Elegir de la lista") }
                 },
@@ -305,22 +374,44 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
                 models.forEach { m ->
                     DropdownMenuItem(
                         text = { Text(if (m.displayName == m.id) m.id else "${m.displayName}  (${m.id})") },
-                        onClick = { modelMenu = false; p = p.copy(model = m.id) },
+                        onClick = { modelMenu = false; p = p.withCatalogModel(m, preserveSelection = true) },
                     )
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(enabled = fetch != Remote.Busy, onClick = {
                 val draft = p
-                call({ fetch = it }) {
-                    val list = client.listModels(draft, credentialFor(draft))
-                    models = list
-                    if (draft.model.isBlank() || list.none { it.id == draft.model }) modelMenu = true
-                    Remote.Done("${list.size} modelos disponibles.", ok = true)
+                fetch = Remote.Busy
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching { client.listModels(draft, credentialFor(draft)) }
+                    }
+                    val current = p
+                    if (!current.hasSameCatalogTarget(draft)) {
+                        fetch = Remote.Done("La configuración cambió mientras se consultaba; se descartó la respuesta.", ok = false)
+                    } else result.fold(
+                        onSuccess = { list ->
+                            models = list
+                            val info = list.firstOrNull { it.id == draft.model }
+                            p = if (info != null) current.withCatalogModel(info, preserveSelection = true)
+                            else current.withoutCatalogEfforts()
+                            if (draft.model.isBlank()) modelMenu = true
+                            val detail = when {
+                                draft.model.isBlank() -> "Elegí un modelo para consultar sus esfuerzos."
+                                info != null -> "Se actualizaron los esfuerzos de ${info.displayName}."
+                                else -> "El catálogo no incluyó «${draft.model}»; se descartaron sus niveles guardados."
+                            }
+                            fetch = Remote.Done("${list.size} modelos disponibles. $detail", ok = true)
+                        },
+                        onFailure = { error ->
+                            fetch = if (error is AiException) Remote.Done(error.message.orEmpty(), ok = false)
+                            else Remote.Done("Error inesperado: ${error.message ?: error.javaClass.simpleName}", ok = false)
+                        },
+                    )
                 }
-            }) { Text(if (fetch == Remote.Busy) "Buscando…" else "Obtener modelos") }
-            OutlinedButton(enabled = test != Remote.Busy, onClick = {
+            }) { Text(if (fetch == Remote.Busy) "Buscando…" else if (p.model.isBlank()) "Obtener modelos" else "Consultar esfuerzos") }
+            OutlinedButton(enabled = test != Remote.Busy && p.model.isNotBlank(), onClick = {
                 val draft = p
                 call({ test = it }) {
                     val r = client.testConnection(draft, credentialFor(draft))
@@ -332,9 +423,12 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
                 }
             }) { Text(if (test == Remote.Busy) "Probando…" else "Probar conexión") }
         }
+        if (p.model.isBlank()) AiHint("Elegí un modelo de la lista o escribí su identificador para probar la conexión.")
         RemoteStatus(fetch)
         RemoteStatus(test)
     }
+
+    ReasoningEffortSection(p) { p = it }
 
     PrefCard("Revisión") {
         Text("Rigor", style = MaterialTheme.typography.bodyMedium)
@@ -367,9 +461,8 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
             OutlinedTextField(
                 p.instructions, { p = p.copy(instructions = it) }, minLines = 6, maxLines = 18, modifier = Modifier.fillMaxWidth(),
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 AiHint(if (p.instructions == DEFAULT_INSTRUCTIONS) "Son las instrucciones de fábrica." else "Instrucciones propias.")
-                Spacer(Modifier.weight(1f))
                 TextButton(enabled = p.instructions != DEFAULT_INSTRUCTIONS, onClick = { p = p.copy(instructions = DEFAULT_INSTRUCTIONS) }) {
                     Text("Restaurar")
                 }
@@ -384,13 +477,135 @@ private fun AiProfileEditor(store: AiStore, initial: AiProfile, isNew: Boolean, 
             if (isNew) store.setKey(p.id, "")
             onDone()
         }) { Text("Cancelar") }
-        Button(enabled = p.name.isNotBlank(), onClick = {
+        Button(enabled = p.name.isNotBlank() && p.canSaveReasoningEffort(), onClick = {
             store.save(p.copy(name = p.name.trim()))
             // La sesión ya quedó guardada al iniciarla; la clave escrita es solo para los demás proveedores.
             if (!p.provider.signIn) store.setKey(p.id, key)
             onDone()
         }) { Text("Guardar") }
     }
+}
+
+/**
+ * Auto siempre omite el parámetro. Manual sólo usa valores publicados por el catálogo, o un valor
+ * escrito por el usuario cuando el endpoint confirma el campo pero no enumera sus valores.
+ */
+@Composable
+private fun ReasoningEffortSection(p: AiProfile, onChange: (AiProfile) -> Unit) {
+    val manualAvailable = p.canSelectReasoningEffort
+    val modeOptions = buildList {
+        add(AiReasoningEffortMode.AUTO)
+        if (manualAvailable || p.reasoningEffortMode == AiReasoningEffortMode.MANUAL) add(AiReasoningEffortMode.MANUAL)
+    }
+    PrefCard("Esfuerzo de razonamiento") {
+        ChoiceRow(modeOptions, p.reasoningEffortMode, {
+            if (it == AiReasoningEffortMode.AUTO) "Automático" else "Manual"
+        }, { mode ->
+            if (mode == AiReasoningEffortMode.AUTO) {
+                onChange(p.copy(reasoningEffortMode = mode, reasoningEffort = null))
+            } else {
+                val knownForModel: (String) -> Boolean = { value ->
+                    p.availableReasoningEfforts.isEmpty() || p.availableReasoningEfforts.any { it.value == value }
+                }
+                val initial = p.reasoningEffort?.takeIf(knownForModel)
+                    ?: p.defaultReasoningEffort?.takeIf(knownForModel)
+                onChange(p.copy(reasoningEffortMode = mode, reasoningEffort = initial))
+            }
+        })
+
+        if (p.reasoningEffortMode == AiReasoningEffortMode.AUTO) {
+            val note = when {
+                p.defaultReasoningEffort != null -> "El catálogo indica ${p.defaultReasoningEffort} como valor predeterminado. Trazo omite el parámetro."
+                p.reasoningEffortCatalogKnown && p.reasoningThinkingSupported && p.availableReasoningEfforts.isEmpty() ->
+                    "El catálogo indica que el modelo admite razonamiento, pero no publica niveles. Trazo deja que el proveedor elija."
+                p.provider == AiProvider.OPENAI -> "La API de OpenAI admite reasoning_effort en modelos de razonamiento, pero su lista no publica valores por modelo. Automático usa el valor del servidor."
+                p.provider == AiProvider.ANTHROPIC -> "La API de Anthropic admite output_config.effort en modelos compatibles, pero el catálogo no publicó niveles para este modelo. Automático omite el campo."
+                p.reasoningEffortCatalogKnown -> "Este catálogo no informó un nivel predeterminado ni opciones. Trazo omite el parámetro."
+                else -> "No hay opciones de esfuerzo en este perfil. Automático omite el campo y usa la configuración del proveedor. Consultá el catálogo para ver niveles manuales."
+            }
+            AiHint(note)
+        } else if (!manualAvailable) {
+            AiHint("El perfil guardó un nivel manual, pero el catálogo actual no confirma que este modelo lo admita. Elegí Automático o consultá el catálogo.")
+        } else if (p.availableReasoningEfforts.isNotEmpty()) {
+            Text("Niveles informados por el catálogo", style = MaterialTheme.typography.bodyMedium)
+            val selected = p.availableReasoningEfforts.firstOrNull { it.value == p.reasoningEffort }
+                ?: p.availableReasoningEfforts.first().copy(value = "")
+            ChoiceRow(
+                p.availableReasoningEfforts,
+                selected,
+                { option -> option.description.takeIf { it.isNotBlank() }?.let { "${option.value} · $it" } ?: option.value },
+                { option -> onChange(p.copy(reasoningEffort = option.value)) },
+            )
+            p.availableReasoningEfforts.firstOrNull { it.value == p.reasoningEffort }?.description
+                ?.takeIf { it.isNotBlank() }?.let { AiHint(it) }
+            if (p.reasoningEffort.isNullOrBlank()) AiHint("Elegí un nivel del catálogo para activar el modo manual.")
+            if (p.defaultReasoningEffort != null) AiHint("Predeterminado del catálogo: ${p.defaultReasoningEffort}.")
+        } else {
+            OutlinedTextField(
+                value = p.reasoningEffort.orEmpty(),
+                onValueChange = { onChange(p.copy(reasoningEffort = it.trim().takeIf(String::isNotEmpty))) },
+                label = { Text("Valor manual exacto") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            AiHint(when {
+                p.provider == AiProvider.OPENAI -> "El catálogo no enumera valores para este modelo. Escribí un valor que la API admita; uno no válido puede ser rechazado."
+                p.provider == AiProvider.ANTHROPIC -> "La API de Anthropic admite output_config.effort en modelos compatibles; el catálogo no enumera valores aquí. Escribí un valor exacto admitido; uno incompatible puede ser rechazado."
+                p.reasoningEffortManualSupported -> "El catálogo confirma el parámetro, pero no lista sus valores. Escribí uno admitido por el servidor; no se supone ningún nivel."
+                else -> "El catálogo no informó valores manuales."
+            })
+        }
+    }
+}
+
+private fun AiProfile.resetReasoningEffortForTarget(): AiProfile = copy(
+    reasoningEffortMode = AiReasoningEffortMode.AUTO,
+    reasoningEffort = null,
+    availableReasoningEfforts = emptyList(),
+    defaultReasoningEffort = null,
+    reasoningEffortCatalogKnown = false,
+    reasoningEffortManualSupported = false,
+    reasoningThinkingSupported = false,
+)
+
+private fun AiProfile.hasSameCatalogTarget(other: AiProfile): Boolean =
+    provider == other.provider && model == other.model && endpoint == other.endpoint
+
+private fun AiProfile.withCatalogModel(info: AiModelInfo, preserveSelection: Boolean = false): AiProfile {
+    val sameModel = model == info.id
+    val keepEffort = preserveSelection && sameModel && reasoningEffortMode == AiReasoningEffortMode.MANUAL &&
+        (if (info.reasoningEfforts.isNotEmpty()) info.reasoningEfforts.any { it.value == reasoningEffort }
+        else provider == AiProvider.OPENAI || provider == AiProvider.ANTHROPIC || info.reasoningEffortManualSupported)
+    return copy(
+        model = info.id,
+        reasoningEffortMode = if (keepEffort) AiReasoningEffortMode.MANUAL else AiReasoningEffortMode.AUTO,
+        reasoningEffort = if (keepEffort) reasoningEffort else null,
+        availableReasoningEfforts = info.reasoningEfforts,
+        defaultReasoningEffort = info.defaultReasoningEffort,
+        reasoningEffortCatalogKnown = info.reasoningEffortCatalogKnown,
+        reasoningEffortManualSupported = info.reasoningEffortManualSupported,
+        reasoningThinkingSupported = info.reasoningThinkingSupported,
+    )
+}
+
+private fun AiProfile.withoutCatalogEfforts(): AiProfile {
+    val keepFreeformManual = provider in setOf(AiProvider.OPENAI, AiProvider.ANTHROPIC) && reasoningEffortMode == AiReasoningEffortMode.MANUAL
+    return copy(
+        reasoningEffortMode = if (keepFreeformManual) AiReasoningEffortMode.MANUAL else AiReasoningEffortMode.AUTO,
+        reasoningEffort = reasoningEffort.takeIf { keepFreeformManual },
+        availableReasoningEfforts = emptyList(),
+        defaultReasoningEffort = null,
+        reasoningEffortCatalogKnown = false,
+        reasoningEffortManualSupported = false,
+        reasoningThinkingSupported = false,
+    )
+}
+
+private fun AiProfile.canSaveReasoningEffort(): Boolean {
+    if (reasoningEffortMode == AiReasoningEffortMode.AUTO) return true
+    if (reasoningEffort.isNullOrBlank()) return false
+    if (!canSelectReasoningEffort) return false
+    return availableReasoningEfforts.isEmpty() || availableReasoningEfforts.any { it.value == reasoningEffort }
 }
 
 /** Iniciar o cerrar sesión con la cuenta, en lugar de la clave de API. */
@@ -428,14 +643,13 @@ private fun SignInSection(
                 "No es una API oficial para otras apps: OpenAI puede cambiarla o limitarla en cualquier momento.",
         )
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (session == null) {
             Button(enabled = login != Remote.Busy && (p.provider != AiProvider.GEMINI_GOOGLE || p.oauthClientId.isNotBlank()), onClick = onSignIn) {
                 Text(if (login == Remote.Busy) "Esperando al navegador…" else "Iniciar sesión")
             }
         } else {
             AiHint("Sesión iniciada" + (session.email?.let { " como $it" } ?: "") + ".")
-            Spacer(Modifier.weight(1f))
             OutlinedButton(onClick = onSignOut) { Text("Cerrar sesión") }
         }
     }
@@ -489,7 +703,7 @@ internal fun AiQuickMenu(
                     Text(if (reviewing) "Revisando…" else "Revisar página")
                 }
                 AiHint("Para revisar solo una parte, elegila con el lazo y tocá «Revisar». Tocá una marca para verla, discutirla o quitarla.")
-                if (pending > 0) AiHint(if (pending == 1) "1 revisión espera conexión: sale sola al volver la red." else "$pending revisiones esperan conexión: salen solas al volver la red.")
+                if (pending > 0) AiHint(if (pending == 1) "1 revisión pendiente. Abrí esa página y tocá «Revisar» para enviarla." else "$pending revisiones pendientes. Se envían solo cuando revisás cada página manualmente.")
             }
         },
         confirmButton = { TextButton(onClick = onConfigure) { Text("Configurar") } },

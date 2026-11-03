@@ -20,7 +20,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -30,6 +30,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,7 +61,7 @@ fun PagesPanel(
     vm: EditorViewModel,
     colors: PaperColors,
     onDelete: (Int) -> Unit,
-    onClose: () -> Unit,
+    onMinimize: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val count = vm.pageCount
@@ -81,7 +85,7 @@ fun PagesPanel(
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(positionLabel(vm.pageIndex, count), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 ToolButton(Icons.Filled.Add, "Nueva página al final", onClick = { vm.addPage() }, size = 36.dp)
-                ToolButton(Icons.Filled.Close, "Cerrar páginas", onClick = onClose, size = 36.dp)
+                ToolButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Minimizar vista previa de páginas", onClick = onMinimize, size = 36.dp)
             }
             LazyColumn(
                 state = list,
@@ -173,6 +177,26 @@ private fun PageItem(
                 style = MaterialTheme.typography.labelLarge,
                 color = if (current) scheme.primary else scheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/** Collapsed preview: a small, labelled target that leaves the document readable. */
+@Composable
+fun PagesPreviewTab(pageIndex: Int, pageCount: Int, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp),
+        modifier = modifier.width(40.dp)
+            .clickable(role = Role.Button, onClickLabel = "Mostrar vista previa de páginas", onClick = onOpen)
+            .semantics { contentDescription = "Mostrar vista previa de páginas. ${positionLabel(pageIndex, pageCount)}" },
+    ) {
+        Column(Modifier.padding(vertical = 12.dp, horizontal = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(TrazoIcons.Pages, contentDescription = null, modifier = Modifier.size(24.dp))
+            Text("${pageIndex + 1}/$pageCount", style = MaterialTheme.typography.labelSmall,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

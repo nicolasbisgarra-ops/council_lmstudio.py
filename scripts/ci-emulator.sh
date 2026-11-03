@@ -10,6 +10,8 @@ has() { [[ ",$FASES," == *",$1,"* ]]; }
 # Los dos trabajos del emulador publican en la misma rama: lo común lleva la fase en el nombre.
 SUF="$(echo "$FASES" | tr , -)"
 mkdir -p "$OUT"
+instrument_fail=0
+format_fail=0
 RUNNER="io.trazo.test/androidx.test.runner.AndroidJUnitRunner"
 
 adb wait-for-device
@@ -97,6 +99,9 @@ if has pruebas; then
 echo "== Pruebas instrumentadas =="
 diag "antes de pruebas"
 adb shell am instrument -w -e class io.trazo.app.EditorInstrumentedTest,io.trazo.app.ExportInstrumentedTest,io.trazo.app.ParametricExportInstrumentedTest,io.trazo.app.PageHistoryInstrumentedTest "$RUNNER" | tee "$OUT/pruebas-instrumentadas.txt"
+instrument_rc=${PIPESTATUS[0]}
+echo "instrumentation exit_status=$instrument_rc" | tee -a "$OUT/pruebas-instrumentadas.txt"
+[ "$instrument_rc" -eq 0 ] || instrument_fail=1
 diag "tras pruebas"
 fi
 
@@ -111,6 +116,9 @@ settle 1
 timeout 480 adb logcat -v time > "$OUT/logcat-interfaz.txt" 2>&1 &
 LOGCAT=$!
 timeout 420 adb shell am instrument -w -e class io.trazo.app.GuiTourTest#tourOfTheInterface "$RUNNER" | tee "$OUT/interfaz.txt"
+instrument_rc=${PIPESTATUS[0]}
+echo "instrumentation exit_status=$instrument_rc" | tee -a "$OUT/interfaz.txt"
+[ "$instrument_rc" -eq 0 ] || instrument_fail=1
 kill $LOGCAT 2>/dev/null || true
 # Si el emulador se cae, cada `adb` queda «waiting for device» hasta que se cancela el job y no
 # se sube nada: de acá en adelante todo con tope y, sin dispositivo, se informa y se termina.
@@ -132,6 +140,9 @@ settle 1
 timeout 200 adb logcat -v time > "$OUT/logcat-selector-color.txt" 2>&1 &
 LOGCAT=$!
 timeout 180 adb shell am instrument -w -e class io.trazo.app.GuiTourTest#colorPicker "$RUNNER" | tee "$OUT/selector-color.txt"
+instrument_rc=${PIPESTATUS[0]}
+echo "instrumentation exit_status=$instrument_rc" | tee -a "$OUT/selector-color.txt"
+[ "$instrument_rc" -eq 0 ] || instrument_fail=1
 kill $LOGCAT 2>/dev/null || true
 if [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ]; then
   echo "FALLÓ: se perdió el emulador al abrir el selector de color" | tee -a "$OUT/selector-color.txt"
@@ -150,9 +161,12 @@ for spec in telefono:1080x2400:420 telefono-horizontal:2400x1080:420 tableta:160
   timeout 20 adb shell wm size "$size" || true
   timeout 20 adb shell wm density "$dens" || true
   settle 1
-  echo "-- $ff: $size @ $dens dpi" | tee -a "$OUT/formatos.txt"
-  timeout 180 adb shell am instrument -w -e formato "$ff" -e class io.trazo.app.GuiTourTest#formFactor "$RUNNER" | tee -a "$OUT/formatos.txt"
-  [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ] && { echo "AVISO: se perdió el emulador en $ff" | tee -a "$OUT/formatos.txt"; break; }
+  echo "-- $ff: $size @ $dens dpi" | tee -a "$OUT/formatos.txt" "$OUT/formato-$ff.txt"
+  timeout 180 adb shell am instrument -w -e formato "$ff" -e class io.trazo.app.GuiTourTest#formFactor "$RUNNER" | tee -a "$OUT/formatos.txt" "$OUT/formato-$ff.txt"
+  format_rc=${PIPESTATUS[0]}
+  echo "formato exit_status=$format_rc" | tee -a "$OUT/formatos.txt" "$OUT/formato-$ff.txt"
+  [ "$format_rc" -eq 0 ] || format_fail=1
+  [ "$(timeout 20 adb get-state 2>/dev/null)" != "device" ] && { echo "AVISO: se perdió el emulador en $ff" | tee -a "$OUT/formatos.txt"; format_fail=1; break; }
   for n in 1-cuadernos 2-editor 3-pluma; do
     timeout 30 adb pull "/data/local/tmp/trazo-formato-$ff-$n.png" "$OUT/trazo-formato-$ff-$n.png" || true
   done
@@ -170,6 +184,9 @@ adb shell screenrecord --bit-rate 6000000 --time-limit 175 /sdcard/trazo-demo.mp
 REC=$!
 sleep 3
 timeout 600 adb shell am instrument -w -e class io.trazo.app.DemoExerciseTest "$RUNNER" | tee "$OUT/demo.txt"
+instrument_rc=${PIPESTATUS[0]}
+echo "instrumentation exit_status=$instrument_rc" | tee -a "$OUT/demo.txt"
+[ "$instrument_rc" -eq 0 ] || instrument_fail=1
 diag "tras demo"
 sleep 2
 adb shell pkill -INT screenrecord || true
@@ -187,7 +204,7 @@ fi
 fi
 timeout 60 adb logcat -d -t 2000 > "$OUT/logcat-$SUF.txt" || true
 
-status=0
+status=$((instrument_fail | format_fail))
 logs=()
 has pruebas && logs+=(pruebas-instrumentadas.txt)
 has interfaz && logs+=(interfaz.txt selector-color.txt)
@@ -202,6 +219,8 @@ done
 if has interfaz; then
   gui=$(ls "$OUT"/trazo-gui-*.png 2>/dev/null | wc -l)
   [ "$gui" -ge 13 ] || { echo "FALLÓ: hay $gui capturas de la interfaz, se esperaban 13"; status=1; }
+  formats_png=$(ls "$OUT"/trazo-formato-*.png 2>/dev/null | wc -l)
+  [ "$formats_png" -ge 15 ] || { echo "FALLÓ: hay $formats_png capturas de formatos, se esperaban 15"; status=1; }
 fi
 if has demo; then
   [ -s "$OUT/demo-real-android-emulador.mp4" ] || { echo "FALLÓ: falta el video de la demo"; status=1; }

@@ -1,11 +1,26 @@
 package io.trazo.core
 
+import kotlin.math.roundToInt
+
+import kotlinx.serialization.json.add
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.util.UUID
 
 /** Modo IA en la hoja: renglones numerados, doble verificación, marcas guardadas y su disposición. */
 class AiNotesTest {
@@ -43,6 +58,102 @@ class AiNotesTest {
         val page = first + row(100f, "3", "Igual", "3") + InkStroke("m", listOf(InkPoint(0f, 0f), InkPoint(90f, 0f)), brush = Brush.HIGHLIGHTER)
         assertEquals(1, MathNotes.reviewLines(page, patterns, first.map { it.id }.toSet()).size)
         assertTrue(MathNotes.reviewLines(page, patterns).none { "m" in it.strokeIds })
+    }
+
+    @Test fun `la exportacion compacta conserva el nombre original sin convertir la expresion`() {
+        val number = user.getValue("2")
+        val three = user.getValue("3")
+        val rawPlus = signs.getValue("Más").copy(id = "raw-plus", name = "Mas", unknown = "+")
+        val ink = InkReplacement.place(number, Bounds(0f, 0f, 25f, 40f), ids) +
+            InkReplacement.place(rawPlus, Bounds(40f, 0f, 65f, 40f), ids) +
+            InkReplacement.place(three, Bounds(80f, 0f, 105f, 40f), ids)
+        val raw = MathNotes.reviewLabels(ink, patterns + rawPlus).single()
+        val payload = Json.parseToJsonElement(raw.text).jsonObject
+        val labels = payload.getValue("labels").jsonArray.map { it.jsonArray[0].jsonPrimitive.content }
+
+        assertEquals(listOf("2", "Mas", "3"), labels)
+        val bounds = ink.bounds()
+        assertEquals(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom).map { it.roundToInt() }, payload.getValue("box").jsonArray.map { it.jsonPrimitive.int })
+        assertEquals(0, payload.getValue("unlabeled").jsonPrimitive.int)
+        assertEquals(setOf("box", "labels", "unlabeled"), payload.keys)
+        assertTrue(payload.getValue("labels").jsonArray.all { token -> token.jsonArray.size == 5 })
+        assertTrue("el texto local conserva su conversion matematica", MathNotes.reviewLines(ink, patterns + rawPlus).single().text.contains("2+3"))
+        assertEquals(ink.map { it.id }, raw.strokeIds)
+        assertEquals(ink.bounds(), raw.bounds)
+        assertTrue("los ids permanecen en los metadatos internos", ink.all { it.id in raw.strokeIds })
+        assertTrue("la huella usa la tinta original", raw.fingerprint == AiNotes.fingerprint(raw.strokeIds, ink))
+    }
+
+    @Test fun `etiquetas crudas conservan patrones sin significado matematico y trazos desconocidos`() {
+        val disabled = signs.getValue("Por").copy(id = "raw-disabled", name = "Mi por", unknown = "")
+        val recognized = InkReplacement.place(disabled, Bounds(0f, 100f, 25f, 140f), ids)
+        val handwriting = hand("raw-hand", 45f, 100f)
+        val generated = listOf(hand("raw-result", 90f, 100f).copy(calc = CalcTag("generated", result = true)))
+        val marker = InkStroke("raw-highlight", listOf(InkPoint(130f, 100f), InkPoint(180f, 100f)), brush = Brush.HIGHLIGHTER)
+        val all = recognized + handwriting + generated + marker
+
+        val line = MathNotes.reviewLabels(all, patterns + disabled, (recognized + handwriting + generated + marker).map { it.id }.toSet()).single()
+        val payload = Json.parseToJsonElement(line.text).jsonObject
+        val labels = payload.getValue("labels").jsonArray
+
+        assertEquals(listOf("Mi por"), labels.map { it.jsonArray[0].jsonPrimitive.content })
+        assertEquals(1, payload.getValue("unlabeled").jsonPrimitive.int)
+        assertEquals(recognized.map { it.id } + "raw-hand", line.strokeIds)
+        assertTrue("no se envían UUIDs", (recognized.map { it.id } + "raw-hand").none { it in line.text })
+        assertTrue("la caja interna conserva coordenadas exactas", line.bounds == (recognized + handwriting).bounds())
+        assertEquals("?", MathNotes.reviewLines(recognized + handwriting, patterns + disabled).single().text)
+    }
+
+    @Test fun `el formato compacto reduce 1000 glifos y conserva metadatos internos`() {
+        val number = user.getValue("2")
+        val known = (0 until 500).map { i ->
+            val x = 0.25f + i * 30f
+            InkStroke(
+                id = UUID.nameUUIDFromBytes("known-$i".toByteArray()).toString(),
+                points = listOf(InkPoint(x, 100.25f), InkPoint(x + 24.5f, 140.5f)),
+                patternId = number.id,
+            )
+        }
+        val unknown = (0 until 500).map { i ->
+            val x = 15_000.25f + i * 30f
+            InkStroke(
+                id = UUID.nameUUIDFromBytes("unknown-$i".toByteArray()).toString(),
+                points = listOf(InkPoint(x, 100.25f), InkPoint(x + 24.5f, 140.5f)),
+            )
+        }
+        val ink = known + unknown
+        val line = MathNotes.reviewLabels(ink, patterns).single()
+        val compact = Json.parseToJsonElement(line.text).jsonObject
+        val byId = (patterns + number).associateBy { it.id }
+        val previousFormat = buildJsonArray {
+            ink.forEach { stroke ->
+                val bounds = stroke.bounds
+                val label = stroke.patternId?.let { byId[it]?.name }
+                add(buildJsonObject {
+                    put("label", label?.let(::JsonPrimitive) ?: JsonNull)
+                    put("patternId", stroke.patternId?.let(::JsonPrimitive) ?: JsonNull)
+                    put("bounds", buildJsonObject {
+                        put("left", bounds.left); put("top", bounds.top)
+                        put("right", bounds.right); put("bottom", bounds.bottom)
+                    })
+                    put("strokeIds", buildJsonArray { add(stroke.id) })
+                })
+            }
+        }.toString()
+
+        assertTrue("old=${previousFormat.length}, new=${line.text.length}", line.text.length < previousFormat.length)
+        assertEquals(500, compact.getValue("labels").jsonArray.size)
+        assertEquals(500, compact.getValue("unlabeled").jsonPrimitive.int)
+        assertEquals(listOf(0, 100, 29_995, 141), compact.getValue("box").jsonArray.map { it.jsonPrimitive.int })
+        assertEquals(1, compact.getValue("labels").jsonArray.first().jsonArray[0].jsonPrimitive.content.length)
+        assertEquals(ink.map { it.id }, line.strokeIds)
+        assertEquals(Bounds(0.25f, 100.25f, 29_994.75f, 140.5f), line.bounds)
+        assertEquals(AiNotes.fingerprint(line.strokeIds, ink), line.fingerprint)
+        assertTrue("UUIDs no viajan en el JSON", ink.none { it.id in line.text })
+        assertTrue(AiNotes.unchanged(line.strokeIds, line.bounds, ink, line.fingerprint))
+        val edited = ink.toMutableList().also { it[250] = it[250].transformed(Affine.translate(1f, 0f)) }
+        assertTrue("la huella invalida un cambio interno aunque no cambie la caja", line.bounds == edited.bounds())
+        assertFalse(AiNotes.unchanged(line.strokeIds, line.bounds, edited, line.fingerprint))
     }
 
     @Test fun `el motor da por buena una identidad y por mala una cuenta sin letras`() {

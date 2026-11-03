@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+# Must match add_library(trazo_llama SHARED ...) in app/src/main/cpp/CMakeLists.txt.
+env:
+  TRAZO_NATIVE_REQUIRED_LIB: libtrazo_llama.so
+
 # Cada trabajo hace cola por separado: la compilación de un push nuevo (y su APK) no espera a que
 # termine el emulador del run anterior.
 jobs:
@@ -73,6 +77,8 @@ jobs:
             sed 's/^/sha256 /' output/SHA256SUMS-apk.txt
           } | tee output/build-provenance.txt
           ls -la output
+      - name: Auditar bibliotecas nativas de las APK
+        run: python3 -I scripts/ci-abi-audit.py --require-abi arm64-v8a --require-library "$TRAZO_NATIVE_REQUIRED_LIB" output/Trazo-debug.apk output/Trazo-debug-androidTest.apk
       - uses: actions/upload-artifact@v4
         if: always()
         with:

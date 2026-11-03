@@ -1,5 +1,7 @@
 # Trazo — cuaderno matemático manuscrito (Android nativo)
 
+> Integración de la entrega 0.2.7 de Codex y punto de continuación para Claude: [docs/handoff/CONTINUAR_CODEX_027.md](docs/handoff/CONTINUAR_CODEX_027.md).
+
 App **nativa de Android** (Kotlin, Jetpack Compose + una `View` de tinta propia que procesa `MotionEvent` del S Pen). Es un cuaderno de notas libre, al estilo Samsung Notes, con **patrones enseñables**: dibujás un gesto (integral, raíz, fracción…), **mantenés la punta apoyada y quieta ~0,5 s** y el gesto se reemplaza por **la tinta manuscrita que vos definiste**. Todo lo que queda en la hoja son trazos vectoriales editables: sin LaTeX, sin fuentes matemáticas, sin imágenes, sin WebView.
 
 > Especificación de origen: [`docs/handoff/`](docs/handoff/README_PRIMERO.md). Los pedidos literales están en [`docs/handoff/00_PEDIDOS_ORIGINALES_LITERAL.md`](docs/handoff/00_PEDIDOS_ORIGINALES_LITERAL.md).

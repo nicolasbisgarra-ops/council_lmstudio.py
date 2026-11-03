@@ -220,7 +220,8 @@ object Polynomials {
     private fun squareFree(n: BigInteger): Pair<BigInteger, BigInteger> {
         var m = n
         var k = BigInteger.ONE
-        var f = BigInteger.TWO
+        // La constante de dos apareció en Android API 33; core también corre desde minSdk 26.
+        var f = BigInteger.valueOf(2L)
         var steps = 0
         while (f * f <= m && steps < 200_000) {
             val sq = f * f

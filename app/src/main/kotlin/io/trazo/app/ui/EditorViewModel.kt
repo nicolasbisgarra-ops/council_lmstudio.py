@@ -1,6 +1,8 @@
 package io.trazo.app.ui
 
 import android.app.Application
+import android.graphics.BitmapFactory
+import io.trazo.ai.AiReviewPrompt
 import android.content.ContentResolver
 import android.net.Uri
 import androidx.compose.runtime.getValue
@@ -12,13 +14,27 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.trazo.ai.AiException
+import io.trazo.ai.AiClient
+import io.trazo.ai.AiProvider
 import io.trazo.ai.AiMark
+import io.trazo.ai.AiProfile
+import io.trazo.ai.AiReview
 import io.trazo.ai.AiOAuth
 import io.trazo.ai.AiReviewer
+import io.trazo.ai.DurableReviewQueue
+import io.trazo.ai.DurableReviewLease
+import io.trazo.ai.PendingRemoteReview
+import io.trazo.ai.ReviewBackend
+import io.trazo.ai.ReviewCancelHandle
+import io.trazo.ai.ReviewLifecycleGate
+import io.trazo.ai.ReviewScope
+import io.trazo.ai.ReviewTicket
 import io.trazo.ai.MarkKind
 import io.trazo.app.ai.AiCapture
 import io.trazo.app.ai.AiConnectivity
 import io.trazo.app.ai.AiMarkPainter
+import io.trazo.app.ai.LocalCompletion
+import io.trazo.app.data.StudyFeature
 import io.trazo.app.data.AiQueued
 import io.trazo.app.data.AiSend
 import io.trazo.app.data.EraserMode
@@ -47,11 +63,15 @@ import io.trazo.core.Page
 import io.trazo.core.PageAi
 import io.trazo.core.PageState
 import io.trazo.core.Paper
+import io.trazo.core.ParametricInk
 import io.trazo.core.ParametricShape
 import io.trazo.core.Tool
 import io.trazo.core.bounds
 import io.trazo.core.moveItem
 import io.trazo.core.withGestureExample
+import io.trazo.core.study.ExamHelp
+import io.trazo.core.study.ExamAccessGate
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -61,11 +81,19 @@ import kotlinx.coroutines.withContext
 /** Herramienta de la barra. El resaltador es la pluma con su propia punta, color y grosor. */
 enum class EditorTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, PAN }
 
+/** Injectable review boundary for deterministic tests; production uses the configured AiReviewer. */
+typealias AiReviewCall = (AiProfile, String?, List<String>, ByteArray?, (AiMark) -> Unit) -> AiReview
+
 /**
  * Estado de un cuaderno abierto. El [controller] sobrevive a rotaciones; cada página tiene su
  * propio historial. Autoguardado atómico con espera corta tras cada cambio y al salir.
  */
-class EditorViewModel(app: Application, val notebookId: String) : AndroidViewModel(app) {
+class EditorViewModel(
+    private val app: Application,
+    val notebookId: String,
+    private val aiReviewCall: AiReviewCall? = null,
+    private val remoteOnlineOverride: (() -> Boolean)? = null,
+) : AndroidViewModel(app) {
     private val repo = app.trazo.repository
     private val settings = app.trazo.settings
 
@@ -74,6 +102,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         private set
     /** El cuaderno se lee fuera del hilo principal; mientras tanto la pantalla muestra un indicador. */
     var loading by mutableStateOf(true)
+        private set
+    var pageLoadError by mutableStateOf<String?>(null)
         private set
     var pageIndex by mutableIntStateOf(0)
         private set
@@ -108,6 +138,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     private var editVersion = 0L
     private var savedVersion = 0L
     private var attaching = false
+    private var attachedPageId: String? = null
 
     /**
      * Las últimas hojas visitadas con su historial, por id: volver a una hoja recupera su deshacer/rehacer.
@@ -125,7 +156,21 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
                 InkEvent.PageChanged -> {
                     revision++; mathExplanation = null; if (!attaching) markDirty()
                     // Una marca de la IA se va sola si cambian los trazos de su renglón.
-                    AiNotes.prune(page.ai, page.strokes).let { if (it !== page.ai) setAi(it) }
+                    AiNotes.prune(page.ai, page.allInk).let { if (it !== page.ai) setAi(it) }
+                    activeReviewTicket?.let { ticket ->
+                        reviewScopeForCurrentPage()?.let { actual ->
+                            if (actual.notebookId == ticket.scope.notebookId && actual.pageId == ticket.scope.pageId && actual != ticket.scope) {
+                                cancelAiReview()
+                                aiProgress = AiProgress(false, message = "La página cambió durante la revisión.", error = true)
+                            } else {
+                                reviewGate.contentChanged(actual)
+                            }
+                        }
+                    }
+                    discussionScope?.let { old ->
+                        val current = reviewScopeForCurrentPage()
+                        if (current != old) cancelDiscussion()
+                    }
                     // Seguir escribiendo (o borrar, deshacer…) con la burbuja abierta conserva la escritura.
                     if (ambiguousArmed) { ambiguous = null; ambiguousArmed = false }
                 }
@@ -156,7 +201,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         controller.handleRadiusPx = 24f * density
         controller.recognitionEnabled = s.gesturesEnabled
         controller.autoAlign = s.autoAlign
-        controller.mathEnabled = s.mathNotes
+        controller.mathEnabled = s.mathNotes && app.trazo.study.isAllowed(StudyFeature.CALCULATOR)
         controller.mathColor = s.mathResultColor
         controller.shape = s.shape
         // El extremo goma del lápiz borra como la goma elegida; el botón lateral hace lo que se configuró.
@@ -219,10 +264,17 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
      * Abre la página [index]: se decodifica solo esa y las demás quedan fijas. Si se visitó hace poco,
      * vuelve con su historial ([sessions]). Recordar la última página es un cambio del cuaderno que se guarda.
      */
-    private fun attachPage(index: Int) {
-        val n = notebook ?: return
-        val page = n.page(index)
+    private fun attachPage(index: Int, hardReset: Boolean = false): Boolean {
+        val n = notebook ?: return false
+        if (index !in n.slots.indices) return false
+        val page = try {
+            n.page(index)
+        } catch (e: Exception) {
+            pageLoadError = e.message ?: e.javaClass.simpleName
+            return false
+        }
         val (state, history) = sessions.getOrPut(page.id) { PageState(page.strokes, page.parametricShapes).apply { ai = page.ai } to History() }
+        if (attachedPageId != null && attachedPageId != page.id) cancelAiForPageSwitch()
         val reopened = n.lastPage != index
         notebook = n.withPage(index, page).loadedOnly(index).copy(lastPage = index)
         pageIndex = index
@@ -234,16 +286,19 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         } finally {
             attaching = false
         }
+        attachedPageId = page.id
+        pageLoadError = null
+        reviewScopeForCurrentPage()?.let { scope -> if (hardReset) reviewGate.openPage(scope) else reviewGate.navigateTo(scope) }
         aiNote = null
         aiAnswer = null
-        sendQueued()
+        return true
     }
 
     fun goToPage(index: Int) {
         val n = notebook ?: return
         if (index !in 0 until n.pageCount || index == pageIndex) return
         syncNotebook()
-        attachPage(index)
+        if (!attachPage(index)) return
         viewport.scale = 0f // volver a encajar
     }
 
@@ -253,7 +308,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         val n = notebook ?: return
         val at = (after?.plus(1)) ?: n.pageCount
         notebook = n.withPageAdded(Page(IdGenerator.RANDOM.next()), at)
-        attachPage(at)
+        if (!attachPage(at)) return
         viewport.scale = 0f
         markDirty()
     }
@@ -310,6 +365,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     /** Calcula la selección y escribe el resultado; si no se puede, devuelve el motivo para mostrarlo. */
     fun calculateSelection(): String? {
+        if (!app.trazo.study.isAllowed(StudyFeature.CALCULATOR)) return "La calculadora está bloqueada durante el examen."
         if (controller.calculateSelection()) return null
         if (controller.calculationOnlyComplex()) {
             complexPrompt = controller.calculationProblem()
@@ -320,6 +376,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     fun calculateWithImaginaries() {
         complexPrompt = null
+        if (!app.trazo.study.isAllowed(StudyFeature.CALCULATOR)) return
         controller.calculateSelection(complex = true)
     }
 
@@ -387,8 +444,12 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     fun duplicatePage(index: Int = pageIndex) {
         val n = syncNotebook() ?: return
-        notebook = n.withPageDuplicated(index)
-        attachPage(index + 1)
+        val duplicated = try { n.withPageDuplicated(index) } catch (e: Exception) {
+            pageLoadError = e.message ?: e.javaClass.simpleName
+            return
+        }
+        notebook = duplicated
+        if (!attachPage(index + 1)) return
         viewport.scale = 0f
         markDirty()
     }
@@ -397,13 +458,23 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     fun deletePage(index: Int = pageIndex) {
         val n = syncNotebook() ?: return
         if (n.pageCount < 2 || index !in 0 until n.pageCount) return
+        if (index == pageIndex) {
+            val replacementIndex = pageIndex.coerceAtMost(n.pageCount - 2)
+            try { n.withPageRemoved(index).page(replacementIndex) }
+            catch (e: Exception) { pageLoadError = e.message ?: e.javaClass.simpleName; return }
+        }
+        val deletedPageId = n.slots[index].id
         val current = pageIndex
         sessions.remove(n.slots[index].id)
         notebook = n.withPageRemoved(index)
         when {
-            index == current -> { attachPage(current.coerceAtMost(n.pageCount - 2)); viewport.scale = 0f }
+            index == current -> {
+                if (!attachPage(current.coerceAtMost(n.pageCount - 2))) return
+                viewport.scale = 0f
+            }
             index < current -> { pageIndex = current - 1; notebook = notebook?.copy(lastPage = pageIndex) }
         }
+        reviewGate.contentChanged(ReviewScope(notebookId, deletedPageId, "deleted"))
         markDirty()
     }
 
@@ -434,8 +505,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     /** Inserta la tinta de salida de un patrón en el centro de la zona visible. */
     fun insertPattern(pattern: InkPattern, viewWidth: Int, viewHeight: Int) {
         val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
-        val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(80f, Notebook.PAGE_WIDTH - 80f)
-        val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(80f, Notebook.PAGE_HEIGHT - 80f)
+        val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(-Notebook.PAGE_WIDTH + 80f, 2f * Notebook.PAGE_WIDTH - 80f)
+        val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(-Notebook.PAGE_HEIGHT + 80f, 2f * Notebook.PAGE_HEIGHT - 80f)
         controller.insertPattern(pattern, cx, cy, 140f, android.os.SystemClock.uptimeMillis())
     }
 
@@ -449,8 +520,8 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     /** Inserta una forma dinámica en el centro de la zona visible, ya seleccionada para editar. */
     fun insertParametric(kind: GeoKind, viewWidth: Int = viewSize.first, viewHeight: Int = viewSize.second) {
         val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
-        val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(100f, Notebook.PAGE_WIDTH - 100f)
-        val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(100f, Notebook.PAGE_HEIGHT - 100f)
+        val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(-Notebook.PAGE_WIDTH + 100f, 2f * Notebook.PAGE_WIDTH - 100f)
+        val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(-Notebook.PAGE_HEIGHT + 100f, 2f * Notebook.PAGE_HEIGHT - 100f)
         controller.insertParametric(kind, cx, cy, 160f)
     }
 
@@ -501,11 +572,57 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
 
     private val ai = app.trazo.ai
     private val journal = app.trazo.aiJournal
-    private val reviewer = AiReviewer()
-    private val connectivity by lazy { AiConnectivity(app) { viewModelScope.launch(Dispatchers.Main) { sendQueued() } } }
+    private val localCompletion = LocalCompletion(app)
+    private val reviewer = AiReviewer(AiClient(local = localCompletion))
+    private val reviewGate = ReviewLifecycleGate()
+    private var durableReviews: DurableReviewQueue? = null
+    private var reviewQueueProblem: String? = null
+    private var activeReviewTicket: ReviewTicket? = null
+    private var queueClaimJob: Job? = null
+    private var discussionJob: Job? = null
+    private var discussionId = 0L
+    private var discussionScope: ReviewScope? = null
+    private val connectivity by lazy { AiConnectivity(app) { /* Connectivity never starts a review. */ } }
     private var aiJob: Job? = null
     /** Las marcas que ya se guardaron: si cambian, la hoja cambió. */
     private var lastAi: PageAi? = null
+
+    private fun reviewScope(pageId: String, page: Page): ReviewScope =
+        ReviewScope(notebookId, pageId, reviewFingerprint(page.allInk))
+
+    private fun reviewFingerprint(strokes: List<InkStroke>): String {
+        val canonical = strokes.joinToString("\n") { s ->
+            buildString {
+                append(s.id).append('|').append(s.color).append('|').append(s.width.toBits())
+                    .append('|').append(s.startTime).append('|').append(s.groupId).append('|')
+                    .append(s.patternId).append('|').append(s.brush.name).append('|').append(s.calc)
+                s.points.forEach { p -> append('|').append(p.x.toBits()).append(',').append(p.y.toBits())
+                    .append(',').append(p.pressure.toBits()).append(',').append(p.timeMs) }
+            }
+        }
+        return java.security.MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun pageForReview(pageId: String): Page? {
+        val n = notebook ?: return null
+        val index = n.slots.indexOfFirst { it.id == pageId }
+        if (index < 0) return null
+        if (index == pageIndex && attachedPageId == pageId) {
+            val live = controller.page
+            return Page(pageId, live.strokes.toList(), live.shapes.toList(), live.ai)
+        }
+        sessions[pageId]?.first?.let { state ->
+            return Page(pageId, state.strokes.toList(), state.shapes.toList(), state.ai)
+        }
+        return runCatching { n.page(index) }.getOrNull()
+    }
+
+    private fun reviewScopeForCurrentPage(): ReviewScope? {
+        val id = notebook?.slots?.getOrNull(pageIndex)?.id ?: return null
+        val page = pageForReview(id) ?: return null
+        return reviewScope(id, page)
+    }
 
     /** Marca tocada: abre su burbuja. */
     var aiNote by mutableStateOf<AiNote?>(null)
@@ -523,10 +640,12 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     var aiVisible by mutableStateOf(true)
         private set
 
+    private fun remoteOnline(): Boolean = remoteOnlineOverride?.invoke() ?: connectivity.online
+
     val aiNotes: List<AiNote> get() { aiRevision; revision; return controller.page.ai?.notes.orEmpty() }
 
     /** Revisiones en cola sin conexión para este cuaderno. */
-    val aiPending: Int get() { aiRevision; return journal.pending(notebookId) }
+    val aiPending: Int get() { aiRevision; return durableReviews?.pendingCount(notebookId) ?: journal.pending(notebookId) }
 
     /** Ya usó el Modo IA: al exportar se pregunta si van las marcas. */
     val usesAi: Boolean get() = aiNotes.isNotEmpty() || journal.log.value.isNotEmpty()
@@ -540,127 +659,339 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     fun dismissAiProgress() { if (aiProgress?.running != true) aiProgress = null }
 
     fun cancelAiReview() {
+        activeReviewTicket?.let(reviewGate::cancel)
+        activeReviewTicket = null
+        localCompletion.cancel()
+        queueClaimJob?.cancel()
+        queueClaimJob = null
         aiJob?.cancel()
         aiJob = null
         val id = pendingReview
-        updateAi(pendingPage) { a -> a?.copy(notes = a.notes.filterNot { it.reviewId == id }) }
+        if (id.isNotEmpty()) updateAi(pendingPage) { a -> a?.copy(notes = a.notes.filterNot { it.reviewId == id }) }
+        activeQueueLease?.let(::releaseQueueLease)
+        activeQueueLease = null
         pendingReview = ""
         aiProgress = AiProgress(running = false, message = "Revisión cancelada.")
+    }
+
+    private fun cancelDiscussion() {
+        discussionId++
+        discussionJob?.cancel()
+        discussionJob = null
+        discussionScope = null
+        localCompletion.cancel()
+        aiDiscussing = false
+        aiAnswer = null
+    }
+
+    private fun cancelAiForPageSwitch() {
+        if (aiJob?.isActive == true || queueClaimJob?.isActive == true || activeReviewTicket != null) {
+            cancelAiReview()
+        }
+        if (aiDiscussing || discussionJob?.isActive == true) cancelDiscussion()
     }
 
     /** La revisión en curso y su hoja: sus marcas parciales se descartan si se cancela. */
     private var pendingReview = ""
     private var pendingPage = ""
+    private var activeQueueLease: DurableReviewLease? = null
 
     /**
      * Manda la hoja (o lo elegido con el lazo) al modelo en uso. Las marcas aparecen a medida que llegan;
-     * al terminar se cruzan con el motor de Trazo y quedan guardadas en la hoja. Sin conexión, el pedido
-     * queda en cola y sale solo cuando vuelve la red.
+     * al terminar se cruzan con el motor de Trazo y quedan guardadas en la hoja. Los pedidos sin conexión
+     * quedan pendientes y solo se envían cuando el usuario vuelve a tocar Revisar página.
      */
     fun reviewWithAi(selectionOnly: Boolean = false) {
         val n = notebook ?: return
-        val only = if (selectionOnly) controller.selection.toSet().takeIf { it.isNotEmpty() } else null
-        review(n.slots[pageIndex].id, only)
+        if (attachedPageId != n.slots.getOrNull(pageIndex)?.id) return
+        val pageId = n.slots[pageIndex].id
+        val shapeIds = controller.selectedShapeId?.let { id ->
+            controller.page.allInk.asSequence()
+                .filter { it.groupId == ParametricInk.groupOf(id) }
+                .map { it.id }
+                .toSet()
+        }.orEmpty()
+        val only = if (selectionOnly) (controller.selection.toSet() + shapeIds).takeIf { it.isNotEmpty() } else null
+        val currentProfile = ai.settings.value.current
+        if (currentProfile != null && currentProfile.provider != AiProvider.ON_DEVICE && remoteOnline()) {
+            sendQueued(pageId, only) { review(pageId, only) }
+        } else {
+            review(pageId, only)
+        }
     }
 
-    private fun review(pageId: String, only: Set<String>?) {
-        if (aiJob?.isActive == true) return
-        val n = notebook ?: return
+    private fun review(pageId: String, only: Set<String>?, queuedLease: DurableReviewLease? = null) {
+        if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) {
+            queuedLease?.let(::releaseQueueLease)
+            aiProgress = AiProgress(false, message = "El Modo IA está bloqueado durante el examen.", error = true)
+            return
+        }
+        if (aiJob?.isActive == true) { queuedLease?.let(::releaseQueueLease); return }
+        val n = notebook ?: run { queuedLease?.let(::releaseQueueLease); return }
         val profile = ai.settings.value.current
-        if (profile == null) { aiProgress = AiProgress(false, message = "Configure un modelo en Ajustes → Modo IA.", error = true); return }
-        profile.problem?.let { aiProgress = AiProgress(false, message = it, error = true); return }
+        if (profile == null) { queuedLease?.let(::releaseQueueLease); aiProgress = AiProgress(false, message = "Configure un modelo en Ajustes → Modo IA.", error = true); return }
+        profile.problem?.let { queuedLease?.let(::releaseQueueLease); aiProgress = AiProgress(false, message = it, error = true); return }
+        if (queuedLease != null && (profile.provider == AiProvider.ON_DEVICE || !remoteOnline())) { releaseQueueLease(queuedLease); return }
         if (profile.provider.signIn && ai.session(profile.id) == null) {
+            queuedLease?.let(::releaseQueueLease)
             aiProgress = AiProgress(false, message = "Falta iniciar sesión en «${profile.name}» (Ajustes → Modo IA).", error = true)
             return
         }
-        val strokes = controller.page.strokes.toList()
-        val lines = MathNotes.reviewLines(strokes, repo.patterns.value, only)
-        if (lines.isEmpty()) { aiProgress = AiProgress(false, message = "No hay nada escrito para revisar.", error = true); return }
-        val lineIds = lines.flatMap { it.strokeIds }
-        if (!connectivity.online) {
-            queue(pageId, only)
+        val permit = app.trazo.study.issueAid(ExamHelp.AI_REVIEW)
+        if (permit == null) { queuedLease?.let(::releaseQueueLease); return }
+        val pageState = pageForReview(pageId) ?: run { queuedLease?.let(::releaseQueueLease); return }
+        val strokes = pageState.allInk
+        val scope = reviewScope(pageId, pageState)
+        if (queuedLease != null && scope.fingerprint != queuedLease.request.fingerprint) {
+            viewModelScope.launch(Dispatchers.IO) {
+                durableReviews?.acknowledge(queuedLease, successfullyCommitted = true)
+                withContext(Dispatchers.Main.immediate) { aiRevision++ }
+            }
             return
         }
-        val reviewId = IdGenerator.RANDOM.next()
+        val reviewId = queuedLease?.let { stableQueueReviewId(it.request) } ?: IdGenerator.RANDOM.next()
+        if (queuedLease != null && pageState.ai?.history?.any { it.id == reviewId } == true) {
+            val snapshot = syncNotebook()
+            if (snapshot == null) { releaseQueueLease(queuedLease); return }
+            viewModelScope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching { durableReviews?.completeAfterPersist(queuedLease) { repo.saveLazy(snapshot) } == true }.getOrDefault(false)
+                }
+                if (saved) { aiRevision++ } else releaseQueueLease(queuedLease)
+            }
+            return
+        }
+        val lines = MathNotes.reviewLabels(strokes, repo.patterns.value, only)
+        if (lines.isEmpty()) { queuedLease?.let(::releaseQueueLease); aiProgress = AiProgress(false, message = "No hay nada escrito para revisar.", error = true); return }
+        val lineIds = lines.flatMap { it.strokeIds }
+        if (profile.provider != AiProvider.ON_DEVICE && !remoteOnline()) {
+            if (queuedLease == null) queue(pageId, only, permit) else releaseQueueLease(queuedLease)
+            return
+        }
+        val ticket = reviewGate.startFor(
+            scope,
+            if (profile.provider == AiProvider.ON_DEVICE) ReviewBackend.ON_DEVICE else ReviewBackend.REMOTE,
+            ReviewCancelHandle { localCompletion.cancel(); aiJob?.cancel() },
+        )
+        if (ticket == null) { queuedLease?.let(::releaseQueueLease); return }
+        activeReviewTicket = ticket
+        activeQueueLease = queuedLease
         pendingReview = reviewId
         pendingPage = pageId
-        val page = pageIndex + 1
+        val pageNumber = (n.slots.indexOfFirst { it.id == pageId } + 1).coerceAtLeast(1)
         aiProgress = AiProgress(running = true, lines = lines.size)
         aiJob = viewModelScope.launch {
             val started = System.currentTimeMillis()
-            val wanted = lineIds.toSet()
-            val captured = strokes.filter { it.id in wanted }
+            val captured = strokes.filter { it.id in lineIds.toSet() }
             var imageBytes = 0
+            var imageWidth: Int? = null
+            var imageHeight: Int? = null
+            val textChars = AiReviewPrompt.systemInstructions(profile.instructions).length +
+                AiReviewPrompt.userText(lines.map { it.text }, profile.rigor).length
             var streamed = 0
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val png = AiCapture.png(captured, lines, profile.imageQuality.longEdgePx).also { imageBytes = it.size }
-                    val key = ai.credential(profile, AiOAuth())
-                    reviewer.review(profile, key, lines.map { it.text }, png) { mark ->
-                        viewModelScope.launch(Dispatchers.Main) {
-                            if (pendingReview != reviewId) return@launch
-                            val note = AiNotes.place(listOf(mark.toMark()), lines, IdGenerator.RANDOM, reviewId)
-                            if (note.isEmpty()) return@launch
-                            streamed++
-                            aiProgress = aiProgress?.copy(marks = streamed)
-                            updateAi(pageId) { a -> (a ?: PageAi()).let { it.copy(notes = it.notes + note) } }
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val png = if (profile.provider == AiProvider.ON_DEVICE && profile.localTextOnly) null
+                        else AiCapture.png(captured, lines, profile.imageQuality.longEdgePx).also {
+                            imageBytes = it.size
+                            val size = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(it, 0, it.size, size)
+                            imageWidth = size.outWidth.takeIf { w -> w > 0 }
+                            imageHeight = size.outHeight.takeIf { h -> h > 0 }
+                        }
+                        val key = ai.credential(profile, AiOAuth())
+                        val onMark: (AiMark) -> Unit = { mark ->
+                            viewModelScope.launch(Dispatchers.Main.immediate) {
+                                if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) return@launch
+                                val actual = pageForReview(pageId)?.let { reviewScope(pageId, it) } ?: return@launch
+                                var accepted = false
+                                val permitted = app.trazo.study.acceptAid(permit) {
+                                    accepted = reviewGate.commitPartialOnTarget(ticket, actual) {
+                                        val note = AiNotes.place(listOf(mark.toMark()), lines, IdGenerator.RANDOM, reviewId)
+                                        if (note.isNotEmpty()) {
+                                            streamed++
+                                            aiProgress = aiProgress?.copy(marks = streamed)
+                                            updateAi(pageId) { a -> (a ?: PageAi()).let { it.copy(notes = it.notes + note) } }
+                                        }
+                                    }
+                                }
+                                if (!permitted) return@launch
+                                if (!accepted && pendingReview == reviewId) discardPartialNotes(pageId, reviewId)
+                            }
+                        }
+                        aiReviewCall?.invoke(profile, key, lines.map { it.text }, png, onMark)
+                            ?: reviewer.review(profile, key, lines.map { it.text }, png, onMark)
+                    }
+                }
+                val millis = System.currentTimeMillis() - started
+                if (pendingReview != reviewId || !app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) return@launch
+                val resultValue = result.getOrElse { e ->
+                    if (e is kotlinx.coroutines.CancellationException) return@launch
+                    discardPartialNotes(pageId, reviewId)
+                    val offline = profile.provider != AiProvider.ON_DEVICE && !remoteOnline()
+                    val message = (e as? AiException)?.message ?: e.message ?: e.javaClass.simpleName
+                    log(AiSend(started, profile.name, profile.model, n.name, pageNumber, lines.size, imageBytes, only != null, millis, message, textChars = textChars, imageWidth = imageWidth, imageHeight = imageHeight))
+                    if (offline && queuedLease == null) queue(pageId, only, permit)
+                    else aiProgress = AiProgress(false, lines = lines.size, message = message, error = !offline)
+                    reviewGate.finishFailure(ticket)
+                    return@launch
+                }
+                val ids = if (queuedLease == null) IdGenerator.RANDOM else stableIds(reviewId)
+                val placed = AiNotes.place(resultValue.marks.map { it.toMark() }, lines, ids, reviewId)
+                // Engine verification stays local; interpreted expressions never enter the request.
+                val localLines = MathNotes.reviewLines(strokes.filter { it.calc?.result != true }, repo.patterns.value, only)
+                val checkedLines = lines.map { raw ->
+                    raw.copy(text = localLines.firstOrNull { it.strokeIds.toSet() == raw.strokeIds.toSet() }?.text ?: "?")
+                }
+                val notes = AiNotes.crossCheck(placed, checkedLines, ids, reviewId)
+                val record = AiReviewRecord(
+                    id = reviewId, at = System.currentTimeMillis(), model = profile.model.ifBlank { profile.name },
+                    correct = resultValue.correct, score = resultValue.score, selection = only != null, lineCount = lines.size,
+                    notes = notes, area = captured.bounds(), strokeIds = lineIds, fingerprint = AiNotes.fingerprint(lineIds, captured),
+                )
+                val actual = pageForReview(pageId)?.let { reviewScope(pageId, it) }
+                var accepted = false
+                val permitted = actual != null && app.trazo.study.acceptAid(permit) {
+                    accepted = reviewGate.commitFinalOnTarget(ticket, actual!!) {
+                        updateAi(pageId) { old ->
+                            val base = old ?: PageAi()
+                            if (base.history.any { it.id == reviewId }) base
+                            else AiNotes.record(base.copy(notes = base.notes.filterNot { it.reviewId == reviewId }), record)
                         }
                     }
                 }
-            }
-            val millis = System.currentTimeMillis() - started
-            result.onSuccess { r ->
-                val placed = AiNotes.place(r.marks.map { it.toMark() }, lines, IdGenerator.RANDOM, reviewId)
-                val notes = AiNotes.crossCheck(placed, lines, IdGenerator.RANDOM, reviewId)
-                val record = AiReviewRecord(
-                    id = reviewId, at = System.currentTimeMillis(), model = profile.model.ifBlank { profile.name },
-                    correct = r.correct, score = r.score, selection = only != null, lineCount = lines.size,
-                    notes = notes, area = captured.bounds(), strokeIds = lineIds, fingerprint = AiNotes.fingerprint(lineIds, captured),
-                )
-                updateAi(pageId) { a -> AiNotes.record(a?.copy(notes = a.notes.filterNot { it.reviewId == reviewId }), record) }
+                if (!permitted || !accepted) {
+                    discardPartialNotes(pageId, reviewId)
+                    queuedLease?.let(::releaseQueueLease)
+                    aiProgress = AiProgress(false, lines = lines.size, message = "La página cambió durante la revisión.", error = true)
+                    return@launch
+                }
+                val snapshot = syncNotebook()
+                if (snapshot == null) { queuedLease?.let(::releaseQueueLease); return@launch }
+                val persisted = withContext(Dispatchers.IO) {
+                    runCatching {
+                        if (queuedLease == null) { repo.saveLazy(snapshot); true }
+                        else durableReviews?.completeAfterPersist(queuedLease) { repo.saveLazy(snapshot) } == true
+                    }.getOrDefault(false)
+                }
+                if (!persisted) {
+                    queuedLease?.let(::releaseQueueLease)
+                    aiProgress = AiProgress(false, lines = lines.size, message = "No se pudo guardar la revisión; queda pendiente para reintentar.", error = true)
+                    return@launch
+                }
+                if (queuedLease == null && only == null) {
+                    withContext(Dispatchers.IO) { runCatching { durableReviews?.discardPage(notebookId, pageId) } }
+                }
+                if (queuedLease != null) aiRevision++
                 aiProgress = AiProgress(
                     running = false, lines = lines.size, marks = notes.size,
                     message = when {
-                        notes.isEmpty() && r.correct -> "Sin errores" + (r.score?.let { " · ${AiMarkPainter.formatScore(it)}/10" } ?: "")
+                        notes.isEmpty() && resultValue.correct -> "Sin errores" + (resultValue.score?.let { " · ${AiMarkPainter.formatScore(it)}/10" } ?: "")
                         notes.isEmpty() -> "El modelo no marcó nada."
                         notes.size == 1 -> "1 marca"
                         else -> "${notes.size} marcas"
                     },
                 )
-                log(AiSend(started, profile.name, profile.model, n.name, page, lines.size, imageBytes, only != null, millis, null, notes.size, r.score))
-            }.onFailure { e ->
-                if (e is kotlinx.coroutines.CancellationException) return@onFailure
-                updateAi(pageId) { a -> a?.copy(notes = a.notes.filterNot { it.reviewId == reviewId }) }
-                val offline = !connectivity.online
-                val message = (e as? AiException)?.message ?: e.message ?: e.javaClass.simpleName
-                log(AiSend(started, profile.name, profile.model, n.name, page, lines.size, imageBytes, only != null, millis, message))
-                if (offline) queue(pageId, only)
-                else aiProgress = AiProgress(false, lines = lines.size, message = message, error = true)
+                log(AiSend(started, profile.name, profile.model, n.name, pageNumber, lines.size, imageBytes, only != null, millis, null, notes.size, resultValue.score, textChars, imageWidth, imageHeight, resultValue.usage))
+            } finally {
+                if (activeReviewTicket == ticket) activeReviewTicket = null
+                if (activeQueueLease == queuedLease) activeQueueLease = null
+                if (pendingReview == reviewId) pendingReview = ""
+                if (aiJob === coroutineContext[Job]) aiJob = null
+                reviewGate.finishFailure(ticket)
+                if (queuedLease != null) withContext(NonCancellable + Dispatchers.IO) { durableReviews?.release(queuedLease) }
+                // Queue resumption is explicit: a successful review never starts another queued request.
             }
-            if (pendingReview == reviewId) pendingReview = ""
         }
     }
 
-    private fun queue(pageId: String, only: Set<String>?) {
-        journal.enqueue(AiQueued(notebookId, pageId, only?.toList(), System.currentTimeMillis()))
-        aiProgress = AiProgress(false, message = "Sin conexión: la revisión se enviará sola cuando vuelva la red.")
+    private fun queue(pageId: String, only: Set<String>?, permit: ExamAccessGate.Permit) {
+        val page = pageForReview(pageId) ?: return
+        val request = PendingRemoteReview(notebookId, pageId, only?.toList(), reviewFingerprint(page.allInk), System.currentTimeMillis())
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    val queue = durableReviews ?: return@runCatching false
+                    var wrote = false
+                    val allowed = app.trazo.study.acceptAid(permit) { queue.enqueue(request); wrote = true }
+                    allowed && wrote
+                }.getOrDefault(false)
+            }
+            aiRevision++
+            aiProgress = AiProgress(false, message = if (saved) "Sin conexión: revisión pendiente. Toque «Revisar página» para enviarla." else "No se pudo guardar la revisión pendiente.", error = !saved)
+        }
     }
 
-    /** Pedidos en cola de la hoja abierta: salen apenas hay red. */
-    private fun sendQueued() {
-        val n = notebook ?: return
-        if (aiJob?.isActive == true || !connectivity.online) return
-        val pageId = n.slots.getOrNull(pageIndex)?.id ?: return
-        // QA52: la cola se vacía solo si el pedido puede salir; si falta el perfil o la sesión, queda guardada.
-        val profile = ai.settings.value.current ?: return
-        if (profile.problem != null || (profile.provider.signIn && ai.session(profile.id) == null)) return
-        val queued = journal.take(notebookId, pageId)
-        if (queued.isEmpty()) return
-        // Si hay uno de la hoja entera, alcanza con ese; si no, se revisa lo que queda de lo elegido.
-        val existing = controller.page.strokes.map { it.id }.toSet()
-        val only = if (queued.any { it.strokeIds == null }) null
-        else queued.flatMap { it.strokeIds.orEmpty() }.filter { it in existing }.toSet().takeIf { it.isNotEmpty() } ?: return
-        review(pageId, only)
+    /** Sends at most the current page's pending request, and only from the explicit review action. */
+    private fun sendQueued(pageId: String, only: Set<String>?, ifEmpty: () -> Unit) {
+        if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW) || notebook == null || durableReviews == null) {
+            ifEmpty()
+            return
+        }
+        if (aiJob?.isActive == true || queueClaimJob?.isActive == true) return
+        val profile = ai.settings.value.current
+        if (profile == null || profile.provider == AiProvider.ON_DEVICE || !remoteOnline() ||
+            profile.problem != null || (profile.provider.signIn && ai.session(profile.id) == null)) {
+            ifEmpty()
+            return
+        }
+        queueClaimJob = viewModelScope.launch {
+            var claimed: DurableReviewLease? = null
+            try {
+                claimed = withContext(Dispatchers.IO) {
+                    durableReviews?.claimNext {
+                        it.notebookId == notebookId && it.pageId == pageId && it.strokeIds?.toSet() == only
+                    }
+                }
+                val lease = claimed
+                if (lease == null) {
+                    ifEmpty()
+                    return@launch
+                }
+                val page = pageForReview(lease.request.pageId)
+                val ids = lease.request.strokeIds?.toSet()
+                if (page == null || (ids != null && !page.allInk.map { it.id }.containsAll(ids))) {
+                    withContext(Dispatchers.IO) { durableReviews?.acknowledge(lease, successfullyCommitted = true) }
+                    claimed = null
+                    aiRevision++
+                    if (pageId == notebook?.slots?.getOrNull(pageIndex)?.id) ifEmpty()
+                    return@launch
+                }
+                if (reviewFingerprint(page.allInk) != lease.request.fingerprint) {
+                    withContext(Dispatchers.IO) { durableReviews?.acknowledge(lease, successfullyCommitted = true) }
+                    claimed = null
+                    aiRevision++
+                    ifEmpty()
+                    return@launch
+                }
+                claimed = null // review() owns and releases the lease from this point onward.
+                review(lease.request.pageId, ids, lease)
+            } finally {
+                queueClaimJob = null
+                claimed?.let { lease -> withContext(NonCancellable + Dispatchers.IO) { durableReviews?.release(lease) } }
+            }
+        }
+    }
+
+    private fun discardPartialNotes(pageId: String, reviewId: String) {
+        updateAi(pageId) { a -> a?.copy(notes = a.notes.filterNot { it.reviewId == reviewId }) }
+    }
+
+    private fun releaseQueueLease(lease: DurableReviewLease) {
+        viewModelScope.launch(Dispatchers.IO) { durableReviews?.release(lease) }
+    }
+
+    private fun stableQueueReviewId(request: PendingRemoteReview): String {
+        val raw = listOf(request.notebookId, request.pageId, request.key.selectionSignature, request.fingerprint).joinToString("") { "${it.length}:$it" }
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+            .take(16).joinToString("") { "%02x".format(it) }
+        return "queued-$hash"
+    }
+
+    private fun stableIds(reviewId: String): IdGenerator {
+        var i = 0
+        return IdGenerator { "$reviewId-${++i}" }
     }
 
     private fun log(s: AiSend) { viewModelScope.launch(Dispatchers.IO) { journal.record(s) } }
@@ -674,12 +1005,12 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         val i = n.slots.indexOfFirst { it.id == pageId }
         if (i < 0) return
         if (i == pageIndex) {
-            controller.setAi(AiNotes.prune(change(controller.page.ai), controller.page.strokes))
+            controller.setAi(AiNotes.prune(change(controller.page.ai), controller.page.allInk))
             return
         }
         val session = sessions[pageId]?.first
         val page = n.page(i)
-        val next = AiNotes.prune(change(session?.ai ?: page.ai), session?.strokes ?: page.strokes)
+        val next = AiNotes.prune(change(session?.ai ?: page.ai), session?.allInk ?: page.allInk)
         session?.ai = next
         notebook = n.withPage(i, page.copy(ai = next)).loadedOnly(pageIndex)
         markDirty()
@@ -701,39 +1032,62 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
      * El usuario discute la marca (17): el modelo la mantiene, la cambia o la retira, y explica por qué.
      */
     fun discussAiNote(note: AiNote, argument: String) {
+        if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) { aiAnswer = "El Modo IA está bloqueado durante el examen."; return }
         if (aiDiscussing || argument.isBlank()) return
         val profile = ai.settings.value.current ?: run { aiAnswer = "Configure un modelo en Ajustes → Modo IA."; return }
         val n = notebook ?: return
-        val pageId = n.slots[pageIndex].id
-        val strokes = controller.page.strokes.toList()
-        val lines = MathNotes.reviewLines(strokes, repo.patterns.value, note.strokeIds.toSet())
+        val pageId = n.slots.getOrNull(pageIndex)?.id ?: return
+        val page = pageForReview(pageId) ?: return
+        if (page.ai?.notes?.any { it.id == note.id } != true) return
+        val permit = app.trazo.study.issueAid(ExamHelp.AI_REVIEW) ?: return
+        val strokes = page.allInk
+        val lines = MathNotes.reviewLabels(strokes, repo.patterns.value, note.strokeIds.toSet())
         val ids = note.strokeIds.toSet()
         val captured = strokes.filter { it.id in ids }
         val kind = runCatching { MarkKind.valueOf(note.kind) }.getOrDefault(MarkKind.CALCULATION)
-        val mark = AiMark(1, kind, note.short, note.detail, note.fix)
-        aiDiscussing = true
-        aiAnswer = null
-        viewModelScope.launch {
+        val mark = if (note.fromEngine) {
+            // Discussing a local warning must not disclose the solver's verdict or computed values.
+            AiMark(1, kind, "Revisar este renglón desde la imagen y las etiquetas originales.")
+        } else AiMark(1, kind, note.short, note.detail, note.fix)
+        val requestId = ++discussionId
+        var started = false
+        if (!app.trazo.study.acceptAid(permit) { aiDiscussing = true; aiAnswer = null; started = true } || !started) return
+        discussionScope = reviewScope(pageId, page)
+        discussionJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val png = captured.takeIf { it.isNotEmpty() }?.let { AiCapture.png(it, lines, profile.imageQuality.longEdgePx) }
+                    val png = if (profile.provider == AiProvider.ON_DEVICE && profile.localTextOnly) null
+                    else captured.takeIf { it.isNotEmpty() }?.let { AiCapture.png(it, lines, profile.imageQuality.longEdgePx) }
                     reviewer.discuss(profile, ai.credential(profile, AiOAuth()), mark, lines.joinToString("  ") { it.text }.ifBlank { "?" }, argument.trim(), png)
                 }
             }
-            aiDiscussing = false
-            result.onSuccess { d ->
-                // QA53: la respuesta es de esta marca; si ya se abrió otra burbuja, no se muestra ahí.
-                if (aiNote?.id == note.id) aiAnswer = d.answer.ifBlank { if (d.keep) "El modelo mantiene la marca." else "El modelo retira la marca." }
-                when {
-                    !d.keep -> updateAi(pageId) { it?.without(note.id) }
-                    d.mark != null -> {
-                        val m = d.mark!!
-                        val changed = note.copy(kind = m.kind.name, short = m.short, detail = m.detail, fix = m.fix, disputed = false)
-                        updateAi(pageId) { a -> a?.copy(notes = a.notes.map { if (it.id == note.id) changed else it }) }
-                        if (aiNote?.id == note.id) aiNote = changed
+            var applied = false
+            val allowed = app.trazo.study.acceptAid(permit) {
+                if (requestId == discussionId) {
+                    aiDiscussing = false
+                    val current = pageForReview(pageId)?.ai?.notes?.firstOrNull { it.id == note.id }
+                    if (aiNote?.id == note.id && current == note) {
+                        applied = true
+                        result.onSuccess { d ->
+                            aiAnswer = d.answer.ifBlank { if (d.keep) "El modelo mantiene la marca." else "El modelo retira la marca." }
+                            when {
+                                !d.keep -> updateAi(pageId) { it?.without(note.id) }
+                                d.mark != null -> {
+                                    val m = requireNotNull(d.mark)
+                                    val changed = note.copy(kind = m.kind.name, short = m.short, detail = m.detail, fix = m.fix, disputed = false)
+                                    updateAi(pageId) { a -> a?.copy(notes = a.notes.map { if (it.id == note.id) changed else it }) }
+                                    if (aiNote?.id == note.id) aiNote = changed
+                                }
+                            }
+                        }.onFailure { e ->
+                            aiAnswer = "No se pudo consultar: ${e.message ?: e.javaClass.simpleName}"
+                        }
                     }
                 }
-            }.onFailure { e -> if (aiNote?.id == note.id) aiAnswer = "No se pudo consultar: ${e.message ?: e.javaClass.simpleName}" }
+            }
+            if (!allowed && requestId == discussionId) aiDiscussing = false
+            if (allowed && !applied && requestId == discussionId) aiDiscussing = false
+            if (requestId == discussionId) discussionScope = null
         }
     }
 
@@ -765,11 +1119,13 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         val n = notebook ?: return null
         val key = thumbKey(index) ?: return null
         val id = n.slots[index].id
-        val page = if (index == pageIndex) Page(id, controller.page.strokes.toList(), controller.page.shapes.toList(), controller.page.ai) else null
+        val page = if (index == pageIndex && attachedPageId == id) Page(id, controller.page.strokes.toList(), controller.page.shapes.toList(), controller.page.ai) else null
         val slot = n.slots[index]
-        val bmp = withContext(Dispatchers.Default) {
-            PageExporter.thumbnail(page ?: slot.page(), n.paper, width, colors).asImageBitmap()
-        }
+        val bmp = runCatching {
+            withContext(Dispatchers.Default) {
+                PageExporter.thumbnail(page ?: slot.page(), n.paper, width, colors).asImageBitmap()
+            }
+        }.getOrNull() ?: return null
         thumbs[id] = key to bmp
         return bmp
     }
@@ -777,6 +1133,7 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
     /** Vuelca la página en edición al cuaderno (las demás no cambian: siguen fijas). */
     private fun syncNotebook(): LazyNotebook? {
         val n = notebook ?: return null
+        if (attachedPageId != n.slots.getOrNull(pageIndex)?.id) return null
         val live = controller.page
         val page = Page(n.slots[pageIndex].id, live.strokes.toList(), live.shapes.toList(), live.ai)
         val updated = n.withPage(pageIndex, page).copy(updatedAt = System.currentTimeMillis())
@@ -806,12 +1163,20 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         saveJob?.cancel()
         if (savedVersion == editVersion) return
         val version = editVersion
-        syncNotebook()?.let { repo.saveLazy(it) }
+        val snapshot = syncNotebook() ?: return
+        repo.saveLazy(snapshot)
         savedVersion = version
     }
 
     override fun onCleared() {
+        reviewGate.close()
+        discussionId++
+        discussionJob?.cancel()
+        localCompletion.cancel()
+        // Closing a native context can wait for decode. Keep that wait off the UI thread.
+        Thread({ localCompletion.close() }, "trazo-local-close").start()
         connectivity.stop()
+        queueClaimJob?.cancel()
         // Una revisión a medias no se guarda: sus marcas parciales se quitan (QA53).
         if (aiJob?.isActive == true && pendingReview.isNotEmpty()) {
             val id = pendingReview
@@ -822,15 +1187,73 @@ class EditorViewModel(app: Application, val notebookId: String) : AndroidViewMod
         super.onCleared()
     }
 
+    /** Migrate old JSON requests only after each durable replacement is written successfully. */
+    private fun migrateLegacyQueue(book: LazyNotebook, target: DurableReviewQueue) {
+        val old = journal.queue.value.filter { it.notebookId == notebookId }
+        for ((pageId, items) in old.groupBy { it.pageId }) {
+            val index = book.slots.indexOfFirst { it.id == pageId }
+            if (index < 0) continue
+            val page = book.page(index)
+            val fingerprint = reviewFingerprint(page.allInk)
+            for (item in items) {
+                val selection = item.strokeIds?.takeIf { it.isNotEmpty() }
+                target.enqueue(PendingRemoteReview(notebookId, pageId, selection, fingerprint, item.at))
+            }
+            // AiJournal's delete is best-effort; if it fails, replay is idempotent by queue key+fingerprint.
+            journal.take(notebookId, pageId)
+        }
+    }
+
     // Al final de la clase: Main.immediate corre esto en el acto y todas las propiedades ya deben existir.
     init {
         viewModelScope.launch {
-            val n = withContext(Dispatchers.IO) { repo.loadLazy(notebookId) }
-            notebook = n
-            // Vuelve a la última página en la que se estuvo.
-            if (n != null) attachPage(n.openPage)
-            loading = false
-            connectivity.start()
+            app.trazo.study.state.collect { state ->
+                reviewGate.setExamMode(state.examActive)
+                controller.mathEnabled = lastSettings.mathNotes && !state.examActive
+                if (state.examActive) {
+                    if (aiJob?.isActive == true) cancelAiReview()
+                    discussionId++
+                    discussionJob?.cancel()
+                    localCompletion.cancel()
+                    aiDiscussing = false
+                    aiNote = null
+                    complexPrompt = null
+                    mathExplanation = null
+                    aiVisible = false
+                    controller.aiVisible = false
+                }
+                revision++
+            }
+        }
+        viewModelScope.launch {
+            try {
+                val loaded = withContext(Dispatchers.IO) {
+                    val bookResult = runCatching { repo.loadLazy(notebookId) }
+                    val book = bookResult.getOrNull()
+                    val queueResult = runCatching { app.trazo.reviewQueue }
+                    val queue = queueResult.getOrNull()
+                    val migrationError = if (book != null && queue != null) runCatching { migrateLegacyQueue(book, queue) }.exceptionOrNull() else null
+                    Triple(book, queue, bookResult.exceptionOrNull() to (queueResult.exceptionOrNull() ?: migrationError))
+                }
+                val n = loaded.first
+                durableReviews = loaded.second
+                reviewQueueProblem = loaded.third.second?.message ?: loaded.third.second?.javaClass?.simpleName
+                notebook = n
+                if (n == null) {
+                    pageLoadError = loaded.third.first?.message ?: loaded.third.first?.javaClass?.simpleName ?: "No se pudo abrir el cuaderno."
+                } else {
+                    // Decode the selected page before attaching or allowing a save to replace its raw slot.
+                    attachPage(n.openPage, hardReset = true)
+                }
+                if (reviewQueueProblem != null) aiProgress = AiProgress(false, message = "La cola durable no está disponible: $reviewQueueProblem", error = true)
+            } catch (e: Exception) {
+                pageLoadError = e.message ?: e.javaClass.simpleName
+            } finally {
+                loading = false
+            }
+            if (attachedPageId != null) {
+                connectivity.start()
+            }
         }
     }
 }

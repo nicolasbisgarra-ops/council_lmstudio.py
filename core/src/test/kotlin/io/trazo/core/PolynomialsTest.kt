@@ -67,6 +67,8 @@ class PolynomialsTest {
 
     @Test fun `raices exactas como raiz cuadrada`() {
         val r = Polynomials.roots(poly(-2, 0, 1), complex = false)!!
-        assertTrue(r.all { it is Root.Exact && it.m == java.math.BigInteger.TWO })
+        assertTrue(r.all { it is Root.Exact && it.m == java.math.BigInteger.valueOf(2L) })
+        // Este camino ejecuta squareFree(), usado al autocompletar una solución cuadrática.
+        assertEquals("x = −√2 ; x = √2", MathNotes.solveText(listOf("x^2-2=0")))
     }
 }

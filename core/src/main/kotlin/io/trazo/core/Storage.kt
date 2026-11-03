@@ -10,8 +10,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.IOException
 import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 @Serializable
@@ -84,22 +84,173 @@ fun Notebook.withPageMoved(from: Int, to: Int): Notebook {
 }
 
 object PatternLibrary {
-    /** Fusiona patrones importados con la biblioteca: los idénticos (ignorando updatedAt y enabled) se omiten; mismo id con contenido distinto → id nuevo y nombre "<nombre> (importado)"; el resto se agrega. Conserva el orden: existentes y luego nuevos. */
-    fun merge(existing: List<InkPattern>, incoming: List<InkPattern>, ids: IdGenerator = IdGenerator.RANDOM): List<InkPattern> {
+    data class MergeResult(
+        val patterns: List<InkPattern>,
+        /** Identificador del archivo importado → identificador que debe usar la nota en esta biblioteca. */
+        val idRemap: Map<String, String>,
+    )
+
+    /**
+     * Fusiona patrones por contenido funcional, no por sus identificadores ni metadatos locales.
+     * Conserva nombre/activación del patrón local cuando encuentra uno equivalente. Si el ID importado
+     * ya pertenece a otro patrón, agrega una copia con ID nuevo y nombre "(importado)".
+     */
+    fun mergeWithRemapping(
+        existing: List<InkPattern>,
+        incoming: List<InkPattern>,
+        ids: IdGenerator = IdGenerator.RANDOM,
+    ): MergeResult {
         val out = existing.toMutableList()
+        val usedIds = existing.mapTo(HashSet()) { it.id }
+        val byContent = LinkedHashMap<PatternContentKey, InkPattern>()
+        existing.forEach { pattern ->
+            val key = pattern.contentKey()
+            if (key !in byContent) byContent[key] = pattern
+        }
+        val remap = LinkedHashMap<String, String>()
+
         for (p in incoming) {
             val key = p.contentKey()
-            if (out.any { it.contentKey() == key }) continue
-            if (out.none { it.id == p.id }) { out += p; continue }
+            val equivalent = byContent[key]
+            if (equivalent != null) {
+                remapImportId(remap, p.id, equivalent.id)
+                continue
+            }
+
+            if (p.id !in usedIds) {
+                out += p
+                usedIds += p.id
+                byContent[key] = p
+                remapImportId(remap, p.id, p.id)
+                continue
+            }
+
             val renamed = p.copy(name = "${p.name} (importado)", builtIn = false)
-            // Reimportar el mismo archivo no debe duplicar la copia renombrada.
-            if (out.any { it.contentKey().copy(id = p.id) == renamed.contentKey() }) continue
-            out += renamed.copy(id = ids.next())
+            val generatedId = ids.next()
+            // Preset IDs select name-based math labels when unknown is automatic.
+            val newId = if (p.id.startsWith(PresetPatterns.PREFIX)) "${PresetPatterns.PREFIX}imported-$generatedId" else generatedId
+            check(newId !in usedIds) { "Pattern ID generator returned a duplicate ID: $newId" }
+            var imported = renamed.copy(id = newId)
+            val sourceMeaning = patternMeaning(p)
+            if (p.unknown == null && sourceMeaning != patternMeaning(imported)) {
+                // A custom automatic symbol depends on its pattern ID. Pin it before remapping.
+                imported = imported.copy(unknown = sourceMeaning)
+            }
+            out += imported
+            usedIds += newId
+            byContent[key] = imported
+            remapImportId(remap, p.id, newId)
         }
-        return out
+        return MergeResult(out, remap)
     }
 
-    private fun InkPattern.contentKey() = copy(updatedAt = 0L, enabled = true)
+    /** Compatibilidad con quienes solo necesitan la biblioteca, sin remapear notas. */
+    fun merge(existing: List<InkPattern>, incoming: List<InkPattern>, ids: IdGenerator = IdGenerator.RANDOM): List<InkPattern> =
+        mergeWithRemapping(existing, incoming, ids).patterns
+
+    private fun remapImportId(remap: MutableMap<String, String>, importedId: String, localId: String) {
+        val previous = remap[importedId]
+        require(previous == null || previous == localId) { "Imported pattern ID is ambiguous: $importedId" }
+        remap[importedId] = localId
+    }
+
+    private fun InkPattern.contentKey() = PatternContentKey(
+        gestureExamples = gestureExamples.map { inkKey(it) },
+        outputInk = inkKey(outputInk),
+        sizing = sizing,
+        outputScale = outputScale,
+        fixedWidth = fixedWidth,
+        fixedHeight = fixedHeight,
+        minScore = minScore,
+        holdMillis = holdMillis,
+        stretch = stretch,
+        mathMeaning = patternMeaning(this),
+    )
+
+    /**
+     * La identidad de un patrón son sus gestos, salida, opciones funcionales y significado matemático
+     * actual. Nombre visible, activación, categoría, builtIn y fechas son preferencias/metadatos salvo
+     * cuando el nombre aporta ese significado. Los tiempos y IDs se omiten; los datos funcionales de
+     * calc sí se conservan, sin comparar su ID.
+     */
+    private fun inkKey(strokes: List<InkStroke>): PatternInkKey {
+        val calcIds = LinkedHashMap<String, Int>()
+        return PatternInkKey(strokes.map { stroke ->
+            PatternStrokeKey(
+                points = stroke.points.map { PatternPointKey(it.x, it.y, it.pressure) },
+                color = stroke.color,
+                width = stroke.width,
+                brush = stroke.brush,
+                calc = stroke.calc?.let { tag ->
+                    PatternCalcKey(
+                        calcIds.getOrPut(tag.id) { calcIds.size },
+                        tag.result,
+                        tag.inputs,
+                        tag.steps,
+                        tag.failed,
+                        tag.complex,
+                    )
+                },
+            )
+        })
+    }
+
+    private fun patternMeaning(pattern: InkPattern): String? =
+        MathNotes.patternSymbol(pattern)?.let { symbol ->
+            io.trazo.core.math.layout.MathLayoutConverter.spelling(symbol) ?: symbol
+        }
+
+    private data class PatternContentKey(
+        val gestureExamples: List<PatternInkKey>,
+        val outputInk: PatternInkKey,
+        val sizing: OutputSizing,
+        val outputScale: Float,
+        val fixedWidth: Float,
+        val fixedHeight: Float,
+        val minScore: Float,
+        val holdMillis: Long?,
+        val stretch: Stretch?,
+        val mathMeaning: String?,
+    )
+
+    private data class PatternInkKey(val strokes: List<PatternStrokeKey>)
+    private data class PatternStrokeKey(
+        val points: List<PatternPointKey>,
+        val color: Int,
+        val width: Float,
+        val brush: Brush,
+        val calc: PatternCalcKey?,
+    )
+    private data class PatternPointKey(val x: Float, val y: Float, val pressure: Float)
+    private data class PatternCalcKey(
+        val id: Int,
+        val result: Boolean,
+        val inputs: Int,
+        val steps: List<String>,
+        val failed: Boolean,
+        val complex: Boolean,
+    )
+}
+
+/** Cambia solo las referencias a patrones; conserva los IDs y la agrupación de tinta/cálculo de la nota. */
+fun Notebook.remapPatternIds(idRemap: Map<String, String>): Notebook {
+    if (idRemap.isEmpty()) return this
+    var changed = false
+    val remappedPages = pages.map { page ->
+        var pageChanged = false
+        val strokes = page.strokes.map { stroke ->
+            val localId = stroke.patternId?.let(idRemap::get)
+            if (localId == null || localId == stroke.patternId) stroke
+            else stroke.copy(patternId = localId).also { pageChanged = true }
+        }
+        val shapes = page.parametricShapes.map { shape ->
+            val localId = shape.sourcePatternId?.let(idRemap::get)
+            if (localId == null || localId == shape.sourcePatternId) shape
+            else shape.copy(sourcePatternId = localId).also { pageChanged = true }
+        }
+        if (pageChanged) page.copy(strokes = strokes, parametricShapes = shapes).also { changed = true } else page
+    }
+    return if (changed) copy(pages = remappedPages) else this
 }
 
 @Serializable
@@ -187,8 +338,14 @@ object TrazoFormat {
 
     fun decodePatterns(text: String): List<InkPattern> {
         val root = migrate(json.parseToJsonElement(text).jsonObject, PATTERNS_FORMAT)
-        return json.decodeFromJsonElement(PatternLibraryFile.serializer(), root).patterns
+        return json.decodeFromJsonElement(PatternLibraryFile.serializer(), root).patterns.also {
+            if (it.size > MAX_IMPORTED_PATTERNS) throw UnsupportedSchemaException("Too many imported patterns")
+        }
     }
+
+    /** Decodifica una biblioteca externa con límite aplicado durante la lectura del stream. */
+    fun decodePatterns(input: InputStream): List<InkPattern> =
+        decodePatterns(input.readBounded(MAX_PATTERNS_ENTRY_BYTES).toString(Charsets.UTF_8))
 
     /** Punto único para migraciones futuras de esquema. */
     private fun migrate(root: JsonObject, expectedFormat: String): JsonObject {
@@ -205,6 +362,15 @@ object TrazoFormat {
     private const val PATTERNS_ENTRY = "patterns.json"
     private const val MANIFEST_ENTRY = "manifest.json"
     private const val COVER_ENTRY = "cover"
+    /** Límites sobre bytes descomprimidos: el tamaño comprimido no protege de ZIP bombs. */
+    internal const val MAX_NOTEBOOK_ENTRY_BYTES = 32 * 1024 * 1024
+    internal const val MAX_PATTERNS_ENTRY_BYTES = 8 * 1024 * 1024
+    internal const val MAX_ARCHIVE_BYTES = 48 * 1024 * 1024
+    private const val MAX_UNKNOWN_ENTRY_BYTES = 1024 * 1024
+    private const val MAX_ARCHIVE_ENTRIES = 128
+    internal const val MAX_IMPORTED_PATTERNS = 20_000
+
+    private class ArchiveLimitException(message: String) : IOException(message)
 
     /** [cover]: bytes de la portada (WEBP o PNG) cuando el cuaderno tiene una imagen elegida. */
     class Archive(val notebook: Notebook, val patterns: List<InkPattern>, val cover: ByteArray? = null) {
@@ -232,37 +398,39 @@ object TrazoFormat {
      * una portada que falta, es muy grande o no es WEBP/PNG vuelve a la primera hoja.
      */
     fun importArchive(input: InputStream): Archive {
-        var notebook: Notebook? = null
-        var patterns: List<InkPattern> = emptyList()
-        var cover: ByteArray? = null
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val e = zip.nextEntry ?: break
-                when (e.name) {
-                    NOTEBOOK_ENTRY -> notebook = decodeNotebook(zip.readAll().toString(Charsets.UTF_8))
-                    PATTERNS_ENTRY -> patterns = decodePatterns(zip.readAll().toString(Charsets.UTF_8))
-                    "$COVER_ENTRY.webp", "$COVER_ENTRY.png" ->
-                        cover = zip.readAll(Covers.MAX_BYTES + 1)?.takeIf { Covers.extensionOf(it) == e.name.substringAfter('.') }
-                }
-            }
+        // Contrato de los límites de la base v2: 32 MiB cuaderno, 8 MiB patrones,
+        // 48 MiB global, 128 entradas. Además exige EOCD, CRC, nombres inequívocos
+        // y JSON con profundidad limitada antes de deserializarlo.
+        check(ArchiveImportGuard.MAX_NOTEBOOK_BYTES == MAX_NOTEBOOK_ENTRY_BYTES &&
+              ArchiveImportGuard.MAX_PATTERNS_BYTES == MAX_PATTERNS_ENTRY_BYTES &&
+              ArchiveImportGuard.MAX_TOTAL_BYTES == MAX_ARCHIVE_BYTES &&
+              ArchiveImportGuard.MAX_ENTRIES == MAX_ARCHIVE_ENTRIES)
+        val parts = try {
+            ArchiveImportGuard.read(input)
+        } catch (e: ArchiveImportGuard.LimitExceeded) {
+            throw ArchiveLimitException(e.message ?: "Archive limit exceeded").also { it.initCause(e) }
+        } catch (e: IllegalArgumentException) {
+            throw UnsupportedSchemaException(e.message ?: "Invalid archive").also { it.initCause(e) }
         }
-        val nb = (notebook ?: throw UnsupportedSchemaException("Archive without $NOTEBOOK_ENTRY")).copy(folderId = null)
-        val withCover = if (cover != null && nb.coverKind == CoverKind.IMAGE) nb
-        else nb.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null)
+        val notebook = decodeNotebook(parts.notebook.toString(Charsets.UTF_8)).copy(folderId = null)
+        val patterns = parts.patterns?.let { decodePatterns(it.toString(Charsets.UTF_8)) }.orEmpty()
+        val cover = parts.cover?.takeIf { Covers.extensionOf(it) == parts.coverName?.substringAfter('.') }
+        val withCover = if (cover != null && notebook.coverKind == CoverKind.IMAGE) notebook
+        else notebook.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null)
         return Archive(withCover, patterns, cover.takeIf { withCover.coverKind == CoverKind.IMAGE })
     }
 
-    private fun InputStream.readAll(): ByteArray = ByteArrayOutputStream().also { copyTo(it) }.toByteArray()
-
-    /** Hasta [limit] bytes; null si la entrada es más larga. */
-    private fun InputStream.readAll(limit: Int): ByteArray? {
-        val out = ByteArrayOutputStream()
+    private fun InputStream.readBounded(limit: Int): ByteArray {
+        val out = ByteArrayOutputStream(minOf(limit, 8192))
         val buf = ByteArray(8192)
+        var count = 0
         while (true) {
             val n = read(buf)
             if (n < 0) return out.toByteArray()
+            if (count.toLong() + n > limit) throw ArchiveLimitException("Input exceeds $limit bytes")
             out.write(buf, 0, n)
-            if (out.size() >= limit) return null
+            count += n
         }
     }
+
 }

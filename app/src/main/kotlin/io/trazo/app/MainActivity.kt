@@ -48,6 +48,7 @@ sealed interface Screen {
     data class PatternEdit(val patternId: String?, val seedGesture: List<InkStroke>? = null) : Screen
     /** @param section página de preferencias a abrir (nombre de [io.trazo.app.ui.PreferenceSection]); null = la lista. */
     data class Settings(val section: String? = null) : Screen
+    data class Study(val notebookId: String, val exam: Boolean) : Screen
 }
 
 /** Entrada de la pila: cada pantalla tiene su propio almacén de ViewModels, que se limpia al salir. */
@@ -144,6 +145,8 @@ private fun ScreenContent(screen: Screen, nav: NavViewModel) {
             onSettings = { nav.push(Screen.Settings()) },
             onTeachNewPattern = { gesture -> nav.push(Screen.PatternEdit(null, gesture)) },
             onAiSettings = { nav.push(Screen.Settings("AI")) },
+            onPractice = { nav.push(Screen.Study(screen.notebookId, false)) },
+            onExam = { nav.push(Screen.Study(screen.notebookId, true)) },
         )
         Screen.Patterns -> PatternLibraryScreen(
             onBack = nav::pop,
@@ -151,5 +154,6 @@ private fun ScreenContent(screen: Screen, nav: NavViewModel) {
         )
         is Screen.PatternEdit -> PatternEditorScreen(patternId = screen.patternId, seedGesture = screen.seedGesture, onDone = nav::pop)
         is Screen.Settings -> SettingsScreen(onBack = nav::pop, initialSection = screen.section)
+        is Screen.Study -> io.trazo.app.ui.StudyDestination(screen.notebookId, screen.exam, nav::pop)
     }
 }

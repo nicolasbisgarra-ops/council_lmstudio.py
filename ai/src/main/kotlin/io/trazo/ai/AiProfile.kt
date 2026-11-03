@@ -19,7 +19,7 @@ enum class AiProvider(val label: String, val defaultBaseUrl: String, val needsKe
     /** LM Studio, Ollama, OpenRouter y cualquier servidor con la API de OpenAI. La clave es opcional. */
     @SerialName("openai_compatible") OPENAI_COMPATIBLE("Compatible con OpenAI (LM Studio, Ollama, OpenRouter)", "http://192.168.0.10:1234/v1", false),
     /** Modelo en la tableta (llama.cpp, MediaPipe, Gemini Nano): llega en la etapa 3. */
-    @SerialName("on_device") ON_DEVICE("En la tableta (próximamente)", "", false),
+    @SerialName("on_device") ON_DEVICE("En la tableta", "", false),
 }
 
 /**
@@ -53,6 +53,17 @@ enum class Rigor(val label: String, val instruction: String) {
     @SerialName("strict") STRICT("Estricto", "Señale todo error, incluida la notación incorrecta o ambigua."),
 }
 
+/** Selección de esfuerzo. AUTO omite el campo para usar el valor predeterminado del modelo. */
+@Serializable
+enum class AiReasoningEffortMode {
+    @SerialName("auto") AUTO,
+    @SerialName("manual") MANUAL,
+}
+
+/** Opción de esfuerzo publicada por el catálogo del proveedor. [value] es el valor exacto de la API. */
+@Serializable
+data class AiReasoningEffortOption(val value: String, val description: String = "")
+
 /** Un modelo configurado. La clave no va acá: se guarda cifrada aparte, por [id]. */
 @Serializable
 data class AiProfile(
@@ -75,6 +86,22 @@ data class AiProfile(
     val oauthClientSecret: String = "",
     /** Proyecto de Google Cloud al que se cobra la cuota (encabezado x-goog-user-project). */
     val googleProject: String = "",
+    /** Explicit opt-in: local text-only runtimes review recognized lines without the page image. */
+    val localTextOnly: Boolean = false,
+    /** AUTO = no se envía parámetro; MANUAL = envía [reasoningEffort] si el proveedor lo admite. */
+    val reasoningEffortMode: AiReasoningEffortMode = AiReasoningEffortMode.AUTO,
+    /** Valor exacto elegido. Es null mientras no haya una selección manual. */
+    val reasoningEffort: String? = null,
+    /** Snapshot de opciones anunciado para [model], para mostrarlas al volver a abrir el perfil. */
+    val availableReasoningEfforts: List<AiReasoningEffortOption> = emptyList(),
+    /** Valor predeterminado reportado por el catálogo; null si no lo informó. */
+    val defaultReasoningEffort: String? = null,
+    /** El perfil consultó el catálogo para este ID; false en perfiles anteriores o no consultados. */
+    val reasoningEffortCatalogKnown: Boolean = false,
+    /** El catálogo indicó que el endpoint admite selección manual aunque no listara valores. */
+    val reasoningEffortManualSupported: Boolean = false,
+    /** El catálogo de Gemini indica `thinking: true`, pero no necesariamente publica niveles. */
+    val reasoningThinkingSupported: Boolean = false,
 ) {
     /** URL sin barra final; a un servidor compatible sin ruta se le agrega /v1. */
     val endpoint: String
@@ -88,13 +115,31 @@ data class AiProfile(
     /** Falta algo para poder usarlo (sin contar la clave). */
     val problem: String?
         get() = when {
-            provider == AiProvider.ON_DEVICE -> "Los modelos en la tableta llegan en una próxima versión."
+            provider == AiProvider.ON_DEVICE -> if (model.isBlank()) "Falta elegir un modelo local importado." else null
             baseUrl.isBlank() -> "Falta la URL."
             !baseUrl.trim().startsWith("http://") && !baseUrl.trim().startsWith("https://") -> "La URL debe empezar con http:// o https://."
             provider.signIn && !AiEndpoints.isOfficial(provider, endpoint) -> "Con inicio de sesión la URL es fija: ${provider.defaultBaseUrl}"
             provider == AiProvider.GEMINI_GOOGLE && oauthClientId.isBlank() -> "Falta el ID de cliente OAuth de su proyecto de Google Cloud."
             model.isBlank() -> "Falta elegir el modelo."
+            reasoningEffortMode == AiReasoningEffortMode.MANUAL && !canSelectReasoningEffort -> "El proveedor no informó que este modelo admita un esfuerzo manual. Elegí Automático o consultá el catálogo."
+            reasoningEffortMode == AiReasoningEffortMode.MANUAL && reasoningEffort.isNullOrBlank() -> "Elegí o escribí un esfuerzo manual, o dejá el modo Automático."
+            reasoningEffortMode == AiReasoningEffortMode.MANUAL && availableReasoningEfforts.isNotEmpty() && availableReasoningEfforts.none { it.value == reasoningEffort } -> "El esfuerzo guardado ya no aparece entre las opciones de este modelo. Elegí uno del catálogo o Automático."
             else -> null
+        }
+
+    /** Capacidad conocida por el adaptador y/o informada por el catálogo de este modelo. */
+    val canSelectReasoningEffort: Boolean
+        get() = when (provider) {
+            // La API admite este campo en modelos de razonamiento; su lista /models no expone niveles.
+            AiProvider.OPENAI -> true
+            AiProvider.CHATGPT, AiProvider.OPENAI_COMPATIBLE ->
+                reasoningEffortManualSupported || availableReasoningEfforts.isNotEmpty()
+            // Gemini usa thinkingLevel, no el campo genérico de OpenAI. Solo habilitarlo si el catálogo
+            // publicó una lista que podamos pasar al campo específico.
+            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> availableReasoningEfforts.isNotEmpty()
+            // Messages API admite output_config.effort; niveles y compatibilidad varían por modelo.
+            AiProvider.ANTHROPIC -> true
+            AiProvider.ON_DEVICE -> false
         }
 
     companion object {
@@ -108,12 +153,14 @@ data class AiProfile(
     }
 }
 
-/** Instrucciones por omisión: corregir y comprobar, sin resolver, en español formal neutro. */
-const val DEFAULT_INSTRUCTIONS: String = """Usted es un corrector de matemática. Recibe la imagen de una hoja manuscrita y el texto que reconoció Trazo, con cada renglón numerado.
+/** Instrucciones por omisión: corregir y comprobar etiquetas crudas e imagen, sin resolver, en español formal neutro. */
+const val DEFAULT_INSTRUCTIONS: String = """Usted es un corrector de matemática. Recibe la imagen de una hoja manuscrita y, para cada renglón, las etiquetas crudas que reconoció Trazo con sus posiciones originales.
 
-Tarea: comprobar la resolución paso a paso y señalar los errores. No resuelva el ejercicio ni agregue contenido nuevo.
+Las etiquetas solo son símbolos o fragmentos ubicados en la hoja. No son expresiones reconstruidas, una resolución, ni resultados o veredictos del motor de Trazo. Lea la escritura directamente en la imagen; use las etiquetas y sus posiciones para orientarse. Si algo no se reconoce, vuelva a mirar la imagen y no invente ni complete la expresión.
+
+Tarea: comprobar la resolución del estudiante paso a paso y señalar los errores. No resuelva el ejercicio ni agregue contenido nuevo.
 Temas habituales: álgebra y polinomios, álgebra lineal y cálculo. Si el enunciado está en la hoja, verifique también que la resolución responda a lo pedido.
-Lea todo lo que hay en la hoja, incluidos gráficos de funciones, figuras y tablas. Si el texto reconocido no coincide con la imagen, confíe en la imagen.
+Lea todo lo que hay en la hoja, incluidos gráficos de funciones, figuras y tablas.
 
 Tipos de error:
 - cuenta: error de cuenta o de signo.

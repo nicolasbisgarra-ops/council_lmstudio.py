@@ -2,11 +2,15 @@ package io.trazo.app.data
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.pdf.PdfDocument
 import io.trazo.app.ai.AiMarkPainter
 import io.trazo.app.ink.PaperColors
 import io.trazo.app.ink.PaperPainter
 import io.trazo.app.ink.StrokePainter
+import io.trazo.core.AiNotes
+import io.trazo.core.Bounds
+import io.trazo.core.Brush
 import io.trazo.core.InkStroke
 import io.trazo.core.LazyNotebook
 import io.trazo.core.Notebook
@@ -14,15 +18,20 @@ import io.trazo.core.Page
 import io.trazo.core.Paper
 import io.trazo.core.bounds
 import java.io.OutputStream
+import kotlin.math.ceil
+import kotlin.math.sqrt
 
 /**
  * Exportación para compartir, nunca formato fuente: PDF vectorial (los trazos quedan como
- * trayectos) y PNG de una página. El cuaderno editable sigue siendo el `.trazo`.
+ * trayectos) y PNG. Cada hoja incluye la tinta que quedó fuera de sus límites.
  */
 object PageExporter {
     /** A4 en puntos PDF (1/72"). */
     private const val PDF_WIDTH = 595
-    private const val PDF_HEIGHT = 842
+
+    /** Límite de memoria para una imagen raster exportada. */
+    private const val MAX_RASTER_PIXELS = 16_000_000L
+    private const val MAX_RASTER_DIMENSION = 8_192
 
     /** @param results tinta de los resultados de las cuentas de cada página (derivada, no está en la página). */
     fun writePdf(notebook: Notebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }, includeAi: Boolean = false) =
@@ -32,13 +41,27 @@ object PageExporter {
     fun writePdf(notebook: LazyNotebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }, includeAi: Boolean = false) =
         writePdf(notebook.pageCount, notebook::page, notebook.paper, out, results, includeAi)
 
-    private fun writePdf(count: Int, pageAt: (Int) -> Page, paper: Paper, out: OutputStream, results: (Page) -> List<InkStroke>, includeAi: Boolean) {
+    private fun writePdf(
+        count: Int,
+        pageAt: (Int) -> Page,
+        paper: Paper,
+        out: OutputStream,
+        results: (Page) -> List<InkStroke>,
+        includeAi: Boolean,
+    ) {
         val doc = PdfDocument()
         try {
             for (i in 0 until count) {
                 val page = pageAt(i)
-                val pdfPage = doc.startPage(PdfDocument.PageInfo.Builder(PDF_WIDTH, PDF_HEIGHT, i + 1).create())
-                drawPage(pdfPage.canvas, page, paper, PDF_WIDTH / Notebook.PAGE_WIDTH, results(page), includeAi)
+                val mathResults = results(page)
+                val bounds = exportBounds(page, mathResults, includeAi)
+                // La hoja mantiene su tamaño lógico A4. Cuando hay tinta fuera del papel, el
+                // medio PDF crece para representarla completa sin escalar ni recortar la hoja.
+                val scale = PDF_WIDTH.toDouble() / Notebook.PAGE_WIDTH
+                val width = checkedDimension(ceil(bounds.width.toDouble() * scale), "PDF width")
+                val height = checkedDimension(ceil(bounds.height.toDouble() * scale), "PDF height")
+                val pdfPage = doc.startPage(PdfDocument.PageInfo.Builder(width, height, i + 1).create())
+                drawPage(pdfPage.canvas, page, paper, bounds, scale.toFloat(), mathResults, includeAi)
                 doc.finishPage(pdfPage)
             }
             doc.writeTo(out)
@@ -47,25 +70,54 @@ object PageExporter {
         }
     }
 
-    fun writePng(page: Page, paper: Paper, out: OutputStream, scale: Float = 2f, results: List<InkStroke> = emptyList(), includeAi: Boolean = false) {
-        val bmp = Bitmap.createBitmap((Notebook.PAGE_WIDTH * scale).toInt(), (Notebook.PAGE_HEIGHT * scale).toInt(), Bitmap.Config.ARGB_8888)
+    fun writePng(
+        page: Page,
+        paper: Paper,
+        out: OutputStream,
+        scale: Float = 2f,
+        results: List<InkStroke> = emptyList(),
+        includeAi: Boolean = false,
+    ) {
+        require(scale.isFinite() && scale > 0f) { "scale must be finite and greater than zero" }
+        val bounds = exportBounds(page, results, includeAi)
+        val raster = rasterSize(bounds, scale.toDouble())
+        val bmp = Bitmap.createBitmap(raster.width, raster.height, Bitmap.Config.ARGB_8888)
         try {
-            drawPage(Canvas(bmp), page, paper, scale, results, includeAi)
+            // Fuera de la hoja se ve el escritorio. Los PNG compartidos conservan el fondo blanco
+            // que tenían antes de incluir tinta exterior.
+            bmp.eraseColor(Color.WHITE)
+            drawPage(Canvas(bmp), page, paper, bounds, raster.scale.toFloat(), results, includeAi)
             bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         } finally {
             bmp.recycle()
         }
     }
 
-    /** Miniatura de [page] de [width] px de ancho (panel de páginas). */
-    fun thumbnail(page: Page, paper: Paper, width: Int, colors: PaperColors = PaperColors.LIGHT): Bitmap {
-        val scale = width / Notebook.PAGE_WIDTH
-        val bmp = Bitmap.createBitmap(width, (Notebook.PAGE_HEIGHT * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        canvas.scale(scale, scale)
-        PaperPainter.draw(canvas, paper, colors = colors)
-        StrokePainter.drawAll(canvas, page.allInk)
-        return bmp
+    /** Miniatura que mantiene toda la tinta visible, también cuando sale de la hoja. */
+    fun thumbnail(
+        page: Page,
+        paper: Paper,
+        width: Int,
+        colors: PaperColors = PaperColors.LIGHT,
+        results: List<InkStroke> = emptyList(),
+        includeAi: Boolean = false,
+    ): Bitmap {
+        require(width > 0) { "width must be greater than zero" }
+        val bounds = exportBounds(page, results, includeAi)
+        // `width` is the bitmap width contract used by thumbnail consumers and their caches.
+        val scale = width.toDouble() / bounds.width
+        val bitmapWidth = width
+        val bitmapHeight = checkedDimension(ceil(bounds.height.toDouble() * scale), "thumbnail height")
+        val bmp = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+        try {
+            bmp.eraseColor(colors.desk)
+            val canvas = Canvas(bmp)
+            drawPage(canvas, page, paper, bounds, scale.toFloat(), results, includeAi, colors)
+            return bmp
+        } catch (t: Throwable) {
+            bmp.recycle()
+            throw t
+        }
     }
 
     /** Imagen de unos trazos sueltos (lo copiado con el lazo), sobre blanco y con un margen. */
@@ -77,7 +129,7 @@ object PageExporter {
         val scale = (maxSide / maxOf(w, h)).coerceAtMost(3f)
         val bmp = Bitmap.createBitmap((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        canvas.drawColor(android.graphics.Color.WHITE)
+        canvas.drawColor(Color.WHITE)
         canvas.scale(scale, scale)
         canvas.translate(margin - b.left, margin - b.top)
         StrokePainter.drawAll(canvas, strokes)
@@ -85,13 +137,121 @@ object PageExporter {
         bmp.recycle()
     }
 
+    /**
+     * Une la hoja central con la tinta visible y deja sitio al grosor real de cada trazo.
+     * PaperPainter sigue pintando únicamente el rectángulo central del papel.
+     */
+    private fun exportBounds(page: Page, results: List<InkStroke>, includeAi: Boolean): Bounds {
+        var bounds = Bounds(0f, 0f, Notebook.PAGE_WIDTH, Notebook.PAGE_HEIGHT)
+
+        fun include(candidate: Bounds) {
+            require(candidate.isFinite()) { "export bounds must be finite" }
+            bounds = bounds.union(candidate)
+        }
+
+        fun includeStrokes(strokes: List<InkStroke>) {
+            for (stroke in strokes) {
+                require(stroke.width.isFinite() && stroke.width >= 0f) { "stroke width must be finite and non-negative" }
+                val padding = when (stroke.brush) {
+                    // These layer bounds are used by StrokePainter while drawing the stroke.
+                    Brush.PENCIL -> stroke.width * 2f
+                    else -> stroke.width
+                }
+                require(padding.isFinite()) { "stroke padding must be finite" }
+                include(stroke.bounds.inflate(padding))
+            }
+        }
+
+        includeStrokes(page.allInk)
+        includeStrokes(results)
+        if (includeAi) includeAiBounds(page)?.let(::include)
+        require(bounds.isFinite() && bounds.width.isFinite() && bounds.height.isFinite()) { "export bounds must be finite" }
+        require(bounds.width > 0f && bounds.height > 0f) { "export bounds must have positive dimensions" }
+        return bounds
+    }
+
+    private fun includeAiBounds(page: Page): Bounds? {
+        val ai = page.ai ?: return null
+        var combined: Bounds? = null
+        fun include(candidate: Bounds) {
+            require(candidate.isFinite()) { "AI export bounds must be finite" }
+            combined = combined?.union(candidate) ?: candidate
+        }
+
+        val placements = AiNotes.layout(ai.notes)
+        for (placed in placements) {
+            include(placed.ring.inflate(2.2f))
+            include(placed.label.inflate(2.2f))
+        }
+        val verdict = ai.verdict(page.strokes)
+        val area = verdict?.area
+        if (area != null) {
+            require(area.isFinite()) { "AI verdict bounds must be finite" }
+            val scoreText = verdict.score?.let { "${AiMarkPainter.formatScore(it)}/10" }
+            // tick() reaches x+28; a score starts at x+32 and uses a 17-unit type size.
+            val right = area.right + 42f + (scoreText?.length ?: 0) * 17f
+            include(Bounds(area.right + 8f, area.top - 4f, right, area.top + 32f))
+        }
+        return combined
+    }
+
+    private data class RasterSize(val width: Int, val height: Int, val scale: Double)
+
+    private fun rasterSize(bounds: Bounds, requestedScale: Double): RasterSize {
+        require(requestedScale.isFinite() && requestedScale > 0.0) { "scale must be finite and greater than zero" }
+        val docWidth = bounds.width.toDouble()
+        val docHeight = bounds.height.toDouble()
+        require(docWidth.isFinite() && docHeight.isFinite() && docWidth > 0.0 && docHeight > 0.0) {
+            "export bounds must have finite positive dimensions"
+        }
+        var scale = minOf(
+            requestedScale,
+            MAX_RASTER_DIMENSION.toDouble() / docWidth,
+            MAX_RASTER_DIMENSION.toDouble() / docHeight,
+            sqrt(MAX_RASTER_PIXELS.toDouble() / (docWidth * docHeight)),
+        )
+        while (true) {
+            val width = checkedDimension(ceil(docWidth * scale), "PNG width")
+            val height = checkedDimension(ceil(docHeight * scale), "PNG height")
+            val pixelCount = width.toLong() * height.toLong()
+            if (width <= MAX_RASTER_DIMENSION && height <= MAX_RASTER_DIMENSION && pixelCount <= MAX_RASTER_PIXELS) {
+                return RasterSize(width, height, scale)
+            }
+            // Ceil can add a pixel past a continuous limit. Correct from the actual integer size,
+            // then back off slightly so floating point rounding cannot leave it over the cap.
+            var correction = 1.0
+            if (width > MAX_RASTER_DIMENSION) correction = minOf(correction, MAX_RASTER_DIMENSION.toDouble() / width)
+            if (height > MAX_RASTER_DIMENSION) correction = minOf(correction, MAX_RASTER_DIMENSION.toDouble() / height)
+            if (pixelCount > MAX_RASTER_PIXELS) correction = minOf(correction, sqrt(MAX_RASTER_PIXELS.toDouble() / pixelCount))
+            scale *= correction * 0.999999
+            require(scale > 0.0 && scale.isFinite()) { "unable to fit export within raster limits" }
+        }
+    }
+
+    private fun checkedDimension(value: Double, name: String): Int {
+        require(value.isFinite() && value >= 1.0 && value <= Int.MAX_VALUE.toDouble()) { "$name is outside supported dimensions" }
+        return value.toInt()
+    }
+
+    private fun Bounds.isFinite() = left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite()
+
     /** Con [includeAi], las marcas del Modo IA van encima, como se ven en la hoja (46). */
-    private fun drawPage(canvas: Canvas, page: Page, paper: Paper, scale: Float, results: List<InkStroke>, includeAi: Boolean) {
+    private fun drawPage(
+        canvas: Canvas,
+        page: Page,
+        paper: Paper,
+        bounds: Bounds,
+        scale: Float,
+        results: List<InkStroke>,
+        includeAi: Boolean,
+        colors: PaperColors = PaperColors.LIGHT,
+    ) {
         canvas.save()
         canvas.scale(scale, scale)
-        PaperPainter.draw(canvas, paper)
-        StrokePainter.drawAll(canvas, page.allInk)
-        StrokePainter.drawInkOnly(canvas, results)
+        canvas.translate(-bounds.left, -bounds.top)
+        PaperPainter.draw(canvas, paper, colors = colors)
+        StrokePainter.drawAll(canvas, page.allInk, colors.dark)
+        StrokePainter.drawInkOnly(canvas, results, colors.dark)
         page.ai?.takeIf { includeAi }?.let { AiMarkPainter.draw(canvas, it.notes, it.verdict(page.strokes)) }
         canvas.restore()
     }

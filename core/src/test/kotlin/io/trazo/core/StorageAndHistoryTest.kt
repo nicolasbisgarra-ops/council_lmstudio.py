@@ -7,6 +7,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class HistoryTest {
     private fun st(id: String, x: Float = 0f) = InkStroke(id, listOf(InkPoint(x, 0f), InkPoint(x + 1f, 1f)))
@@ -105,6 +108,88 @@ class StorageTest {
     @Test fun `newer schema is rejected instead of silently misread`() {
         val text = TrazoFormat.encodeNotebook(sample()).replace("\"schemaVersion\":1", "\"schemaVersion\":99")
         assertThrows(UnsupportedSchemaException::class.java) { TrazoFormat.decodeNotebook(text) }
+    }
+
+    @Test fun `archive rejects duplicate notebook entries`() {
+        val notebook = TrazoFormat.encodeNotebook(sample()).toByteArray(Charsets.UTF_8)
+        val zipBytes = ByteArrayOutputStream().also { out ->
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("notebook.json")); zip.write(notebook); zip.closeEntry()
+                zip.putNextEntry(ZipEntry("notebook.jsox")); zip.write(notebook); zip.closeEntry()
+            }
+        }.toByteArray()
+        // Same byte length keeps all local-header and central-directory offsets valid.
+        val bytes = zipBytes.toString(Charsets.ISO_8859_1).replace("notebook.jsox", "notebook.json")
+            .toByteArray(Charsets.ISO_8859_1)
+        assertThrows(UnsupportedSchemaException::class.java) {
+            TrazoFormat.importArchive(ByteArrayInputStream(bytes))
+        }
+    }
+
+    @Test fun `archive rejects a compressed oversized unknown entry`() {
+        val bytes = ByteArrayOutputStream().also { out ->
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("unknown.bin"))
+                val chunk = ByteArray(8192)
+                repeat((1024 * 1024 / chunk.size) + 1) { zip.write(chunk) }
+                zip.closeEntry()
+            }
+        }.toByteArray()
+        assertTrue(bytes.size < 32 * 1024) // The test input is highly compressible.
+        assertThrows(IOException::class.java) {
+            TrazoFormat.importArchive(ByteArrayInputStream(bytes))
+        }
+    }
+
+    @Test fun `archive rejects notebook json beyond its streaming limit`() {
+        val json = TrazoFormat.encodeNotebook(sample()).toByteArray(Charsets.UTF_8)
+        val bytes = ByteArrayOutputStream().also { out ->
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("notebook.json"))
+                zip.write(json)
+                val chunk = ByteArray(8192) { ' '.code.toByte() }
+                val padding = TrazoFormat.MAX_NOTEBOOK_ENTRY_BYTES + 1 - json.size
+                repeat((padding + chunk.size - 1) / chunk.size) { zip.write(chunk) }
+                zip.closeEntry()
+            }
+        }.toByteArray()
+        assertThrows(IOException::class.java) {
+            TrazoFormat.importArchive(ByteArrayInputStream(bytes))
+        }
+    }
+
+    @Test fun `archive rejects patterns json beyond its streaming limit`() {
+        val notebook = TrazoFormat.encodeNotebook(sample()).toByteArray(Charsets.UTF_8)
+        val patterns = TrazoFormat.encodePatterns(emptyList()).toByteArray(Charsets.UTF_8)
+        val bytes = ByteArrayOutputStream().also { out ->
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("notebook.json")); zip.write(notebook); zip.closeEntry()
+                zip.putNextEntry(ZipEntry("patterns.json")); zip.write(patterns)
+                val chunk = ByteArray(8192) { ' '.code.toByte() }
+                val padding = TrazoFormat.MAX_PATTERNS_ENTRY_BYTES + 1 - patterns.size
+                repeat((padding + chunk.size - 1) / chunk.size) { zip.write(chunk) }
+                zip.closeEntry()
+            }
+        }.toByteArray()
+        assertThrows(IOException::class.java) {
+            TrazoFormat.importArchive(ByteArrayInputStream(bytes))
+        }
+    }
+
+    @Test fun `standalone pattern import enforces byte cap while reading`() {
+        val prefix = TrazoFormat.encodePatterns(emptyList()).toByteArray(Charsets.UTF_8)
+        val stream = object : java.io.InputStream() {
+            var position = 0
+            override fun read(): Int = if (position++ < prefix.size) prefix[position - 1].toInt() and 0xff else ' '.code
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (position >= TrazoFormat.MAX_PATTERNS_ENTRY_BYTES + 1) return -1
+                val count = minOf(length, TrazoFormat.MAX_PATTERNS_ENTRY_BYTES + 1 - position)
+                for (i in 0 until count) buffer[offset + i] = if (position + i < prefix.size) prefix[position + i] else ' '.code.toByte()
+                position += count
+                return count
+            }
+        }
+        assertThrows(IOException::class.java) { TrazoFormat.decodePatterns(stream) }
     }
 
     @Test fun `unknown fields are ignored for forward compatibility`() {

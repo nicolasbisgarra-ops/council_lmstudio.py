@@ -2,6 +2,7 @@
 
 package io.trazo.app.ui
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
@@ -66,13 +67,13 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import io.trazo.app.TrazoApp
 import io.trazo.app.data.DEFAULT_QUICK_COLORS
 import io.trazo.app.data.EraserMode
 import io.trazo.app.data.PaperTone
 import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.ThemeMode
 import io.trazo.app.data.TrazoSettings
-import io.trazo.app.trazo
 import io.trazo.core.MathNotes
 import io.trazo.core.Paper
 
@@ -92,7 +93,10 @@ private sealed interface PrefColor {
  */
 @Composable
 fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
-    val store = LocalContext.current.trazo.settings
+    val context = LocalContext.current
+    val app = context.applicationContext as TrazoApp
+    val store = app.settings
+    val lastCrashReport = remember(app) { app.crashReports.readLatest() }
     val s by store.settings.collectAsState()
     val stylus = remember { hasStylusDevice() }
     var picking by remember { mutableStateOf<PrefColor?>(null) }
@@ -148,6 +152,29 @@ fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
                         }
                     } else {
                         SettingsPage(section, s, stylus, update) { picking = it }
+                    }
+
+                    if (section == null && lastCrashReport != null) {
+                        OutlinedButton(
+                            onClick = {
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, "Informe de error de Trazo")
+                                    putExtra(Intent.EXTRA_TEXT, lastCrashReport)
+                                }
+                                context.startActivity(Intent.createChooser(send, "Compartir último error"))
+                            },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            Text("Compartir último error")
+                        }
+                        Text(
+                            "El informe contiene datos técnicos; no incluye mensajes de error ni contenido escrito.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
 
                     // Los perfiles del Modo IA tienen su propio borrado, por perfil.
