@@ -185,14 +185,10 @@ fun EditorTopBar(
                         if (tablet) history()
                         EditorMenu(vm, actions, chromeButtonSize)
                     }
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(start = 6.dp, end = 6.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(if (tablet) 16.dp else 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                    // Tableta: una fila deslizable. Teléfono: cada grupo baja de renglón entero, así
+                    // ninguna acción (la paleta, insertar patrón) queda escondida fuera de la pantalla.
+                    val railModifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, bottom = 4.dp)
+                    val rail: @Composable () -> Unit = {
                         if (!tablet) {
                             Row(Modifier.heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) { history() }
                         }
@@ -200,6 +196,15 @@ fun EditorTopBar(
                             Row(Modifier.heightIn(min = if (tablet) 52.dp else 44.dp), verticalAlignment = Alignment.CenterVertically) { group() }
                         }
                     }
+                    if (tablet) Row(
+                        railModifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) { rail() } else FlowRow(
+                        railModifier,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) { rail() }
                 }
             } else {
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
