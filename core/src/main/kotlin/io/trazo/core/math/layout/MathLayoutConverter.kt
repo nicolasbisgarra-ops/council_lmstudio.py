@@ -120,7 +120,7 @@ object MathLayoutConverter {
      * altura media del contenido para que no la tomen por un subíndice ni por el renglón de abajo.
      */
     private fun separators(open: Node, inside: List<Node>): List<Node> {
-        if (open.text != "(" || inside.none { it.text == "," }) return inside
+        if (open.text !in setOf("(", "[") || inside.none { it.text == "," }) return inside
         val plain = inside.filter { it.text != "," && it.kind != Kind.BAR }
         val y = if (plain.isEmpty()) open.y else median(plain.map { it.y })
         val height = if (plain.isEmpty()) open.emY else median(plain.map { it.emY })
@@ -364,7 +364,16 @@ object MathLayoutConverter {
                 if (node.children.isEmpty()) fail("la raíz necesita un radicando", out.length)
                 out.append("√("); emitLines(node.children, out); out.append(')')
             }
-            Kind.GROUP -> {
+            Kind.GROUP -> if (node.text == "[") {
+                // Cada renglón dentro del corchete es una fila: [[1 2];[3 4]].
+                out.append('[')
+                if (node.children.size == 1) emit(node.children[0], out)
+                else for ((index, row) in node.children.withIndex()) {
+                    if (index > 0) out.append(';')
+                    out.append('['); emit(row, out); out.append(']')
+                }
+                out.append(']')
+            } else {
                 out.append(node.text ?: "("); emitLines(node.children, out); out.append(')')
             }
             Kind.POWER -> {
@@ -411,8 +420,8 @@ object MathLayoutConverter {
     private fun kind(label: String, text: String?): Kind = when {
         label in setOf("Fracción", "Barra de fracción", "Barra") -> Kind.BAR
         text == "√" -> Kind.ROOT_MARK
-        text in setOf("(", "f(") -> Kind.OPEN
-        text == ")" -> Kind.CLOSE
+        text in setOf("(", "f(", "[") -> Kind.OPEN
+        text in setOf(")", "]") -> Kind.CLOSE
         text?.all { it.isDigit() } == true -> Kind.NUMBER
         else -> Kind.ATOM
     }
@@ -424,6 +433,7 @@ object MathLayoutConverter {
         "Porcentaje", "%" -> "%"
         "Igual", "=" -> "="; "Raíz", "√" -> "√"; "Pi", "π" -> "π"
         "Abre paréntesis", "(", "Paréntesis abre" -> "("; "Cierra paréntesis", ")", "Paréntesis cierra" -> ")"
+        "Abre corchete", "[" -> "["; "Cierra corchete", "]" -> "]"; "Integral", "∫" -> "∫"
         "Coma", "," -> ","; "Punto", "." -> "."; "f( )" -> "f("
         else -> when (label.lowercase()) {
             "alfa" -> "α"; "beta" -> "β"; "gamma" -> "γ"; "delta" -> "δ"; "epsilon", "épsilon" -> "ε"

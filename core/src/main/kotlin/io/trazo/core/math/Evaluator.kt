@@ -18,9 +18,35 @@ object Evaluator {
         is Expr.Var -> lookup(e.name)
         is Expr.Neg -> negate(evaluate(e.operand, lookup))
         is Expr.Bin -> binary(e.op, evaluate(e.left, lookup), evaluate(e.right, lookup))
-        is Expr.Pow -> power(evaluate(e.base, lookup), evaluate(e.exponent, lookup))
+        is Expr.Pow -> {
+            val base = evaluate(e.base, lookup)
+            if (base is TupleValue && e.exponent == Expr.Var("T")) Calculus.transpose(base)
+            else power(base, evaluate(e.exponent, lookup))
+        }
         is Expr.Sqrt -> squareRoot(evaluate(e.operand, lookup))
         is Expr.Tuple -> TupleValue(e.items.map { evaluate(it, lookup) })
+        is Expr.Deriv -> Calculus.derivative(evaluate(e.operand, bind(e.variable, lookup)), e.variable)
+        is Expr.Integral -> integral(e, lookup)
+        is Expr.Call -> Calculus.determinant(evaluate(e.argument, lookup), ::binary)
+    }
+
+    /** Dentro de una derivada o integral, su letra no toma el valor del cuaderno. */
+    private fun bind(v: String, lookup: (String) -> MathValue): (String) -> MathValue =
+        { if (it == v) SymbolicValue.variable(v) else lookup(it) }
+
+    private fun integral(e: Expr.Integral, lookup: (String) -> MathValue): MathValue {
+        val v = e.variable
+        val primitive = runCatching { Calculus.antiderivative(evaluate(e.operand, bind(v, lookup)), v) }
+        if (e.lower == null || e.upper == null) {
+            return SymbolicValue.add(primitive.getOrThrow(), SymbolicValue.variable(Calculus.CONSTANT))
+        }
+        val a = evaluate(e.lower, lookup)
+        val b = evaluate(e.upper, lookup)
+        primitive.getOrNull()?.let { return Calculus.between(it, v, a, b) }
+        if (a.hasLetters() || b.hasLetters() || a is TupleValue || b is TupleValue) primitive.getOrThrow()
+        return Calculus.simpson({ x ->
+            evaluate(e.operand) { if (it == v) ApproxValue(x) else lookup(it) }.toDouble()
+        }, a.toDouble(), b.toDouble())
     }
 
     private fun negate(v: MathValue): MathValue = when (v) {
@@ -33,6 +59,9 @@ object Evaluator {
 
     private fun binary(op: Char, a: MathValue, b: MathValue): MathValue {
         if (a is QuotientValue || b is QuotientValue) domain(QuotientValue.STOP)
+        if (op == '*' && a is TupleValue && b is TupleValue && (Calculus.rows(a) != null || Calculus.rows(b) != null)) {
+            return Calculus.multiply(a, b, ::binary)
+        }
         if (a is TupleValue || b is TupleValue) return TupleValue.binary(op, a, b, ::binary)
         if (a is SymbolicValue || b is SymbolicValue) return when (op) {
             '+' -> SymbolicValue.add(a, b)
@@ -64,6 +93,11 @@ object Evaluator {
     private fun power(base: MathValue, exponent: MathValue): MathValue {
         if (base is QuotientValue || exponent is QuotientValue) domain(QuotientValue.STOP)
         if (exponent is TupleValue) domain("El exponente no puede ser un par")
+        if (base is TupleValue && Calculus.rows(base) != null) {
+            val k = (exponent as? ExactValue)?.rational?.takeIf { it.isInteger && it.num.abs() <= MAX_EXACT_EXPONENT.toBigInteger() }
+                ?: domain("Una matriz se eleva a un número entero")
+            return Calculus.power(base, k.num.toInt(), ::binary)
+        }
         if (base is TupleValue) return TupleValue(base.items.map { power(it, exponent) })
         if (base is SymbolicValue || exponent is SymbolicValue) return SymbolicValue.power(base, exponent)
         val n = (exponent as? ExactValue)?.rational

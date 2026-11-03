@@ -23,7 +23,9 @@ class SymbolicValue private constructor(val terms: Map<Map<String, Int>, MathVal
     /** Términos ordenados como se escriben: mayor grado primero, el número solo al final. */
     val ordered: List<Pair<Map<String, Int>, MathValue>>
         get() = terms.entries.map { it.toPair() }.sortedWith(
-            compareByDescending<Pair<Map<String, Int>, MathValue>> { (m, _) -> m.filterKeys { it != PI_LETTER }.values.sum() }
+            // La constante de integración va al final: x² + 3x + C.
+            compareBy<Pair<Map<String, Int>, MathValue>> { (m, _) -> m == mapOf(Calculus.CONSTANT to 1) }
+                .thenByDescending { (m, _) -> m.filterKeys { it != PI_LETTER }.values.sum() }
                 .thenBy { (m, _) -> m.isEmpty() || m.keys == setOf(PI_LETTER) }
                 .thenBy { (m, _) -> letters(m).joinToString("") { (l, e) -> l + e } },
         )
