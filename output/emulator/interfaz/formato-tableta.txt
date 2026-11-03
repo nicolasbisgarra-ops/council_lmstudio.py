@@ -1,0 +1,10 @@
+-- tableta: 1600x2560 @ 320 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 16.426
+
+OK (1 test)
+
+
+formato exit_status=0

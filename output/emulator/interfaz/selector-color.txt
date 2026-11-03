@@ -1,8 +1,9 @@
 
 io.trazo.app.GuiTourTest:.
 
-Time: 11.951
+Time: 11.378
 
 OK (1 test)
 
 
+instrumentation exit_status=0

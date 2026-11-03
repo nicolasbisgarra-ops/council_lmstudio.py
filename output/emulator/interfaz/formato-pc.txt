@@ -1,0 +1,10 @@
+-- pc: 1920x1080 @ 160 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 16.74
+
+OK (1 test)
+
+
+formato exit_status=0

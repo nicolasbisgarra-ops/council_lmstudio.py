@@ -2,44 +2,49 @@
 
 io.trazo.app.GuiTourTest:.
 
-Time: 16.078
+Time: 16.952
 
 OK (1 test)
 
 
+formato exit_status=0
 -- telefono-horizontal: 2400x1080 @ 420 dpi
 
 io.trazo.app.GuiTourTest:.
 
-Time: 14.334
+Time: 14.064
 
 OK (1 test)
 
 
+formato exit_status=0
 -- tableta: 1600x2560 @ 320 dpi
 
 io.trazo.app.GuiTourTest:.
 
-Time: 15.094
+Time: 16.426
 
 OK (1 test)
 
 
+formato exit_status=0
 -- tableta-horizontal: 2560x1600 @ 320 dpi
 
 io.trazo.app.GuiTourTest:.
 
-Time: 15.474
+Time: 16.367
 
 OK (1 test)
 
 
+formato exit_status=0
 -- pc: 1920x1080 @ 160 dpi
 
 io.trazo.app.GuiTourTest:.
 
-Time: 15.36
+Time: 16.74
 
 OK (1 test)
 
 
+formato exit_status=0

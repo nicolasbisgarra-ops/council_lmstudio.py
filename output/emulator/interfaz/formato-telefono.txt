@@ -1,0 +1,10 @@
+-- telefono: 1080x2400 @ 420 dpi
+
+io.trazo.app.GuiTourTest:.
+
+Time: 16.952
+
+OK (1 test)
+
+
+formato exit_status=0

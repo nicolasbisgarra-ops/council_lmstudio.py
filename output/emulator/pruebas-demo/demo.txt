@@ -1,8 +1,9 @@
 
 io.trazo.app.DemoExerciseTest:..
 
-Time: 188.58
+Time: 188.255
 
 OK (2 tests)
 
 
+instrumentation exit_status=0
