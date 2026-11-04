@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -335,6 +336,11 @@ fun EditorScreen(
                     } else if (!previewOpen && budget.tabletWindow) {
                         PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true })
                     }
+                    // Chat de revisión fijo a la izquierda de la hoja cuando entra; en teléfono va encima.
+                    val chatFixed = maxWidth >= 720.dp
+                    if (vm.chatOpen && chatFixed) {
+                        AiChatPanel(vm, Modifier.width(if (maxWidth >= 1100.dp) 400.dp else 340.dp).fillMaxHeight())
+                    }
                     Box(Modifier.weight(1f).fillMaxHeight().barContainer(selectionMover).onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
                         AndroidView(
                             factory = { ctx ->
@@ -474,6 +480,9 @@ fun EditorScreen(
                     }
                     if (dock == BarDock.RIGHT) sideToolbar()
                 }
+                if (vm.chatOpen && maxWidth < 720.dp) {
+                    AiChatPanel(vm, Modifier.align(Alignment.TopStart).fillMaxHeight().fillMaxWidth(0.92f))
+                }
                 if (!previewOpen && !budget.tabletWindow) {
                     PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true },
                         modifier = Modifier.align(Alignment.TopStart)
@@ -610,6 +619,7 @@ fun EditorScreen(
             onReview = { aiMenu = false; vm.reviewWithAi() },
             reviewing = vm.aiProgress?.running == true,
             pending = vm.aiPending,
+            onChat = { aiMenu = false; vm.openChat() },
         )
     }
 

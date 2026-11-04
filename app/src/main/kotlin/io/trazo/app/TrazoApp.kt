@@ -16,6 +16,7 @@ class TrazoApp : Application() {
     val settings: SettingsStore by lazy { SettingsStore(this) }
     val ai: AiStore by lazy { AiStore(this) }
     val aiJournal: AiJournal by lazy { AiJournal(filesDir) }
+    val aiChats: io.trazo.app.data.AiChatStore by lazy { io.trazo.app.data.AiChatStore(filesDir) }
     val reviewQueue by lazy {
         io.trazo.ai.DurableReviewQueue(io.trazo.ai.AtomicFileReviewQueueStorage(
             java.io.File(filesDir, "trazo_ai_review_queue_v2.bin")))

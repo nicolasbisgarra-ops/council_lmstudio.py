@@ -681,6 +681,7 @@ internal fun AiQuickMenu(
     onReview: () -> Unit,
     reviewing: Boolean = false,
     pending: Int = 0,
+    onChat: (() -> Unit)? = null,
 ) {
     val store = LocalContext.current.trazo.ai
     val ai by store.settings.collectAsState()
@@ -701,6 +702,12 @@ internal fun AiQuickMenu(
                 }
                 Button(enabled = ai.current != null && !reviewing, onClick = onReview, modifier = Modifier.fillMaxWidth()) {
                     Text(if (reviewing) "Revisando…" else "Revisar página")
+                }
+                if (onChat != null) {
+                    androidx.compose.material3.OutlinedButton(enabled = ai.current != null, onClick = onChat, modifier = Modifier.fillMaxWidth()) {
+                        Text("Chat de revisión")
+                    }
+                    AiHint("El chat rehace tu resolución paso a paso, te dice dónde está el primer error y te deja preguntar.")
                 }
                 AiHint("Para revisar solo una parte, elegila con el lazo y tocá «Revisar». Tocá una marca para verla, discutirla o quitarla.")
                 if (pending > 0) AiHint(if (pending == 1) "1 revisión pendiente. Abrí esa página y tocá «Revisar» para enviarla." else "$pending revisiones pendientes. Se envían solo cuando revisás cada página manualmente.")

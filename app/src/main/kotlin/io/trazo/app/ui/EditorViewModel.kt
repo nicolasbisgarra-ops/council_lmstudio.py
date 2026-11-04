@@ -30,6 +30,12 @@ import io.trazo.ai.ReviewLifecycleGate
 import io.trazo.ai.ReviewScope
 import io.trazo.ai.ReviewTicket
 import io.trazo.ai.MarkKind
+import io.trazo.ai.AiTutor
+import io.trazo.ai.AiTutorPrompt
+import io.trazo.ai.TutorRole
+import io.trazo.ai.TutorTurn
+import io.trazo.app.data.AiChatMessage
+import io.trazo.core.math.tex.TexInk
 import io.trazo.app.ai.AiCapture
 import io.trazo.app.ai.AiConnectivity
 import io.trazo.app.ai.AiMarkPainter
@@ -291,6 +297,7 @@ class EditorViewModel(
             attaching = false
         }
         attachedPageId = page.id
+        loadChat(page.id)
         pageLoadError = null
         reviewScopeForCurrentPage()?.let { scope -> if (hardReset) reviewGate.openPage(scope) else reviewGate.navigateTo(scope) }
         aiNote = null
@@ -884,6 +891,7 @@ class EditorViewModel(
             cancelAiReview()
         }
         if (aiDiscussing || discussionJob?.isActive == true) cancelDiscussion()
+        if (chatBusy) cancelChat()
     }
 
     /** La revisión en curso y su hoja: sus marcas parciales se descartan si se cancela. */
@@ -1301,6 +1309,156 @@ class EditorViewModel(
     }
 
     private fun AiMark.toMark() = AiNotes.Mark(line, kind.name, short, detail, fix)
+
+    // ---------------------------------------------------------------- chat de revisión
+
+    private val tutor = AiTutor(AiClient(local = localCompletion))
+    private val chats = app.trazo.aiChats
+
+    /** El panel del chat está desplegado. */
+    var chatOpen by mutableStateOf(false)
+        private set
+    var chatMessages by mutableStateOf<List<AiChatMessage>>(emptyList())
+        private set
+    /** La respuesta que va llegando; null si no hay ninguna en curso. */
+    var chatStreaming by mutableStateOf<String?>(null)
+        private set
+    var chatBusy by mutableStateOf(false)
+        private set
+    private var chatJob: Job? = null
+    private var chatId = 0L
+    private var chatPage: String? = null
+    private var texCache: Pair<List<InkPattern>, TexInk>? = null
+
+    /** Arma las fórmulas del chat con los patrones actuales del usuario. */
+    fun texInk(): TexInk {
+        val patterns = repo.patterns.value
+        texCache?.let { (p, ink) -> if (p === patterns) return ink }
+        return TexInk(patterns).also { texCache = patterns to it }
+    }
+
+    /** Despliega el chat; la primera vez en la hoja pide la revisión completa. */
+    fun openChat() {
+        chatOpen = true
+        if (chatMessages.isEmpty() && !chatBusy) sendChat(null)
+    }
+
+    fun closeChat() { chatOpen = false }
+
+    fun toggleChat() { if (chatOpen) closeChat() else openChat() }
+
+    private fun loadChat(pageId: String) {
+        if (chatPage == pageId) return
+        cancelChat()
+        chatPage = pageId
+        chatMessages = chats.load(notebookId, pageId)
+    }
+
+    private fun setChat(pageId: String, messages: List<AiChatMessage>) {
+        if (chatPage == pageId) chatMessages = messages
+        viewModelScope.launch(Dispatchers.IO) { chats.save(notebookId, pageId, messages) }
+    }
+
+    private fun chatProblem(text: String) {
+        val pageId = chatPage ?: return
+        setChat(pageId, chatMessages + AiChatMessage(TutorRole.TUTOR, text, System.currentTimeMillis(), error = true))
+    }
+
+    private fun cancelChat() {
+        chatId++
+        if (chatBusy) localCompletion.cancel()
+        chatJob?.cancel()
+        chatJob = null
+        chatBusy = false
+        chatStreaming = null
+    }
+
+    /** Borra la conversación de la hoja y vuelve a revisarla desde cero. */
+    fun restartChat() {
+        val pageId = chatPage ?: return
+        cancelChat()
+        setChat(pageId, emptyList())
+        sendChat(null)
+    }
+
+    /** Marca en la hoja el renglón que señaló el tutor. */
+    fun showChatLine(message: AiChatMessage) {
+        val present = controller.page.allInk.mapTo(HashSet()) { it.id }
+        val ids = message.strokeIds.filter { it in present }
+        if (ids.isNotEmpty()) controller.select(ids)
+    }
+
+    /**
+     * Manda un mensaje al tutor ([question] null = la revisión inicial). La transcripción viaja entera en
+     * cada pedido, con los renglones actuales de la hoja: si el estudiante corrigió algo, el tutor lo ve.
+     */
+    fun sendChat(question: String?) {
+        if (chatBusy) return
+        val n = notebook ?: return
+        val pageId = n.slots.getOrNull(pageIndex)?.id ?: return
+        if (attachedPageId != pageId) return
+        loadChat(pageId)
+        if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) { chatProblem("El Modo IA está bloqueado durante el examen."); return }
+        val profile = ai.settings.value.current ?: run { chatProblem("Configure un modelo en Ajustes → Modo IA."); return }
+        profile.problem?.let { chatProblem(it); return }
+        if (profile.provider.signIn && ai.session(profile.id) == null) {
+            chatProblem("Falta iniciar sesión en «${profile.name}» (Ajustes → Modo IA).")
+            return
+        }
+        if (profile.provider != AiProvider.ON_DEVICE && !remoteOnline()) { chatProblem("Sin conexión: el chat necesita red para este modelo."); return }
+        val page = pageForReview(pageId) ?: return
+        val lines = MathNotes.reviewLabels(page.allInk, repo.patterns.value)
+        if (lines.isEmpty()) { chatProblem("No hay nada escrito para revisar."); return }
+        val q = question?.trim()?.takeIf { it.isNotEmpty() }
+        val previous = chatMessages.filterNot { it.error }
+        if (previous.isNotEmpty() && q == null) return
+        val permit = app.trazo.study.issueAid(ExamHelp.AI_REVIEW) ?: return
+        val history = previous.map { m ->
+            val verdict = when {
+                m.correct == true -> "\nCORRECTO: ${m.verdict.orEmpty()}"
+                m.correct == false -> "\nERROR (renglón ${m.line ?: "?"}): ${m.verdict.orEmpty()}"
+                else -> ""
+            }
+            TutorTurn(m.role, m.text + verdict)
+        }
+        val now = System.currentTimeMillis()
+        setChat(pageId, chatMessages + listOfNotNull(q?.let { AiChatMessage(TutorRole.STUDENT, it, now) }))
+        val lineIds = lines.flatMap { it.strokeIds }.toSet()
+        val captured = page.allInk.filter { it.id in lineIds }
+        val id = ++chatId
+        chatBusy = true
+        chatStreaming = ""
+        chatJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val png = if (history.isNotEmpty() || profile.provider == AiProvider.ON_DEVICE && profile.localTextOnly) null
+                    else AiCapture.png(captured, lines, profile.imageQuality.longEdgePx)
+                    val key = ai.credential(profile, AiOAuth())
+                    val buffer = StringBuilder()
+                    tutor.ask(profile, key, lines.map { it.text }, png, history, q) { chunk ->
+                        buffer.append(chunk)
+                        val shown = buffer.toString()
+                        viewModelScope.launch(Dispatchers.Main.immediate) { if (id == chatId && chatBusy) chatStreaming = shown }
+                    }
+                }
+            }
+            if (id != chatId) return@launch
+            chatBusy = false
+            chatStreaming = null
+            val e = result.exceptionOrNull()
+            if (e is kotlinx.coroutines.CancellationException) return@launch
+            val allowed = app.trazo.study.acceptAid(permit) {
+                result.onSuccess { reply ->
+                    val v = AiTutorPrompt.verdict(reply, lines.size)
+                    val ids = v?.line?.let { l -> lines.getOrNull(l - 1)?.strokeIds }.orEmpty()
+                    val text = if (v != null) AiTutorPrompt.withoutVerdict(reply) else reply.trim()
+                    setChat(pageId, chatMessages + AiChatMessage(TutorRole.TUTOR, text, System.currentTimeMillis(), v?.line, v?.correct, v?.summary, ids))
+                }
+            }
+            if (e != null) chatProblem("No se pudo consultar: ${(e as? AiException)?.message ?: e.message ?: e.javaClass.simpleName}")
+            else if (!allowed) chatProblem("El Modo IA está bloqueado durante el examen.")
+        }
+    }
 
     // ---------------------------------------------------------------- miniaturas del panel de páginas
 
