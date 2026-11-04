@@ -26,6 +26,11 @@ import io.trazo.core.NotebookOrder
 import io.trazo.core.TrazoFormat
 import io.trazo.core.normalizedCover
 import io.trazo.core.remapPatternIds
+import io.trazo.core.sync.NotebookPrint
+import io.trazo.core.sync.SyncHash
+import io.trazo.core.sync.SyncKey
+import io.trazo.core.sync.SyncMerge
+import io.trazo.core.sync.SyncProtocol
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
@@ -424,6 +429,106 @@ class TrazoRepository(root: File) {
                 throw error
             }
             n
+        }
+    }
+
+    // ------------------------------------------------------------------ sincronización entre dispositivos
+
+    private val rootDir = root
+    private val _changes = MutableStateFlow(0L)
+    /** Cambia cuando la sincronización escribe algo: la lista de cuadernos se vuelve a leer. */
+    val changes: StateFlow<Long> = _changes.asStateFlow()
+    private val openNotebooks = HashMap<String, Int>()
+    private val printCache = HashMap<String, Triple<Long, Long, NotebookPrint>>()
+
+    /** El editor tiene abierto el cuaderno: la sincronización no lo toca hasta que se cierre. */
+    fun markOpen(id: String): Unit = synchronized(lock) { openNotebooks[id] = (openNotebooks[id] ?: 0) + 1 }
+
+    fun markClosed(id: String): Unit = synchronized(lock) {
+        val n = (openNotebooks[id] ?: 0) - 1
+        if (n <= 0) openNotebooks.remove(id) else openNotebooks[id] = n
+    }
+
+    fun openNotebookIds(): Set<String> = synchronized(lock) { openNotebooks.keys.toSet() }
+
+    /** Huellas de todos los cuadernos; solo se vuelven a calcular los archivos que cambiaron. */
+    fun syncPrints(now: Long = System.currentTimeMillis()): Map<String, NotebookPrint> = synchronized(lock) {
+        val out = HashMap<String, NotebookPrint>()
+        val seen = HashSet<String>()
+        for (f in notebooksDir.listFiles { f -> f.name.endsWith(".trazo.json") }.orEmpty()) {
+            seen += f.name
+            val len = f.length()
+            val mod = f.lastModified()
+            val cached = printCache[f.name]?.takeIf { it.first == len && it.second == mod }?.third
+            val print = cached ?: runCatching {
+                SyncMerge.print(TrazoFormat.decodeLazy(AtomicFile(f).readFully().toString(Charsets.UTF_8)))
+            }.getOrNull()?.also {
+                // Un archivo recién escrito puede cambiar dentro del mismo tic del reloj: no se guarda en caché.
+                if (now - mod > 3_000L) printCache[f.name] = Triple(len, mod, it)
+            }
+            print?.let { out[it.id] = it }
+        }
+        printCache.keys.retainAll(seen)
+        out
+    }
+
+    private fun syncFile(key: SyncKey): AtomicFile = when (key) {
+        is SyncKey.NotebookKey -> fileFor(key.id)
+        SyncKey.Patterns -> patternsFile
+        SyncKey.Folders -> foldersFile
+        SyncKey.Order -> orderFile
+    }
+
+    fun syncRead(key: SyncKey): String? = synchronized(lock) {
+        val f = syncFile(key)
+        if (!f.baseFile.exists()) null else runCatching { f.readFully().toString(Charsets.UTF_8) }.getOrNull()
+    }
+
+    /**
+     * Reemplaza un archivo con lo que trajo la sincronización, solo si sigue siendo la versión que se leyó
+     * ([expect]). El cuaderno conserva la última hoja abierta en este dispositivo.
+     */
+    fun syncReplace(key: SyncKey, expect: String, text: String?): Boolean = synchronized(lock) {
+        if (key is SyncKey.NotebookKey && key.id in openNotebooks) return false
+        val current = syncRead(key)
+        if (SyncHash.fingerprint(current) != expect) return false
+        val f = syncFile(key)
+        when (key) {
+            is SyncKey.NotebookKey -> if (text == null) f.delete() else {
+                val incoming = TrazoFormat.decodeLazy(text)
+                val keep = current?.let { runCatching { TrazoFormat.decodeLazy(it).lastPage }.getOrNull() } ?: 0
+                write(f, TrazoFormat.encodeLazy(incoming.copy(lastPage = keep)))
+            }
+            SyncKey.Patterns -> {
+                val list = TrazoFormat.decodePatterns(text ?: return false)
+                write(f, text)
+                _patterns.value = list
+            }
+            SyncKey.Folders -> write(f, text ?: return false)
+            SyncKey.Order -> {
+                // Una escritura del orden ya despachada con la versión vieja no pisa la nueva.
+                manualOrderRevision.incrementAndGet()
+                write(f, text ?: return false)
+            }
+        }
+        _changes.value = _changes.value + 1
+        true
+    }
+
+    fun syncBlobNames(): Set<String> = synchronized(lock) {
+        val images = imagesDir.list().orEmpty().filter(PageImages::isValidName).map { "images/$it" }
+        val covers = coversDir.list().orEmpty().filter(Covers::isValidName).map { "covers/$it" }
+        (images + covers).toSet()
+    }
+
+    fun syncReadBlob(name: String): ByteArray? =
+        if (!SyncProtocol.isValidBlob(name)) null else File(rootDir, name).takeIf { it.isFile }?.readBytes()
+
+    fun syncWriteBlob(name: String, bytes: ByteArray) {
+        if (!SyncProtocol.isValidBlob(name)) return
+        synchronized(lock) {
+            val f = File(rootDir, name)
+            if (!f.isFile) write(AtomicFile(f), bytes)
         }
     }
 

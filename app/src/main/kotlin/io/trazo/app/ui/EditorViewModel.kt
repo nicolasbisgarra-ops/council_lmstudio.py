@@ -103,7 +103,7 @@ class EditorViewModel(
     private val aiReviewCall: AiReviewCall? = null,
     private val remoteOnlineOverride: (() -> Boolean)? = null,
 ) : AndroidViewModel(app) {
-    private val repo = app.trazo.repository
+    private val repo = app.trazo.repository.also { it.markOpen(notebookId) }
     private val settings = app.trazo.settings
 
     /** Solo la página actual está decodificada; las demás quedan fijas hasta que se abren. */
@@ -1541,6 +1541,9 @@ class EditorViewModel(
             updateAi(pendingPage) { a -> a?.copy(notes = a.notes.filterNot { it.reviewId == id }) }
         }
         if (!controller.isContactActive) saveNow()
+        // Cerrado y guardado: la sincronización ya puede llevarlo al otro dispositivo.
+        repo.markClosed(notebookId)
+        app.trazo.sync.requestSync()
         super.onCleared()
     }
 

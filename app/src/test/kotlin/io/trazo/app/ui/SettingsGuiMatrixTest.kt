@@ -73,6 +73,7 @@ class SettingsGuiMatrixTest {
             PreferenceSection.MATH to "Cuentas en la hoja",
             PreferenceSection.GENERAL to "Vibrar al reemplazar un gesto",
             PreferenceSection.AI to "Registro de envíos",
+            PreferenceSection.SYNC to "Vincular un dispositivo",
         )
         val footer = "Todo funciona sin conexión"
 

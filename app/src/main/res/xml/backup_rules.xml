@@ -3,4 +3,5 @@
     <include domain="file" path="." />
     <include domain="sharedpref" path="." />
     <exclude domain="sharedpref" path="trazo_ai_keys.xml" />
+    <exclude domain="file" path="sync/" />
 </full-backup-content>

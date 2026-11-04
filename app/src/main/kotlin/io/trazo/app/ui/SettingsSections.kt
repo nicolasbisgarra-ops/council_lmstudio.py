@@ -41,6 +41,10 @@ internal enum class PreferenceSection(val title: String, val summary: String, va
             "Calidad de la captura", "Instrucciones del modelo (prompt)", "Temperatura", "LM Studio, Ollama, OpenRouter",
         ),
     ),
+    SYNC(
+        "Sincronización", "Teléfono y tableta en la red de casa o Tailscale",
+        listOf("Sincronizar con mis dispositivos", "Vincular un dispositivo (código)", "Nombre de este dispositivo", "Sincronizar ahora", "Tailscale"),
+    ),
 }
 
 /** Sin distinguir mayúsculas ni tildes: «lapiz» también encuentra «Lápiz». */
@@ -77,5 +81,7 @@ internal fun TrazoSettings.resetSection(section: PreferenceSection): TrazoSettin
         )
         // Los perfiles del Modo IA viven en su propio almacén (AiStore).
         PreferenceSection.AI -> this
+        // Los dispositivos vinculados se quitan uno por uno («Olvidar»).
+        PreferenceSection.SYNC -> this
     }
 }

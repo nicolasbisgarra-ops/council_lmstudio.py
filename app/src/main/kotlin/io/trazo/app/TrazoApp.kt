@@ -22,6 +22,8 @@ class TrazoApp : Application() {
             java.io.File(filesDir, "trazo_ai_review_queue_v2.bin")))
     }
     val study: StudyStore by lazy { StudyStore(this) }
+    /** Sincronización con los otros dispositivos del usuario (red de casa o Tailscale). */
+    val sync: io.trazo.app.sync.SyncService by lazy { io.trazo.app.sync.SyncService(this, repository) }
 
     override fun onCreate() {
         super.onCreate()

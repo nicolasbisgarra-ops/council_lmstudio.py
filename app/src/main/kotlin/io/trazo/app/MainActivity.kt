@@ -91,6 +91,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // La sincronización busca a los otros dispositivos y sincroniza solo con Trazo en primer plano.
+    override fun onStart() {
+        super.onStart()
+        trazo.sync.setForeground(true)
+    }
+
+    override fun onStop() {
+        trazo.sync.setForeground(false)
+        super.onStop()
+    }
+
     companion object {
         // Velos de la barra de navegación con botones: los mismos que usa enableEdgeToEdge por defecto.
         private val LIGHT_SCRIM = android.graphics.Color.argb(0xe6, 0xFF, 0xFF, 0xFF)

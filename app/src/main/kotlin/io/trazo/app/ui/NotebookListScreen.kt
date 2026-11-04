@@ -151,7 +151,9 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
             loaded = true
         }
     }
-    LaunchedEffect(Unit) { refresh() }
+    // También cuando la sincronización trae cambios de otro dispositivo.
+    val synced by repo.changes.collectAsState()
+    LaunchedEffect(synced) { refresh() }
 
     /** Lectura/escritura de archivos fuera del hilo principal, con aviso del resultado. */
     fun io(done: String, failed: String, block: () -> Unit) {

@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Trazo funciona sin conexión. Solo el Modo IA usa internet, y solo cuando el usuario lo pide. -->
+<!-- Trazo funciona sin conexión. Solo el Modo IA usa internet, y solo cuando el usuario lo pide; la sincronización
+     entre los dispositivos del usuario usa solo la red de casa o Tailscale. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Para encontrar los dispositivos vinculados en la red de casa (mDNS). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- Texto plano (http) permitido para servidores de la red local, como LM Studio u Ollama. -->
     <application

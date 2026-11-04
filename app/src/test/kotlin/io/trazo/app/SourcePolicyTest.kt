@@ -64,15 +64,22 @@ class SourcePolicyTest {
         assertTrue(painter.path.replace('\\', '/').contains("/app/image/"))
     }
 
-    /** Internet es solo para el Modo IA (módulo :ai); el motor y el resto de la app no tocan la red. */
-    @Test fun `only the AI mode touches the network`() {
+    /**
+     * La red es solo para el Modo IA (módulo :ai) y para la sincronización entre los dispositivos del usuario
+     * (`app/sync/`, que solo acepta direcciones de la red de casa o Tailscale); el motor y el resto no la tocan.
+     */
+    @Test fun `only the AI mode and device sync touch the network`() {
         val network = listOf("java.net", "HttpURLConnection", "okhttp", "Socket(", "UrlConnectionTransport")
-        for (f in sources.filterNot { it.name.startsWith("Ai") }) for (word in network) {
+        fun isSync(f: File) = f.name.startsWith("Sync") && f.path.replace('\\', '/').contains("/app/sync/")
+        for (f in sources.filterNot { it.name.startsWith("Ai") || isSync(it) }) for (word in network) {
             assertFalse("${f.path} usa $word", code(f).contains(word))
         }
         val core = (File("../core/src/main").takeIf { it.exists() } ?: File("core/src/main"))
             .walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
         assertTrue(core.isNotEmpty())
         for (f in core) assertFalse("${f.path} usa la red", code(f).contains("java.net"))
+        val service = sources.single { it.name == "SyncService.kt" }
+        assertTrue(isSync(service))
+        assertTrue("la sincronización filtra las direcciones", code(service).contains("SyncAddresses.isAllowed"))
     }
 }

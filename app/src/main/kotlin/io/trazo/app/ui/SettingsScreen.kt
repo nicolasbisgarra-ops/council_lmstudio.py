@@ -180,7 +180,7 @@ fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
                     }
 
                     // Los perfiles del Modo IA tienen su propio borrado, por perfil.
-                    if (section != PreferenceSection.AI) {
+                    if (section != PreferenceSection.AI && section != PreferenceSection.SYNC) {
                         OutlinedButton(onClick = { resetTarget = section?.name ?: "ALL" }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                             Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
@@ -188,7 +188,7 @@ fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
                         }
                     }
                     Text(
-                        "Todo funciona sin conexión, salvo el Modo IA cuando lo usás. Los cuadernos se guardan como trazos editables en este dispositivo.",
+                        "Todo funciona sin conexión, salvo el Modo IA cuando lo usás y la sincronización con tus dispositivos (solo en la red de casa o Tailscale). Los cuadernos se guardan como trazos editables en este dispositivo.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -254,6 +254,7 @@ private fun PreferenceSection.icon(): ImageVector = when (this) {
     PreferenceSection.MATH -> TrazoIcons.Calculate
     PreferenceSection.GENERAL -> Icons.Filled.Settings
     PreferenceSection.AI -> AiStarsIcon
+    PreferenceSection.SYNC -> Icons.Filled.Refresh
 }
 
 @Composable
@@ -379,6 +380,7 @@ private fun SettingsPage(
             Hint("Lo autocompletado no se guarda como tinta: se recalcula al cambiar la cuenta. «Calcular» con el lazo sí lo escribe en la hoja.")
         }
         PreferenceSection.AI -> AiSettingsPage()
+        PreferenceSection.SYNC -> SyncSettingsPage()
         PreferenceSection.GENERAL -> PrefCard("General") {
             SwitchRow("Vibrar al reemplazar un gesto", s.haptics, { on -> update { it.copy(haptics = on) } })
             SwitchRow(
