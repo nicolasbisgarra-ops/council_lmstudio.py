@@ -103,6 +103,9 @@ fun SelectionMenu(vm: EditorViewModel, onCustomColor: () -> Unit) {
                     }
                 }
             }
+            if (vm.selectedImage != null) {
+                MenuAction(TrazoIcons.Crop, "Recortar", ColorColor) { vm.editSelectedImage() }
+            }
             MenuAction(AiStarsIcon, "Revisar", AiColor) { vm.reviewWithAi(selectionOnly = true) }
             MenuAction(Icons.Filled.Delete, "Borrar", DeleteColor) { vm.controller.deleteSelection() }
         }
@@ -128,7 +131,14 @@ private fun MenuAction(icon: ImageVector, label: String, color: Color, onClick: 
 
 /** «Pegar» donde se dejó apretado el lazo (punto [at] de la vista). */
 @Composable
-fun PasteMenu(at: Offset, canPaste: Boolean, onPaste: () -> Unit, onDismiss: () -> Unit) {
+fun PasteMenu(
+    at: Offset,
+    canPaste: Boolean,
+    onPaste: () -> Unit,
+    onDismiss: () -> Unit,
+    canPasteImage: Boolean = false,
+    onPasteImage: () -> Unit = {},
+) {
     Box(Modifier.offset { IntOffset(at.x.roundToInt(), at.y.roundToInt()) }.width(1.dp)) {
         DropdownMenu(expanded = true, onDismissRequest = onDismiss, shape = RoundedCornerShape(16.dp)) {
             DropdownMenuItem(
@@ -137,6 +147,13 @@ fun PasteMenu(at: Offset, canPaste: Boolean, onPaste: () -> Unit, onDismiss: () 
                 enabled = canPaste,
                 onClick = onPaste,
             )
+            if (canPasteImage) {
+                DropdownMenuItem(
+                    text = { Text("Pegar imagen") },
+                    leadingIcon = { Icon(TrazoIcons.Image, null, tint = CopyColor) },
+                    onClick = onPasteImage,
+                )
+            }
         }
     }
 }

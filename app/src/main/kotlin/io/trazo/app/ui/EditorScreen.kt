@@ -140,6 +140,18 @@ fun EditorScreen(
     }
     val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri -> export(uri, pdf = true) }
     val pngLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri -> export(uri, pdf = false) }
+    // Imágenes de la galería o de archivos: se abren en el editor de recorte.
+    fun openImage(uri: android.net.Uri?) {
+        if (uri == null) return
+        val resolver = context.applicationContext.contentResolver
+        vm.openImageEditor({ resolver.openInputStream(uri) ?: error("No se pudo abrir la imagen") }, paper.dark)
+    }
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> openImage(uri) }
+    val fileImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> openImage(uri) }
+    LaunchedEffect(vm.imageMessage) {
+        vm.imageMessage?.let { Toast.makeText(context.applicationContext, it, Toast.LENGTH_LONG).show() }
+        vm.imageMessage = null
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -358,6 +370,27 @@ fun EditorScreen(
                                     onPenButtonClicks = ::penButtonClicks
                                     onViewportChanged = { vm.zoomPercent = this.zoomPercent; vm.mathExplanation = null; vm.viewportTick++; pasteAt = null }
                                     onLassoLongPress = { x, y, dx, dy -> pasteAt = Offset(x, y) to Offset(dx, dy) }
+                                    // Arrastrar y soltar una imagen desde otra app (pantalla dividida o ventana).
+                                    setOnDragListener { view, e ->
+                                        when (e.action) {
+                                            android.view.DragEvent.ACTION_DRAG_STARTED -> e.clipDescription?.hasMimeType("image/*") == true
+                                            android.view.DragEvent.ACTION_DROP -> {
+                                                val uri = e.clipData?.let { clip -> (0 until clip.itemCount).firstNotNullOfOrNull { clip.getItemAt(it).uri } }
+                                                val activity = view.context.findActivity()
+                                                if (uri == null || activity == null) false else {
+                                                    val grant = activity.requestDragAndDropPermissions(e)
+                                                    val resolver = activity.contentResolver
+                                                    vm.insertImageDirect(
+                                                        { resolver.openInputStream(uri) ?: error("No se pudo abrir la imagen") },
+                                                        darkPaper = paperColors.dark, at = vm.viewToDoc(e.x, e.y),
+                                                        onDone = { grant?.release() },
+                                                    )
+                                                    true
+                                                }
+                                            }
+                                            else -> true
+                                        }
+                                    }
                                     canvas.view = this
                                 }
                             },
@@ -412,6 +445,8 @@ fun EditorScreen(
                                 view, canPaste = vm.canPaste,
                                 onPaste = { pasteAt = null; vm.paste(doc.x, doc.y) },
                                 onDismiss = { pasteAt = null },
+                                canPasteImage = remember(view) { vm.canPasteImage },
+                                onPasteImage = { pasteAt = null; vm.pasteSystemImage(paper.dark, doc.x to doc.y) },
                             )
                         }
                         wheelAt?.let { at ->
@@ -482,6 +517,27 @@ fun EditorScreen(
                     Text("Insertar patrón", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                     TextButton(onClick = { showInsert = false; onPatterns() }) { Text("Biblioteca") }
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    androidx.compose.material3.OutlinedButton(onClick = {
+                        showInsert = false
+                        galleryLauncher.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }) { Icon(TrazoIcons.Image, null, Modifier.padding(end = 6.dp)); Text("Galería") }
+                    androidx.compose.material3.OutlinedButton(onClick = {
+                        showInsert = false
+                        fileImageLauncher.launch(arrayOf("image/*"))
+                    }) { Text("Archivos") }
+                    val clipImage = remember { vm.canPasteImage }
+                    androidx.compose.material3.OutlinedButton(enabled = clipImage, onClick = {
+                        showInsert = false
+                        vm.pasteSystemImage(paper.dark)
+                    }) { Icon(TrazoIcons.Paste, null, Modifier.padding(end = 6.dp)); Text("Pegar imagen") }
+                }
+                Text(
+                    "La imagen va debajo de la tinta; la galería y los archivos se abren para recortarlos y ajustarlos.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
                 Text(
                     "Va al centro de la vista como tinta tuya, editable con el lazo.",
                     style = MaterialTheme.typography.bodySmall,
@@ -496,6 +552,8 @@ fun EditorScreen(
             }
         }
     }
+
+    vm.imageEdit?.let { session -> ImageCropDialog(vm, session, paper.dark) }
 
     vm.teaching?.takeIf { !vm.isDrawing }?.let { offer ->
         TeachSheet(
@@ -694,4 +752,14 @@ fun paperName(p: Paper) = when (p) {
     Paper.LINES -> "Rayado"
     Paper.GRID -> "Cuadriculado"
     Paper.DOTS -> "Punteado"
+}
+
+/** La actividad detrás de un contexto de vista (los permisos de arrastrar y soltar se piden a ella). */
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var c: android.content.Context? = this
+    while (c is android.content.ContextWrapper) {
+        if (c is android.app.Activity) return c
+        c = c.baseContext
+    }
+    return null
 }

@@ -135,6 +135,10 @@ object TrazoIcons {
         )
     }
     val Grow by lazy { icon("Grow", stroke("M14 4 H20 V10 M20 4 L13.5 10.5"), stroke("M10 20 H4 V14 M4 20 L10.5 13.5")) }
+    /** Recortar: dos escuadras cruzadas. */
+    val Crop by lazy { icon("Crop", stroke("M6.5 2.5 V17.5 H21.5"), stroke("M2.5 6.5 H17.5 V21.5")) }
+    /** Imagen: marco con montaña y sol. */
+    val Image by lazy { icon("Image", stroke("M3.5 5 H20.5 V19 H3.5 Z"), stroke("M3.5 16 L9 11 L13.5 15 L16 12.5 L20.5 16.5"), stroke("M15.5 8.5 L15.51 8.5")) }
     val Copy by lazy { icon("Copy", stroke("M8.5 8 H18.5 V20.5 H8.5 Z"), stroke("M5.5 16.5 V3.5 H15.5")) }
     val Paste by lazy { icon("Paste", stroke("M8.5 5 H6 V20.5 H18 V5 H15.5"), stroke("M9 3.5 H15 V7 H9 Z"), stroke("M9.5 12 H14.5 M9.5 15.5 H13")) }
     /** Agarradera para arrastrar una barra (seis puntos). */

@@ -70,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import io.trazo.app.TrazoApp
 import io.trazo.app.data.DEFAULT_QUICK_COLORS
 import io.trazo.app.data.EraserMode
+import io.trazo.app.data.label
+import io.trazo.core.ImagePreset
 import io.trazo.app.data.PaperTone
 import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.ThemeMode
@@ -313,10 +315,22 @@ private fun SettingsPage(
                 TextButton(onClick = { update { it.copy(quickColors = DEFAULT_QUICK_COLORS) } }) { Text("Volver a los colores de fábrica") }
             }
         }
-        PreferenceSection.PAPER -> PrefCard("Cuadernos nuevos") {
-            Text("Papel", style = MaterialTheme.typography.bodyMedium)
-            ChoiceRow(Paper.entries, s.paper, ::paperName, { p -> update { it.copy(paper = p) } })
-            Hint("Cada cuaderno puede cambiar su papel desde la barra del editor.")
+        PreferenceSection.PAPER -> {
+            PrefCard("Cuadernos nuevos") {
+                Text("Papel", style = MaterialTheme.typography.bodyMedium)
+                ChoiceRow(Paper.entries, s.paper, ::paperName, { p -> update { it.copy(paper = p) } })
+                Hint("Cada cuaderno puede cambiar su papel desde la barra del editor.")
+            }
+            PrefCard("Imágenes") {
+                Hint(
+                    "Ajuste que se aplica solo al pegar, arrastrar o importar una imagen. «Documento» deja fondo blanco y " +
+                        "texto negro, sin sombras; «Modo oscuro» muestra el texto claro sobre la hoja oscura, sin encandilar.",
+                )
+                Text("En hoja clara", style = MaterialTheme.typography.bodyMedium)
+                ChoiceRow(ImagePreset.entries, s.imagePresetLight, { it.label }, { m -> update { it.copy(imagePresetLight = m) } })
+                Text("En hoja oscura", style = MaterialTheme.typography.bodyMedium)
+                ChoiceRow(ImagePreset.entries, s.imagePresetDark, { it.label }, { m -> update { it.copy(imagePresetDark = m) } })
+            }
         }
         PreferenceSection.TOOLS -> {
             PrefCard("Goma") {

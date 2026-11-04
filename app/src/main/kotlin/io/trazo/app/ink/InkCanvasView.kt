@@ -845,6 +845,8 @@ class InkCanvasView @JvmOverloads constructor(
                 borderPaint.strokeWidth = 1.5f * density / pxPerUnit
                 cc.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), borderPaint)
             }
+            // Las imágenes van debajo de la tinta.
+            c?.page?.images?.takeIf { it.isNotEmpty() }?.let { ImagePainter.draw(cc, it, paperColors.dark) }
             c?.page?.allInk?.let { StrokePainter.drawAll(cc, it, paperColors.dark) }
             // Resultados de las cuentas: tinta derivada, no está en la página.
             StrokePainter.drawInkOnly(cc, math, paperColors.dark)

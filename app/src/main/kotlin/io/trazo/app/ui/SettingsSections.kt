@@ -14,7 +14,7 @@ internal enum class PreferenceSection(val title: String, val summary: String, va
         "Lápiz", "Botones del lápiz y colores rápidos",
         listOf("Botón lateral", "Botón en el aire", "Colores rápidos", "Colores del doble clic"),
     ),
-    PAPER("Hoja", "Papel de los cuadernos nuevos", listOf("Papel")),
+    PAPER("Hoja", "Papel de los cuadernos nuevos e imágenes", listOf("Papel", "Imágenes", "Ajuste de imagen en hoja clara", "Ajuste de imagen en hoja oscura")),
     TOOLS(
         "Herramientas", "Goma, barra y ruleta",
         listOf("Modo de la goma", "Tamaño de la goma", "Herramientas de la barra", "Tamaño de los botones", "Entradas de la ruleta", "Ordenar herramientas por arrastre"),
@@ -58,7 +58,9 @@ internal fun TrazoSettings.resetSection(section: PreferenceSection): TrazoSettin
             sideButton = defaults.sideButton, quickColors = defaults.quickColors, swapColors = defaults.swapColors,
             penColor = defaults.penColor, penWidth = defaults.penWidth, brush = defaults.brush,
         )
-        PreferenceSection.PAPER -> copy(paper = defaults.paper)
+        PreferenceSection.PAPER -> copy(
+            paper = defaults.paper, imagePresetLight = defaults.imagePresetLight, imagePresetDark = defaults.imagePresetDark,
+        )
         PreferenceSection.TOOLS -> copy(
             eraserMode = defaults.eraserMode, eraserRadiusDp = defaults.eraserRadiusDp,
             toolbarTools = defaults.toolbarTools, toolbarButtonSize = defaults.toolbarButtonSize,

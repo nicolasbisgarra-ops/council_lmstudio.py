@@ -72,7 +72,8 @@ data class LazyNotebook(
     fun withPageDuplicated(index: Int, ids: IdGenerator = IdGenerator.RANDOM): LazyNotebook {
         require(index in slots.indices) { "No page $index" }
         val src = slots[index].page()
-        val dup = Page(ids.next(), src.strokes.copiedWithNewIds(ids), src.parametricShapes.map { it.copy(id = ids.next()) })
+        val dup = Page(ids.next(), src.strokes.copiedWithNewIds(ids), src.parametricShapes.map { it.copy(id = ids.next()) },
+            images = src.images.map { it.copy(id = ids.next()) })
         return withPageAdded(dup, index + 1)
     }
 

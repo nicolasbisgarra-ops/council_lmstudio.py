@@ -14,6 +14,8 @@ import io.trazo.core.IdGenerator
 import io.trazo.core.InkPattern
 import io.trazo.core.Notebook
 import io.trazo.core.Page
+import io.trazo.core.PageImages
+import io.trazo.core.imageAssets
 import io.trazo.core.Paper
 import io.trazo.core.PatternCategory
 import io.trazo.core.PatternLibrary
@@ -59,6 +61,8 @@ class TrazoRepository(root: File) {
     private val foldersFile = AtomicFile(File(root, "folders.json"))
     private val orderFile = AtomicFile(File(root, "notebook-order.json"))
     private val coversDir = File(root, "covers").apply { mkdirs() }
+    /** Imágenes de las hojas, por contenido: `images/<sha256>.webp|png`. */
+    val imagesDir = File(root, "images").apply { mkdirs() }
     private val lock = Any()
     private val manualOrderRevision = AtomicLong()
 
@@ -284,6 +288,43 @@ class TrazoRepository(root: File) {
         }
     }
 
+    // ------------------------------------------------------------------ imágenes de las hojas
+
+    /** Guarda los bytes (WEBP o PNG) de una imagen de hoja y devuelve su nombre. */
+    fun storeImage(bytes: ByteArray): String {
+        val ext = PageImages.extensionOf(bytes) ?: error("Formato de imagen no válido")
+        require(bytes.size <= PageImages.MAX_BYTES) { "La imagen es demasiado grande" }
+        val name = sha256(bytes) + "." + ext
+        synchronized(lock) {
+            val f = File(imagesDir, name)
+            if (!f.isFile) write(AtomicFile(f), bytes)
+        }
+        return name
+    }
+
+    private fun imageBytes(n: Notebook): Map<String, ByteArray> =
+        n.imageAssets().filter(PageImages::isValidName).mapNotNull { name ->
+            File(imagesDir, name).takeIf { it.isFile }?.let { name to it.readBytes() }
+        }.toMap()
+
+    /**
+     * Borra las imágenes que ningún cuaderno nombra. Solo las que tienen más de una hora: una recién
+     * guardada puede pertenecer a una hoja que todavía no se escribió.
+     */
+    fun collectUnusedImages(now: Long = System.currentTimeMillis()) {
+        val files = imagesDir.listFiles { f -> PageImages.isValidName(f.name) && now - f.lastModified() > 3_600_000L }.orEmpty()
+        if (files.isEmpty()) return
+        synchronized(lock) {
+            val used = HashSet<String>()
+            for (f in notebooksDir.listFiles { f -> f.name.endsWith(".trazo.json") }.orEmpty()) {
+                // Un cuaderno que no se pudo leer conserva todo: no se borra nada.
+                val text = runCatching { AtomicFile(f).readFully().toString(Charsets.UTF_8) }.getOrNull() ?: return
+                IMAGE_NAME.findAll(text).forEach { used += it.value }
+            }
+            files.filter { it.name !in used }.forEach { it.delete() }
+        }
+    }
+
     private fun sha256(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
 
     fun loadNotebook(id: String): Notebook? = synchronized(lock) {
@@ -329,7 +370,7 @@ class TrazoRepository(root: File) {
         val used = n.pages.flatMap { p ->
             p.strokes.mapNotNull { it.patternId } + p.parametricShapes.mapNotNull { it.sourcePatternId }
         }.toSet()
-        TrazoFormat.exportArchive(n, patterns.value.filter { it.id in used }, out, coverBytes(n))
+        TrazoFormat.exportArchive(n, patterns.value.filter { it.id in used }, out, coverBytes(n), imageBytes(n))
     }
 
     /**
@@ -348,8 +389,17 @@ class TrazoRepository(root: File) {
             val nextPatterns = merge.patterns
             n = n.remapPatternIds(merge.idRemap)
             var createdCover: File? = null
+            val createdImages = ArrayList<File>()
             var patternsWritten = false
             try {
+                for ((name, bytes) in archive.images) {
+                    if (!PageImages.isValidName(name)) continue
+                    val f = File(imagesDir, name)
+                    if (!f.isFile) {
+                        write(AtomicFile(f), bytes)
+                        createdImages += f
+                    }
+                }
                 val cover = archive.cover
                 n = if (cover == null) n.normalizedCover() else {
                     val name = sha256(cover) + "." + Covers.extensionOf(cover)
@@ -370,6 +420,7 @@ class TrazoRepository(root: File) {
                 if (patternsWritten) runCatching { writePatterns(oldPatterns) }
                     .onFailure { error.addSuppressed(it) }
                 createdCover?.delete()
+                createdImages.forEach { it.delete() }
                 throw error
             }
             n
@@ -390,4 +441,8 @@ class TrazoRepository(root: File) {
     }
 
     private fun safe(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+    private companion object {
+        val IMAGE_NAME = Regex("[0-9a-f]{64}\\.(webp|png)")
+    }
 }

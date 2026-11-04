@@ -12,17 +12,26 @@ data class StrokeEdit(
     /** Formas paramétricas quitadas/agregadas; mismo id en ambas = edición en su lugar. */
     val removedShapes: List<ParametricShape> = emptyList(),
     val addedShapes: List<ParametricShape> = emptyList(),
+    /** Imágenes quitadas/agregadas; mismo id en ambas = movida o escalada en su lugar. */
+    val removedImages: List<PageImage> = emptyList(),
+    val addedImages: List<PageImage> = emptyList(),
 ) {
     enum class Kind { DRAW, CONVERT, ERASE, TRANSFORM, DELETE, INSERT, CLEAR }
 
     val isEmpty: Boolean
-        get() = removed.isEmpty() && added.isEmpty() && removedShapes.isEmpty() && addedShapes.isEmpty()
+        get() = removed.isEmpty() && added.isEmpty() && removedShapes.isEmpty() && addedShapes.isEmpty() &&
+            removedImages.isEmpty() && addedImages.isEmpty()
 }
 
 /** Estado mutable de la página que edita la sesión. Conserva el orden (z) de los trazos y de las formas. */
-class PageState(initial: List<InkStroke> = emptyList(), initialShapes: List<ParametricShape> = emptyList()) {
+class PageState(
+    initial: List<InkStroke> = emptyList(),
+    initialShapes: List<ParametricShape> = emptyList(),
+    initialImages: List<PageImage> = emptyList(),
+) {
     private val list = ArrayList(initial)
     private val shapeList = ArrayList(initialShapes)
+    private val imageList = ArrayList(initialImages)
 
     /** Se incrementa con cada cambio; la vista lo usa para invalidar su caché. */
     var version: Long = 0L
@@ -30,6 +39,8 @@ class PageState(initial: List<InkStroke> = emptyList(), initialShapes: List<Para
 
     val strokes: List<InkStroke> get() = list
     val shapes: List<ParametricShape> get() = shapeList
+    /** Imágenes, de la de más abajo a la de más arriba (todas debajo de la tinta). */
+    val images: List<PageImage> get() = imageList
 
     /** Marcas e historial del Modo IA de la hoja ([Page.ai]). No entran en el deshacer. */
     var ai: PageAi? = null
@@ -51,12 +62,19 @@ class PageState(initial: List<InkStroke> = emptyList(), initialShapes: List<Para
     fun find(id: String): InkStroke? = list.firstOrNull { it.id == id }
     fun contains(id: String): Boolean = list.any { it.id == id }
     fun findShape(id: String): ParametricShape? = shapeList.firstOrNull { it.id == id }
+    fun findImage(id: String): PageImage? = imageList.firstOrNull { it.id == id }
+    /** Trazo o imagen con ese id (lo que puede estar en la selección). */
+    fun has(id: String): Boolean = contains(id) || imageList.any { it.id == id }
+
+    /** La hoja tal como se guarda. */
+    fun toPage(id: String): Page = Page(id, list.toList(), shapeList.toList(), ai, imageList.toList())
 
     /** Aplica el cambio y devuelve la posición previa de cada elemento quitado (para revertir exacto). */
     fun apply(edit: StrokeEdit): Map<String, Int> {
         val positions = HashMap<String, Int>()
         applyTo(list, edit.removed, edit.added, { it.id }, "", positions)
         applyTo(shapeList, edit.removedShapes, edit.addedShapes, { it.id }, SHAPE_KEY, positions)
+        applyTo(imageList, edit.removedImages, edit.addedImages, { it.id }, IMAGE_KEY, positions)
         version++
         return positions
     }
@@ -65,18 +83,26 @@ class PageState(initial: List<InkStroke> = emptyList(), initialShapes: List<Para
     fun revert(edit: StrokeEdit, positions: Map<String, Int>) {
         revertIn(list, edit.removed, edit.added, { it.id }, "", positions)
         revertIn(shapeList, edit.removedShapes, edit.addedShapes, { it.id }, SHAPE_KEY, positions)
+        revertIn(imageList, edit.removedImages, edit.addedImages, { it.id }, IMAGE_KEY, positions)
         version++
     }
 
-    fun replaceAll(strokes: List<InkStroke>, shapes: List<ParametricShape> = shapeList.toList()) {
+    fun replaceAll(
+        strokes: List<InkStroke>,
+        shapes: List<ParametricShape> = shapeList.toList(),
+        images: List<PageImage> = imageList.toList(),
+    ) {
         list.clear(); list.addAll(strokes)
         shapeList.clear(); shapeList.addAll(shapes)
+        imageList.clear(); imageList.addAll(images)
         version++
     }
 
     companion object {
         /** Prefijo de las posiciones de formas en el mapa que devuelve [apply]. */
         const val SHAPE_KEY = "shape:"
+        /** Prefijo de las posiciones de imágenes. */
+        const val IMAGE_KEY = "image:"
 
         private fun <T> applyTo(
             target: ArrayList<T>, removed: List<T>, added: List<T>, idOf: (T) -> String,

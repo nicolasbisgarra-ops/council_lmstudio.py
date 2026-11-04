@@ -19,8 +19,17 @@ internal object ArchiveImportGuard {
     private const val MAX_MANIFEST_BYTES = 64 * 1024
     private const val MAX_DEPTH = 128
     private const val MAX_COVER_BYTES = 2 * 1024 * 1024
+    private const val MAX_IMAGE_BYTES = PageImages.MAX_BYTES
+    private val IMAGE_NAME = Regex("image-[0-9a-f]{64}\\.(webp|png)")
 
-    data class Parts(val notebook: ByteArray, val patterns: ByteArray?, val cover: ByteArray?, val coverName: String?)
+    data class Parts(
+        val notebook: ByteArray,
+        val patterns: ByteArray?,
+        val cover: ByteArray?,
+        val coverName: String?,
+        /** Imágenes de las hojas por nombre de archivo (sin el prefijo `image-`). */
+        val images: Map<String, ByteArray> = emptyMap(),
+    )
 
     fun read(input: InputStream): Parts {
         val watched = TrailerInput(input, MAX_COMPRESSED_BYTES.toLong())
@@ -31,6 +40,7 @@ internal object ArchiveImportGuard {
         var total = 0L
         var coverSeen = false
         var coverName: String? = null
+        val images = LinkedHashMap<String, ByteArray>()
         val seen = HashSet<String>()
         ZipInputStream(watched).use { zip ->
             while (true) {
@@ -47,6 +57,7 @@ internal object ArchiveImportGuard {
                 }
                 if (!seen.add(name)) invalid("Entrada duplicada en ZIP: $name")
                 val isCover = name == "cover.webp" || name == "cover.png"
+                val isImage = IMAGE_NAME.matches(name)
                 if (isCover && coverSeen) invalid("El ZIP contiene más de una portada")
                 if (isCover) coverSeen = true
                 val limit = when (name) {
@@ -54,12 +65,12 @@ internal object ArchiveImportGuard {
                     "patterns.json" -> MAX_PATTERNS_BYTES
                     "manifest.json" -> MAX_MANIFEST_BYTES
                     "cover.webp", "cover.png" -> MAX_COVER_BYTES
-                    else -> MAX_IGNORED_BYTES
+                    else -> if (isImage) MAX_IMAGE_BYTES else MAX_IGNORED_BYTES
                 }
-                val discardWhenOversized = isCover
+                val discardWhenOversized = isCover || isImage
                 // Data descriptors often hide the real size: never rely on this check alone.
                 if (entry.size >= 0 && entry.size > limit && !discardWhenOversized) exceeded("Entrada demasiado grande: $name")
-                val out = if (name in setOf("notebook.json", "patterns.json", "cover.webp", "cover.png")) ByteArrayOutputStream(minOf(limit, 8192)) else null
+                val out = if (isImage || name in setOf("notebook.json", "patterns.json", "cover.webp", "cover.png")) ByteArrayOutputStream(minOf(limit, 8192)) else null
                 val buffer = ByteArray(8192)
                 var entrySize = 0L
                 var keep = true
@@ -85,13 +96,14 @@ internal object ArchiveImportGuard {
                         cover = bytes
                         coverName = name
                     }
+                    else -> if (isImage && keep) images[name.removePrefix("image-")] = out!!.toByteArray()
                 }
             }
             // ZipInputStream stops at the central directory. Consume its remainder and check
             // that the archive has an intact end-of-central-directory record (incl. comments).
             watched.drainAndVerifyEnd(entryCount)
         }
-        return Parts(notebook ?: invalid("Archivo sin notebook.json"), patterns, cover, coverName)
+        return Parts(notebook ?: invalid("Archivo sin notebook.json"), patterns, cover, coverName, images)
     }
 
     /** Reject excessive nesting before kotlinx.serialization builds large recursive JSON trees. */

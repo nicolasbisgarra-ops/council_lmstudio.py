@@ -159,6 +159,7 @@ class InkController(
     var selection: List<String> = emptyList()
         private set
     private var dragOriginals: List<InkStroke> = emptyList()
+    private var dragImages: List<PageImage> = emptyList()
     private var dragBounds: Bounds? = null
     private var dragStartX = 0f
     private var dragStartY = 0f
@@ -203,7 +204,19 @@ class InkController(
     val lassoPath: List<InkPoint> get() = if (mode == Mode.LASSO_PATH) lassoPoints else emptyList()
 
     val selectionBounds: Bounds?
-        get() = selection.mapNotNull { page.find(it) }.takeIf { it.isNotEmpty() }?.bounds()
+        get() {
+            val strokes = selection.mapNotNull { page.find(it) }.takeIf { it.isNotEmpty() }?.bounds()
+            val images = selectedImages().map { it.bounds }.reduceOrNull(Bounds::union)
+            return if (strokes != null && images != null) strokes.union(images) else strokes ?: images
+        }
+
+    /** Imágenes que están en la selección, en su orden de la hoja. */
+    fun selectedImages(): List<PageImage> =
+        if (selection.isEmpty() || page.images.isEmpty()) emptyList() else selection.toHashSet().let { s -> page.images.filter { it.id in s } }
+
+    /** La imagen elegida cuando la selección es solo esa imagen (para recortarla o cambiar su ajuste). */
+    val selectedImage: PageImage?
+        get() = selection.singleOrNull()?.let { page.findImage(it) }
 
     val isContactActive: Boolean get() = mode != Mode.NONE
 
@@ -360,8 +373,9 @@ class InkController(
             Mode.LASSO_PATH -> {
                 lassoPoints += InkPoint(x, y)
                 val tap = timeMs - downTime < TAP_MS && lassoPoints.all { hypot(it.x - x, it.y - y) * pxPerUnit < tremorRadiusPx }
-                selection = if (tap) emptyList() else Lasso.select(page.strokes, lassoPoints).map { it.id }
-                if (tap) tapAt(x, y, wholeLine = true)
+                selection = if (tap) emptyList() else Lasso.select(page.strokes, lassoPoints).map { it.id } + lassoImages()
+                // Tocar una imagen con el lazo la elige (si ahí no hay una cuenta o una marca).
+                if (tap) { if (!tapAt(x, y, wholeLine = true)) imageAt(x, y)?.let { selection = listOf(it.id) } }
                 else if (selection.isEmpty()) lassoShape()?.let { selectedShapeId = it.id }
                 resetContact()
                 emit(InkEvent.SelectionChanged)
@@ -370,7 +384,11 @@ class InkController(
                 dragTo(x, y)
                 if (dragged) {
                     val finals = dragOriginals.mapNotNull { page.find(it.id) }
-                    history.record(StrokeEdit(dragOriginals, finals, StrokeEdit.Kind.TRANSFORM), emptyMap())
+                    val finalImages = dragImages.mapNotNull { page.findImage(it.id) }
+                    history.record(
+                        StrokeEdit(dragOriginals, finals, StrokeEdit.Kind.TRANSFORM, removedImages = dragImages, addedImages = finalImages),
+                        emptyMap(),
+                    )
                     emit(InkEvent.PageChanged)
                 }
                 resetContact()
@@ -534,23 +552,26 @@ class InkController(
 
     fun select(ids: List<String>) {
         if (ids.isNotEmpty()) clearShapeSelection()
-        selection = ids.filter { page.contains(it) }
+        selection = ids.filter { page.has(it) }
         emit(InkEvent.SelectionChanged)
     }
 
     fun selectAll() {
         if (mode != Mode.NONE) return
-        select(page.strokes.map { it.id })
+        select(page.strokes.map { it.id } + page.images.map { it.id })
     }
 
     /** Duplica la selección desplazada (dx, dy): ids nuevos; los groupId se reasignan de forma consistente (los que compartían grupo comparten el nuevo); la selección pasa a ser la copia. Un solo StrokeEdit.Kind.INSERT. Devuelve los ids nuevos. */
     fun duplicateSelection(dx: Float = 24f, dy: Float = 24f): List<String> {
         if (mode != Mode.NONE) return emptyList()
         val strokes = selection.mapNotNull { page.find(it) }
-        if (strokes.isEmpty()) return emptyList()
-        val copies = strokes.copiedWithNewIds(ids, Affine.translate(dx, dy))
-        history.perform(page, StrokeEdit(emptyList(), copies, StrokeEdit.Kind.INSERT))
-        selection = copies.map { it.id }
+        val images = selectedImages()
+        if (strokes.isEmpty() && images.isEmpty()) return emptyList()
+        val t = Affine.translate(dx, dy)
+        val copies = if (strokes.isEmpty()) emptyList() else strokes.copiedWithNewIds(ids, t)
+        val imageCopies = images.map { it.transformed(t).copy(id = ids.next()) }
+        history.perform(page, StrokeEdit(emptyList(), copies, StrokeEdit.Kind.INSERT, addedImages = imageCopies))
+        selection = copies.map { it.id } + imageCopies.map { it.id }
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
         return selection
     }
@@ -589,8 +610,9 @@ class InkController(
 
     fun deleteSelection() {
         val strokes = selection.mapNotNull { page.find(it) }
-        if (strokes.isEmpty()) return
-        history.perform(page, StrokeEdit(strokes, emptyList(), StrokeEdit.Kind.DELETE))
+        val images = selectedImages()
+        if (strokes.isEmpty() && images.isEmpty()) return
+        history.perform(page, StrokeEdit(strokes, emptyList(), StrokeEdit.Kind.DELETE, removedImages = images))
         refreshCalcs(emptyList())
         selection = emptyList()
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
@@ -615,7 +637,7 @@ class InkController(
     private fun refreshCalcs(added: Collection<InkStroke>) {
         val edit = MathNotes.refresh(page.strokes, patterns(), added.mapTo(HashSet()) { it.id }, ids, mathColor) ?: return
         history.amendLast(page, edit)
-        if (selection.isNotEmpty()) selection = selection.filter { page.contains(it) }
+        if (selection.isNotEmpty()) selection = selection.filter { page.has(it) }
         emit(InkEvent.PageChanged)
     }
 
@@ -670,7 +692,10 @@ class InkController(
     fun clearPage() {
         if (mode != Mode.NONE) return
         commitShapeEdit()
-        val edit = StrokeEdit(page.strokes.toList(), emptyList(), StrokeEdit.Kind.CLEAR, removedShapes = page.shapes.toList())
+        val edit = StrokeEdit(
+            page.strokes.toList(), emptyList(), StrokeEdit.Kind.CLEAR,
+            removedShapes = page.shapes.toList(), removedImages = page.images.toList(),
+        )
         if (edit.isEmpty) return
         history.perform(page, edit)
         selection = emptyList(); clearShapeSelection()
@@ -679,8 +704,12 @@ class InkController(
 
     fun transformSelection(t: Affine) {
         val strokes = selection.mapNotNull { page.find(it) }
-        if (strokes.isEmpty()) return
-        history.perform(page, StrokeEdit(strokes, strokes.map { it.transformed(t) }, StrokeEdit.Kind.TRANSFORM))
+        val images = selectedImages()
+        if (strokes.isEmpty() && images.isEmpty()) return
+        history.perform(page, StrokeEdit(
+            strokes, strokes.map { it.transformed(t) }, StrokeEdit.Kind.TRANSFORM,
+            removedImages = images, addedImages = images.map { it.transformed(t) },
+        ))
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
     }
 
@@ -1011,6 +1040,7 @@ class InkController(
     private fun startDrag(m: Mode, bounds: Bounds) {
         mode = m
         dragOriginals = selection.mapNotNull { page.find(it) }
+        dragImages = selectedImages()
         dragBounds = bounds
     }
 
@@ -1028,8 +1058,39 @@ class InkController(
             val s = (((b.width + dx) / w0 + (b.height + dy) / h0) / 2f).coerceIn(0.1f, 20f)
             Affine.scale(s, b.left, b.top)
         }
-        page.apply(StrokeEdit(dragOriginals, dragOriginals.map { it.transformed(t) }, StrokeEdit.Kind.TRANSFORM))
+        page.apply(StrokeEdit(
+            dragOriginals, dragOriginals.map { it.transformed(t) }, StrokeEdit.Kind.TRANSFORM,
+            removedImages = dragImages, addedImages = dragImages.map { it.transformed(t) },
+        ))
         emit(InkEvent.PageChanged)
+    }
+
+    // ------------------------------------------------------------------ imágenes
+
+    /** Imagen de más arriba bajo (x, y), o null. */
+    fun imageAt(x: Float, y: Float): PageImage? = page.images.lastOrNull { it.bounds.contains(x, y) }
+
+    /** Imágenes cuyo centro quedó dentro del lazo. */
+    private fun lassoImages(): List<String> =
+        if (lassoPoints.size < 3) emptyList()
+        else page.images.filter { Lasso.contains(lassoPoints, it.bounds.centerX, it.bounds.centerY) }.map { it.id }
+
+    /** Pone una imagen en la hoja (debajo de la tinta), en un paso deshacible; queda seleccionada. */
+    fun insertImage(image: PageImage) {
+        if (mode != Mode.NONE) return
+        clearShapeSelection()
+        history.perform(page, StrokeEdit(emptyList(), emptyList(), StrokeEdit.Kind.INSERT, addedImages = listOf(image)))
+        selection = listOf(image.id)
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+    }
+
+    /** Cambia una imagen por otra versión (nuevo recorte o ajuste) en su lugar, en un paso deshacible. */
+    fun replaceImage(updated: PageImage) {
+        if (mode != Mode.NONE) return
+        val old = page.findImage(updated.id) ?: return
+        if (old == updated) return
+        history.perform(page, StrokeEdit(emptyList(), emptyList(), StrokeEdit.Kind.TRANSFORM, removedImages = listOf(old), addedImages = listOf(updated)))
+        emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
     }
 
     private fun resetContact() {
@@ -1039,6 +1100,7 @@ class InkController(
         pendingConvert = null
         lassoPoints.clear()
         dragOriginals = emptyList()
+        dragImages = emptyList()
         dragBounds = null
         contactTool = null
         dismissedSelection = false

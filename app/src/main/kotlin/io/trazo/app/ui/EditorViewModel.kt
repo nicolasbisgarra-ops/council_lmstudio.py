@@ -41,6 +41,7 @@ import io.trazo.app.data.EraserMode
 import io.trazo.app.data.PageExporter
 import io.trazo.app.data.SideButtonAction
 import io.trazo.app.data.TrazoSettings
+import io.trazo.app.data.imagePreset
 import io.trazo.app.data.highlighterInk
 import io.trazo.app.ink.PaperColors
 import io.trazo.app.ink.Viewport
@@ -61,6 +62,9 @@ import io.trazo.core.MathNotes
 import io.trazo.core.Notebook
 import io.trazo.core.Page
 import io.trazo.core.PageAi
+import io.trazo.core.PageImage
+import io.trazo.core.PageImages
+import io.trazo.core.ImagePreset
 import io.trazo.core.PageState
 import io.trazo.core.Paper
 import io.trazo.core.ParametricInk
@@ -273,7 +277,7 @@ class EditorViewModel(
             pageLoadError = e.message ?: e.javaClass.simpleName
             return false
         }
-        val (state, history) = sessions.getOrPut(page.id) { PageState(page.strokes, page.parametricShapes).apply { ai = page.ai } to History() }
+        val (state, history) = sessions.getOrPut(page.id) { PageState(page.strokes, page.parametricShapes, page.images).apply { ai = page.ai } to History() }
         if (attachedPageId != null && attachedPageId != page.id) cancelAiForPageSwitch()
         val reopened = n.lastPage != index
         notebook = n.withPage(index, page).loadedOnly(index).copy(lastPage = index)
@@ -408,7 +412,7 @@ class EditorViewModel(
             }
             if (uri != null) {
                 val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
-                runCatching { cm?.setPrimaryClip(android.content.ClipData.newUri(ctx.contentResolver, "Trazo", uri)) }
+                runCatching { cm?.setPrimaryClip(android.content.ClipData.newUri(ctx.contentResolver, CLIP_LABEL, uri)) }
             }
             onDone(uri != null)
         }
@@ -429,6 +433,198 @@ class EditorViewModel(
         val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
         paste((viewSize.first / 2f - viewport.tx) / vpScale, (viewSize.second / 2f - viewport.ty) / vpScale)
     }
+
+    // ------------------------------------------------------------------ imágenes
+
+    /** Imagen abierta en el editor de recorte: la original, una copia chica para la vista previa y su destino. */
+    class ImageEditSession(
+        val source: android.graphics.Bitmap,
+        val preview: android.graphics.Bitmap,
+        /** Archivo ya guardado de la original (al volver a editar una imagen de la hoja). */
+        val sourceName: String?,
+        val existing: PageImage?,
+        val at: Pair<Float, Float>?,
+        val quad: List<Float>,
+        val preset: ImagePreset,
+    )
+
+    var imageEdit by mutableStateOf<ImageEditSession?>(null)
+        private set
+    var imageBusy by mutableStateOf(false)
+        private set
+    /** Aviso de un fallo al leer o guardar una imagen (la pantalla lo muestra y lo limpia). */
+    var imageMessage by mutableStateOf<String?>(null)
+
+    /** La única imagen elegida con el lazo (para «Recortar y ajustar»). */
+    val selectedImage: PageImage? get() { revision; hasSelection; return controller.selectedImage }
+
+    private fun viewCenter(): Pair<Float, Float> {
+        val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
+        return (viewSize.first / 2f - viewport.tx) / vpScale to (viewSize.second / 2f - viewport.ty) / vpScale
+    }
+
+    /** Punto de documento bajo (x, y) de la vista. */
+    fun viewToDoc(x: Float, y: Float): Pair<Float, Float> {
+        val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
+        return (x - viewport.tx) / vpScale to (y - viewport.ty) / vpScale
+    }
+
+    private fun storeImage(bmp: android.graphics.Bitmap): String {
+        val bytes = io.trazo.app.data.ImageImport.encode(bmp) ?: error("La imagen es demasiado grande")
+        return repo.storeImage(bytes).also { io.trazo.app.ink.ImagePainter.stored(it) }
+    }
+
+    /** Abre una imagen de la galería o de archivos en el editor de recorte, con el ajuste predeterminado. */
+    fun openImageEditor(open: () -> java.io.InputStream, darkPaper: Boolean, at: Pair<Float, Float>? = null) {
+        if (imageBusy) return
+        imageBusy = true
+        viewModelScope.launch {
+            val src = withContext(Dispatchers.IO) { runCatching { io.trazo.app.data.ImageImport.decode(open) }.getOrNull() }
+            imageBusy = false
+            if (src == null) { imageMessage = "No se pudo leer la imagen"; return@launch }
+            imageEdit = ImageEditSession(
+                src, io.trazo.app.data.ImageImport.scaledDown(src, PREVIEW_SIDE), null, null, at,
+                PageImages.FULL_QUAD, lastSettings.imagePreset(darkPaper),
+            )
+        }
+    }
+
+    /** Vuelve a abrir la imagen elegida desde su original, con su recorte y ajuste. */
+    fun editSelectedImage() {
+        val img = selectedImage ?: return
+        if (imageBusy) return
+        val name = img.source ?: img.asset
+        val file = io.trazo.app.ink.ImagePainter.file(name) ?: return
+        imageBusy = true
+        viewModelScope.launch {
+            val src = withContext(Dispatchers.IO) { io.trazo.app.data.ImageImport.decodeFile(file.path) }
+            imageBusy = false
+            if (src == null) { imageMessage = "No se encontró la imagen original"; return@launch }
+            imageEdit = ImageEditSession(
+                src, io.trazo.app.data.ImageImport.scaledDown(src, PREVIEW_SIDE), name, img, null,
+                img.quad?.takeIf { PageImages.isValidQuad(it) } ?: PageImages.FULL_QUAD,
+                if (img.source == null) ImagePreset.NONE else img.preset,
+            )
+        }
+    }
+
+    /** Los mapas de bits los libera el recolector: la vista previa puede estar dibujándolos todavía. */
+    fun cancelImageEdit() { imageEdit = null }
+
+    /** Vista previa del recorte y el ajuste sobre la copia chica. */
+    suspend fun previewImage(s: ImageEditSession, quad: List<Float>, preset: ImagePreset): android.graphics.Bitmap? =
+        withContext(Dispatchers.Default) {
+            runCatching { io.trazo.app.data.ImageImport.process(s.preview, quad, preset, PREVIEW_SIDE) }.getOrNull()
+        }
+
+    /** Aplica el recorte y el ajuste a la original y pone (o reemplaza) la imagen en la hoja. */
+    fun finishImageEdit(quad: List<Float>, preset: ImagePreset) {
+        val s = imageEdit ?: return
+        if (imageBusy) return
+        imageBusy = true
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val q = quad.takeIf { PageImages.isValidQuad(it) } ?: PageImages.FULL_QUAD
+                    val out = io.trazo.app.data.ImageImport.process(s.source, q, preset)
+                    try {
+                        val plain = preset == ImagePreset.NONE && q == PageImages.FULL_QUAD
+                        val asset = storeImage(out)
+                        val source = when {
+                            plain && s.sourceName == null -> null
+                            s.sourceName != null -> s.sourceName
+                            else -> storeImage(s.source)
+                        }
+                        Triple(asset, source.takeIf { it != asset }, Triple(out.width, out.height, q))
+                    } finally {
+                        out.recycle()
+                    }
+                }
+            }
+            imageBusy = false
+            result.onFailure { imageMessage = "No se pudo guardar la imagen: ${it.message ?: it.javaClass.simpleName}" }
+            result.onSuccess { (asset, source, info) ->
+                val (w, h, q) = info
+                placeImage(s.existing, s.at, asset, source, w, h, preset, q)
+                cancelImageEdit()
+            }
+        }
+    }
+
+    private fun placeImage(
+        existing: PageImage?, at: Pair<Float, Float>?, asset: String, source: String?,
+        w: Int, h: Int, preset: ImagePreset, quad: List<Float>,
+    ) {
+        val storedQuad = quad.takeIf { source != null && it != PageImages.FULL_QUAD }
+        val storedPreset = if (source == null) ImagePreset.NONE else preset
+        if (existing != null) {
+            // Conserva el centro y el ancho; el alto sigue la nueva proporción.
+            val b = existing.bounds
+            val bw = b.width
+            val bh = bw * h / w.coerceAtLeast(1)
+            val cx = (b.left + b.right) / 2f
+            val cy = (b.top + b.bottom) / 2f
+            controller.replaceImage(existing.copy(
+                asset = asset, source = source, preset = storedPreset, quad = storedQuad,
+                left = cx - bw / 2f, top = cy - bh / 2f, right = cx + bw / 2f, bottom = cy + bh / 2f,
+            ))
+        } else {
+            val (cx, cy) = at ?: viewCenter()
+            val b = PageImages.placement(w, h, cx, cy)
+            selectTool(EditorTool.LASSO)
+            controller.insertImage(PageImage(
+                IdGenerator.RANDOM.next(), asset, b.left, b.top, b.right, b.bottom,
+                preset = storedPreset, source = source, quad = storedQuad,
+            ))
+        }
+    }
+
+    /** Pega o suelta una imagen sin abrir el editor: va con el ajuste predeterminado de esta hoja. */
+    fun insertImageDirect(open: () -> java.io.InputStream, darkPaper: Boolean, at: Pair<Float, Float>? = null, onDone: () -> Unit = {}) {
+        if (imageBusy) { onDone(); return }
+        imageBusy = true
+        val preset = lastSettings.imagePreset(darkPaper)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val src = io.trazo.app.data.ImageImport.decode(open) ?: error("No es una imagen")
+                    try {
+                        val out = io.trazo.app.data.ImageImport.process(src, PageImages.FULL_QUAD, preset)
+                        try {
+                            val asset = storeImage(out)
+                            val source = if (preset == ImagePreset.NONE) null else storeImage(src)
+                            Triple(asset, source.takeIf { it != asset }, out.width to out.height)
+                        } finally { out.recycle() }
+                    } finally { src.recycle() }
+                }
+            }
+            imageBusy = false
+            onDone()
+            result.onFailure { imageMessage = "No se pudo pegar la imagen: ${it.message ?: it.javaClass.simpleName}" }
+            result.onSuccess { (asset, source, size) ->
+                placeImage(null, at, asset, source, size.first, size.second, preset, PageImages.FULL_QUAD)
+            }
+        }
+    }
+
+    private val clipboard get() = getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)
+
+    /** Hay una imagen de otra app en el portapapeles del sistema (lo copiado en Trazo se pega como tinta). */
+    val canPasteImage: Boolean get() = runCatching {
+        val d = clipboard?.primaryClipDescription ?: return@runCatching false
+        d.hasMimeType("image/*") && d.label?.toString() != CLIP_LABEL
+    }.getOrDefault(false)
+
+    /** Pega la imagen del portapapeles del sistema en (x, y) de documento, o en el centro de la vista. */
+    fun pasteSystemImage(darkPaper: Boolean, at: Pair<Float, Float>? = null): Boolean {
+        val ctx = getApplication<Application>()
+        val clip = runCatching { clipboard?.primaryClip }.getOrNull() ?: return false
+        val uri = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+            .firstOrNull { it.authority != "${ctx.packageName}.files" } ?: return false
+        insertImageDirect({ ctx.contentResolver.openInputStream(uri) ?: error("No se pudo abrir la imagen") }, darkPaper, at)
+        return true
+    }
+
     fun recolorSelection(color: Int) { controller.recolorSelection(color) }
     /** Color del primer trazo elegido (para marcarlo en la paleta). */
     val selectionColor: Int? get() { revision; return controller.strokesById(controller.selection.take(1))?.firstOrNull()?.color }
@@ -440,7 +636,7 @@ class EditorViewModel(
     /** Borra toda la página de una vez (se puede deshacer). */
     fun clearPage() { controller.clearPage() }
 
-    val pageIsEmpty: Boolean get() { revision; return controller.page.strokes.isEmpty() && controller.page.shapes.isEmpty() }
+    val pageIsEmpty: Boolean get() { revision; return controller.page.strokes.isEmpty() && controller.page.shapes.isEmpty() && controller.page.images.isEmpty() }
 
     fun duplicatePage(index: Int = pageIndex) {
         val n = syncNotebook() ?: return
@@ -609,11 +805,10 @@ class EditorViewModel(
         val index = n.slots.indexOfFirst { it.id == pageId }
         if (index < 0) return null
         if (index == pageIndex && attachedPageId == pageId) {
-            val live = controller.page
-            return Page(pageId, live.strokes.toList(), live.shapes.toList(), live.ai)
+            return controller.page.toPage(pageId)
         }
         sessions[pageId]?.first?.let { state ->
-            return Page(pageId, state.strokes.toList(), state.shapes.toList(), state.ai)
+            return state.toPage(pageId)
         }
         return runCatching { n.page(index) }.getOrNull()
     }
@@ -1133,7 +1328,7 @@ class EditorViewModel(
         val n = notebook ?: return null
         val key = thumbKey(index) ?: return null
         val id = n.slots[index].id
-        val page = if (index == pageIndex && attachedPageId == id) Page(id, controller.page.strokes.toList(), controller.page.shapes.toList(), controller.page.ai) else null
+        val page = if (index == pageIndex && attachedPageId == id) controller.page.toPage(id) else null
         val slot = n.slots[index]
         val bmp = runCatching {
             withContext(Dispatchers.Default) {
@@ -1148,8 +1343,7 @@ class EditorViewModel(
     private fun syncNotebook(): LazyNotebook? {
         val n = notebook ?: return null
         if (attachedPageId != n.slots.getOrNull(pageIndex)?.id) return null
-        val live = controller.page
-        val page = Page(n.slots[pageIndex].id, live.strokes.toList(), live.shapes.toList(), live.ai)
+        val page = controller.page.toPage(n.slots[pageIndex].id)
         val updated = n.withPage(pageIndex, page).copy(updatedAt = System.currentTimeMillis())
         notebook = updated
         return updated
@@ -1274,3 +1468,7 @@ class EditorViewModel(
 
 /** Cuántas hojas recientes conservan su historial de deshacer. */
 private const val PAGE_SESSIONS = 8
+/** Lado de la copia para la vista previa del recorte. */
+private const val PREVIEW_SIDE = 900
+/** Etiqueta de lo que Trazo copia al portapapeles del sistema (no se vuelve a pegar como imagen). */
+private const val CLIP_LABEL = "Trazo"

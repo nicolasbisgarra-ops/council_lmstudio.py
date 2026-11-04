@@ -6,6 +6,7 @@ import io.trazo.app.ui.EditorTool
 import io.trazo.core.Brush
 import io.trazo.core.DEFAULT_INK_COLOR
 import io.trazo.core.MathNotes
+import io.trazo.core.ImagePreset
 import io.trazo.core.Paper
 import io.trazo.core.ShapeKind
 import io.trazo.core.settings.ToolPreferences
@@ -89,7 +90,21 @@ data class TrazoSettings(
     val toolbarFree: Pair<Float, Float> = 0.05f to 0.15f,
     val selectionDock: BarDock = BarDock.BOTTOM,
     val selectionFree: Pair<Float, Float> = 0.7f to 0.6f,
+    /** Ajuste que se aplica solo al pegar o importar una imagen, según la hoja sea clara u oscura. */
+    val imagePresetLight: ImagePreset = ImagePreset.DOCUMENT,
+    val imagePresetDark: ImagePreset = ImagePreset.DARK,
 )
+
+/** Nombre visible de cada ajuste de imagen. */
+val ImagePreset.label: String
+    get() = when (this) {
+        ImagePreset.NONE -> "Sin ajuste"
+        ImagePreset.DOCUMENT -> "Documento"
+        ImagePreset.DARK -> "Modo oscuro"
+    }
+
+/** El ajuste por defecto para una hoja clara u oscura. */
+fun TrazoSettings.imagePreset(darkPaper: Boolean): ImagePreset = if (darkPaper) imagePresetDark else imagePresetLight
 
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("trazo_settings", Context.MODE_PRIVATE)
@@ -133,6 +148,8 @@ class SettingsStore(context: Context) {
         toolbarFree = prefs.getFloat("toolbarFreeX", 0.05f) to prefs.getFloat("toolbarFreeY", 0.15f),
         selectionDock = prefs.enum("selectionDock", BarDock.BOTTOM),
         selectionFree = prefs.getFloat("selectionFreeX", 0.7f) to prefs.getFloat("selectionFreeY", 0.6f),
+        imagePresetLight = prefs.enum("imagePresetLight", ImagePreset.DOCUMENT),
+        imagePresetDark = prefs.enum("imagePresetDark", ImagePreset.DARK),
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
@@ -178,6 +195,8 @@ class SettingsStore(context: Context) {
             .putString("selectionDock", s.selectionDock.name)
             .putFloat("selectionFreeX", s.selectionFree.first)
             .putFloat("selectionFreeY", s.selectionFree.second)
+            .putString("imagePresetLight", s.imagePresetLight.name)
+            .putString("imagePresetDark", s.imagePresetDark.name)
             .apply()
         _settings.value = s
     }

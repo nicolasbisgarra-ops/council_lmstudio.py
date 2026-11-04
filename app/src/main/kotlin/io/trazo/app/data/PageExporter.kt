@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.pdf.PdfDocument
 import io.trazo.app.ai.AiMarkPainter
+import io.trazo.app.ink.ImagePainter
 import io.trazo.app.ink.PaperColors
 import io.trazo.app.ink.PaperPainter
 import io.trazo.app.ink.StrokePainter
@@ -162,6 +163,7 @@ object PageExporter {
             }
         }
 
+        page.images.forEach { include(it.bounds) }
         includeStrokes(page.allInk)
         includeStrokes(results)
         if (includeAi) includeAiBounds(page)?.let(::include)
@@ -250,6 +252,7 @@ object PageExporter {
         canvas.scale(scale, scale)
         canvas.translate(-bounds.left, -bounds.top)
         PaperPainter.draw(canvas, paper, colors = colors)
+        if (page.images.isNotEmpty()) ImagePainter.draw(canvas, page.images, colors.dark)
         StrokePainter.drawAll(canvas, page.allInk, colors.dark)
         StrokePainter.drawInkOnly(canvas, results, colors.dark)
         page.ai?.takeIf { includeAi }?.let { AiMarkPainter.draw(canvas, it.notes, it.verdict(page.strokes)) }

@@ -29,6 +29,8 @@ data class Page(
     val parametricShapes: List<ParametricShape> = emptyList(),
     /** Marcas e historial del Modo IA; null en las hojas que nunca se revisaron. */
     val ai: PageAi? = null,
+    /** Imágenes de la hoja, debajo de la tinta (ver [PageImage]). */
+    val images: List<PageImage> = emptyList(),
 ) {
     /** Trazos más la tinta de las formas, en orden de dibujo. */
     val allInk: List<InkStroke>
@@ -73,7 +75,8 @@ fun Notebook.withPageRemoved(index: Int): Notebook {
 fun Notebook.withPageDuplicated(index: Int, ids: IdGenerator = IdGenerator.RANDOM): Notebook {
     require(index in pages.indices) { "No page $index" }
     val src = pages[index]
-    val copy = Page(ids.next(), src.strokes.copiedWithNewIds(ids), src.parametricShapes.map { it.copy(id = ids.next()) })
+    val copy = Page(ids.next(), src.strokes.copiedWithNewIds(ids), src.parametricShapes.map { it.copy(id = ids.next()) },
+        images = src.images.map { it.copy(id = ids.next()) })
     return copy(pages = pages.toMutableList().apply { add(index + 1, copy) })
 }
 
@@ -362,6 +365,7 @@ object TrazoFormat {
     private const val PATTERNS_ENTRY = "patterns.json"
     private const val MANIFEST_ENTRY = "manifest.json"
     private const val COVER_ENTRY = "cover"
+    internal const val IMAGE_PREFIX = "image-"
     /** Límites sobre bytes descomprimidos: el tamaño comprimido no protege de ZIP bombs. */
     internal const val MAX_NOTEBOOK_ENTRY_BYTES = 32 * 1024 * 1024
     internal const val MAX_PATTERNS_ENTRY_BYTES = 8 * 1024 * 1024
@@ -372,16 +376,32 @@ object TrazoFormat {
 
     private class ArchiveLimitException(message: String) : IOException(message)
 
-    /** [cover]: bytes de la portada (WEBP o PNG) cuando el cuaderno tiene una imagen elegida. */
-    class Archive(val notebook: Notebook, val patterns: List<InkPattern>, val cover: ByteArray? = null) {
+    /**
+     * [cover]: bytes de la portada (WEBP o PNG) cuando el cuaderno tiene una imagen elegida.
+     * [images]: archivos de las imágenes de las hojas, por nombre ([PageImage.asset] / [PageImage.source]).
+     */
+    class Archive(
+        val notebook: Notebook,
+        val patterns: List<InkPattern>,
+        val cover: ByteArray? = null,
+        val images: Map<String, ByteArray> = emptyMap(),
+    ) {
         operator fun component1() = notebook
         operator fun component2() = patterns
     }
 
     /** ZIP con el cuaderno, (opcional) los patrones que usa y la portada; todo como trazos vectoriales. */
-    fun exportArchive(notebook: Notebook, patterns: List<InkPattern>, out: OutputStream, cover: ByteArray? = null) {
+    fun exportArchive(
+        notebook: Notebook,
+        patterns: List<InkPattern>,
+        out: OutputStream,
+        cover: ByteArray? = null,
+        images: Map<String, ByteArray> = emptyMap(),
+    ) {
         val ext = cover?.let { Covers.extensionOf(it) }.takeIf { notebook.coverKind == CoverKind.IMAGE }
-        val nb = if (ext != null) notebook else notebook.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null)
+        // Una imagen sin su archivo (o con un archivo que no es lo que dice) no viaja.
+        val withImages = notebook.withAvailableImages { name -> images[name]?.let(PageImages::extensionOf) == name.substringAfter('.') }
+        val nb = if (ext != null) withImages else withImages.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null)
         ZipOutputStream(out).use { zip ->
             fun put(name: String, bytes: ByteArray) {
                 zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry()
@@ -390,6 +410,7 @@ object TrazoFormat {
             put(NOTEBOOK_ENTRY, encodeNotebook(nb).toByteArray(Charsets.UTF_8))
             put(PATTERNS_ENTRY, encodePatterns(patterns).toByteArray(Charsets.UTF_8))
             if (ext != null) put("$COVER_ENTRY.$ext", cover!!)
+            nb.imageAssets().forEach { name -> put("$IMAGE_PREFIX$name", images.getValue(name)) }
         }
     }
 
@@ -417,7 +438,10 @@ object TrazoFormat {
         val cover = parts.cover?.takeIf { Covers.extensionOf(it) == parts.coverName?.substringAfter('.') }
         val withCover = if (cover != null && notebook.coverKind == CoverKind.IMAGE) notebook
         else notebook.copy(coverKind = CoverKind.FIRST_PAGE, coverImage = null)
-        return Archive(withCover, patterns, cover.takeIf { withCover.coverKind == CoverKind.IMAGE })
+        val images = parts.images.filter { (name, bytes) -> PageImages.isValidName(name) && PageImages.extensionOf(bytes) == name.substringAfter('.') }
+        val withImages = withCover.withAvailableImages { it in images }
+        val used = withImages.imageAssets()
+        return Archive(withImages, patterns, cover.takeIf { withImages.coverKind == CoverKind.IMAGE }, images.filterKeys { it in used })
     }
 
     private fun InputStream.readBounded(limit: Int): ByteArray {
