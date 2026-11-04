@@ -343,7 +343,11 @@ object MathLayoutConverter {
         candidate.y < base.y - base.emY * .18 + EPS &&
         base.box.top - candidate.box.bottom <= min(base.emY, candidate.emY) * .65 + EPS &&
         candidate.box.left >= base.box.right - base.emX * .15 - EPS &&
-        candidate.box.left - base.box.right <= max(base.emX, candidate.emX) * 2.5 + EPS
+        candidate.box.left - base.box.right <= max(base.emX, candidate.emX) * 2.5 + EPS &&
+        // Un operador suelto no es exponente: en «x⁻¹» el − hereda la potencia del 1 que lo sigue.
+        candidate.text !in setOf("+", "-", "*", "/", "·", "×", "÷") &&
+        // La fracción se centra en su barra: su exponente tiene que subir hasta la altura del numerador.
+        (base.kind != Kind.FRACTION || candidate.box.bottom <= base.y + EPS && candidate.y < (base.box.top + base.y) / 2 + EPS)
 
     private fun isOperator(node: Node) = node.kind == Kind.BAR || node.kind == Kind.ATOM && node.text in setOf("+", "-", "*", "/", "=", ";")
 

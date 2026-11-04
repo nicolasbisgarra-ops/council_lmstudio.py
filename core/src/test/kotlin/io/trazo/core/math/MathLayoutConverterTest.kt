@@ -79,6 +79,20 @@ class MathLayoutConverterTest {
         assertEquals("(1)/(2)*3", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("3", 30f, 11f))))
     }
 
+    @Test fun operadorTrasFraccionNoEsExponente() {
+        // «−9/2 + 9/2» con el + escrito algo por encima de la barra: antes salía «-((9)/(2))^(+)(9)/(2)».
+        val a = listOf(s("Menos", 0f, 20f, 10f, 2f), s("9", 18f, 0f), s("Barra", 14f, 20f, 18f, 2f), s("2", 18f, 27f),
+            s("Más", 36f, 8f, 10f, 10f), s("9", 54f, 0f), s("Barra", 50f, 20f, 18f, 2f), s("2", 54f, 27f))
+        val text = MathLayoutConverter.convert(a)
+        assertEquals("-(9)/(2)+(9)/(2)", text)
+        assertEquals(0.0, Evaluator.evaluate(MathParser.parseExpression(text)) { error("no hay variables") }.toDouble(), 1e-9)
+        // Un número alto a la derecha de la fracción tampoco es su exponente, salvo que suba hasta el numerador.
+        val b = listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("3", 30f, 4f, 8f, 14f))
+        assertEquals("(1)/(2)*3", MathLayoutConverter.convert(b))
+        val c = listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("3", 28f, -10f, 6f, 10f))
+        assertEquals("((1)/(2))^3", MathLayoutConverter.convert(c))
+    }
+
     @Test fun fraccionNoMueveLaLineaSiguiente() {
         assertEquals("(1)/(2)\nx", MathLayoutConverter.convert(listOf(s("1", 4f, 0f), s("Barra", 0f, 20f, 24f, 2f), s("2", 4f, 27f), s("x", 0f, 100f))))
     }
