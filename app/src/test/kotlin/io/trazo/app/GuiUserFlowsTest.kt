@@ -128,6 +128,9 @@ class GuiUserFlowsTest {
 
         compose.onNodeWithContentDescription("Más opciones").performClick()
         compose.onNodeWithText("Modo examen").performScrollTo().performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("Modo examen").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("Modo examen").assertExists()
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("Para preparar el examen hacen falta marcas compatibles de una revisión anterior.").fetchSemanticsNodes().isNotEmpty()

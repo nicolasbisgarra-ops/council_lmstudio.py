@@ -25,8 +25,11 @@ class TrazoApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashReportHandlerInstaller.install(crashReports, appVersionName())
-        io.trazo.app.image.ImagePainter.dir = java.io.File(filesDir, "images")
-        // Limpieza de imágenes que ya no usa ningún cuaderno, sin demorar el arranque.
+        val images = java.io.File(filesDir, "images")
+        io.trazo.app.image.ImagePainter.dir = images
+        // Limpieza de imágenes que ya no usa ningún cuaderno, sin demorar el arranque. Sin imágenes no hay
+        // nada que limpiar y el repositorio no se crea fuera del hilo principal.
+        if (images.list().isNullOrEmpty()) return
         Thread({ runCatching { repository.collectUnusedImages() } }, "trazo-images-gc").apply {
             isDaemon = true
             priority = Thread.MIN_PRIORITY
