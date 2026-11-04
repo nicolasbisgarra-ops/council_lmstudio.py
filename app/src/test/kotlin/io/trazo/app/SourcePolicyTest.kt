@@ -29,11 +29,15 @@ class SourcePolicyTest {
         }
     }
 
-    @Test fun `T24 no typeset math engines anywhere`() {
+    /** La hoja es tinta: LaTeX (JLaTeXMath, nativo) solo existe en el chat de revisión del Modo IA. */
+    @Test fun `T24 no typeset math engines outside the review chat`() {
         val forbidden = listOf("latex", "katex", "mathjax", "mathlive", "MathView")
         for (f in sources) for (word in forbidden) {
+            if (f.name == "AiChat.kt" && word == "latex") continue
             assertFalse("${f.path} menciona $word", code(f).contains(word, ignoreCase = true))
         }
+        val chat = code(sources.single { it.name == "AiChat.kt" })
+        assertFalse(chat.contains("katex", ignoreCase = true) || chat.contains("WebView"))
     }
 
     @Test fun `T24 the ink surface never draws text, fonts or images`() {

@@ -45,16 +45,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
@@ -69,20 +65,19 @@ import androidx.compose.ui.unit.sp
 import io.trazo.ai.AiTutor
 import io.trazo.ai.TutorRole
 import io.trazo.app.data.AiChatMessage
-import io.trazo.core.math.tex.TexBox
-import io.trazo.core.math.tex.TexFont
-import io.trazo.core.math.tex.TexInk
-import io.trazo.core.math.tex.TexMeasure
 import io.trazo.core.math.tex.TexMath
 import io.trazo.core.math.tex.TexPart
+import ru.noties.jlatexmath.JLatexMathAndroid
+import ru.noties.jlatexmath.JLatexMathDrawable
 
 /**
  * Chat de revisión (Modo IA): un panel que se despliega a la izquierda de la hoja. El tutor rehace la
- * resolución paso a paso y marca el primer error; las fórmulas se arman en letra de imprenta, apiladas.
+ * resolución paso a paso y marca el primer error; las fórmulas se escriben con LaTeX de verdad (JLaTeXMath,
+ * sin WebView ni red), solo acá: la hoja sigue siendo tinta.
  */
 @Composable
 internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
-    val ink = ChatTex.ink
+    rememberLatex()
     val messages = vm.chatMessages
     val streaming = vm.chatStreaming
     val busy = vm.chatBusy
@@ -114,13 +109,13 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         )
                     }
                 }
-                items(messages) { m -> ChatMessage(m, ink, onShow = { vm.showChatLine(m) }) }
+                items(messages) { m -> ChatMessage(m, onShow = { vm.showChatLine(m) }) }
                 if (streaming != null) {
                     item {
                         if (streaming.isBlank()) {
                             Text("Revisando tu resolución…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            ChatRichText(streaming, ink)
+                            ChatRichText(streaming)
                         }
                     }
                 }
@@ -146,7 +141,7 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ChatMessage(m: AiChatMessage, ink: TexInk, onShow: () -> Unit) {
+private fun ChatMessage(m: AiChatMessage, onShow: () -> Unit) {
     when {
         m.role == TutorRole.STUDENT -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
             Text(
@@ -163,14 +158,14 @@ private fun ChatMessage(m: AiChatMessage, ink: TexInk, onShow: () -> Unit) {
             color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium,
         )
         else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (m.text.isNotBlank()) ChatRichText(m.text, ink)
-            m.correct?.let { ok -> VerdictCard(ok, m.line, m.verdict.orEmpty(), ink, onShow.takeIf { m.strokeIds.isNotEmpty() }) }
+            if (m.text.isNotBlank()) ChatRichText(m.text)
+            m.correct?.let { ok -> VerdictCard(ok, m.line, m.verdict.orEmpty(), onShow.takeIf { m.strokeIds.isNotEmpty() }) }
         }
     }
 }
 
 @Composable
-private fun VerdictCard(correct: Boolean, line: Int?, summary: String, ink: TexInk, onShow: (() -> Unit)?) {
+private fun VerdictCard(correct: Boolean, line: Int?, summary: String, onShow: (() -> Unit)?) {
     val bg = if (correct) Color(0xFFE3F4E6) else Color(0xFFFDE4E1)
     val fg = if (correct) Color(0xFF1B5E20) else Color(0xFFB3261E)
     Column(Modifier.fillMaxWidth().background(bg, RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -178,14 +173,14 @@ private fun VerdictCard(correct: Boolean, line: Int?, summary: String, ink: TexI
             if (correct) "Correcto" else if (line != null) "Primer error · renglón $line" else "Primer error",
             color = fg, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall,
         )
-        if (summary.isNotBlank()) ChatRichText(summary, ink, color = Color(0xFF1C1B1F))
+        if (summary.isNotBlank()) ChatRichText(summary, color = Color(0xFF1C1B1F))
         if (onShow != null) TextButton(onClick = onShow) { Text("Ver en la hoja", color = fg) }
     }
 }
 
 /** Prosa con fórmulas: las de su renglón se dibujan aparte (con desplazamiento lateral si no entran). */
 @Composable
-private fun ChatRichText(text: String, ink: TexInk, color: Color = MaterialTheme.colorScheme.onSurface) {
+private fun ChatRichText(text: String, color: Color = MaterialTheme.colorScheme.onSurface) {
     val parts = remember(text) { TexMath.split(text) }
     val groups = remember(parts) {
         val out = mutableListOf<List<TexPart>>()
@@ -204,28 +199,29 @@ private fun ChatRichText(text: String, ink: TexInk, color: Color = MaterialTheme
             val single = g.singleOrNull()
             if (single is TexPart.Formula && single.display) {
                 Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
-                    FormulaInk(single.source, ink, DISPLAY_DIGIT_SP, color)
+                    LatexFormula(single.source, DISPLAY_SP, color)
                 }
             } else {
                 val trimmed = trimGroup(g)
-                if (trimmed.isNotEmpty()) InlineParagraph(trimmed, ink, color)
+                if (trimmed.isNotEmpty()) InlineParagraph(trimmed, color)
             }
         }
     }
 }
 
 @Composable
-private fun InlineParagraph(parts: List<TexPart>, ink: TexInk, color: Color) {
+private fun InlineParagraph(parts: List<TexPart>, color: Color) {
     val density = LocalDensity.current
     val style = MaterialTheme.typography.bodyLarge
     val fontPx = with(density) { style.fontSize.toPx() }
-    val boxes = remember(parts, ink, fontPx) {
-        parts.filterIsInstance<TexPart.Formula>().associate { it.source to ink.layout(it.source, fontPx * 0.7f) }
+    val argb = color.toArgb()
+    val drawables = remember(parts, fontPx, argb) {
+        parts.filterIsInstance<TexPart.Formula>().associate { it.source to latexDrawable(it.source, fontPx * 1.05f, argb) }
     }
-    val inline = boxes.entries.mapIndexed { i, (source, box) ->
-        val w = with(density) { (box.width + fontPx * 0.2f).toSp() }
-        val h = with(density) { (box.height + fontPx * 0.1f).coerceAtLeast(fontPx).toSp() }
-        "f$i" to (source to InlineTextContent(Placeholder(w, h, PlaceholderVerticalAlign.TextCenter)) { DrawTex(box, color, fontPx * 0.1f) })
+    val inline = drawables.entries.filter { it.value != null }.mapIndexed { i, (source, d) ->
+        val w = with(density) { (d!!.intrinsicWidth + fontPx * 0.2f).toSp() }
+        val h = with(density) { d!!.intrinsicHeight.toFloat().coerceAtLeast(fontPx).toSp() }
+        "f$i" to (source to InlineTextContent(Placeholder(w, h, PlaceholderVerticalAlign.TextCenter)) { DrawLatex(d!!, centered = true) })
     }.toMap()
     val ids = inline.entries.associate { (id, v) -> v.first to id }
     val annotated = buildAnnotatedString {
@@ -272,73 +268,90 @@ private fun markdown(s: String): AnnotatedString = buildAnnotatedString {
     }
 }
 
-/** La letra de las fórmulas del chat: serif en cursiva para las variables, derecha para cifras y signos. */
-private object ChatTex {
-    private fun paint(style: Int, family: android.graphics.Typeface) = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = android.graphics.Typeface.create(family, style)
-    }
+/** Tamaño de la letra de las fórmulas en su propio renglón. */
+private const val DISPLAY_SP = 18f
 
-    private val italic = paint(android.graphics.Typeface.ITALIC, android.graphics.Typeface.SERIF)
-    private val upright = paint(android.graphics.Typeface.NORMAL, android.graphics.Typeface.SERIF)
-    private val prose = paint(android.graphics.Typeface.NORMAL, android.graphics.Typeface.DEFAULT)
-
-    fun paint(font: TexFont): android.graphics.Paint = when (font) {
-        TexFont.ITALIC -> italic
-        TexFont.UPRIGHT -> upright
-        TexFont.PROSE -> prose
-    }
-
-    val ink = TexInk(emptyList(), typeset = TexMeasure { text, font, size ->
-        val p = paint(font)
-        p.textSize = size
-        p.measureText(text)
-    })
+/** JLaTeXMath carga sus fuentes una vez por proceso. */
+@Composable
+private fun rememberLatex() {
+    val context = LocalContext.current
+    remember { LatexEngine.init(context) }
 }
 
-/** Alto de una cifra en las fórmulas de su propio renglón. */
-private const val DISPLAY_DIGIT_SP = 13f
+private object LatexEngine {
+    @Volatile private var ready = false
+
+    fun init(context: android.content.Context) {
+        if (ready) return
+        synchronized(this) {
+            if (!ready) { JLatexMathAndroid.init(context.applicationContext); ready = true }
+        }
+    }
+}
+
+private val ROW_SPACING = Regex("""\\\\\s*\[[^\]]{1,15}]""")
+private val TEXT_ARG = Regex("""\\(text|textrm|textit|textbf|mbox|operatorname)\s*\{([^{}]*)}""")
+private val ACCENTS = mapOf(
+    'á' to "\\'a", 'é' to "\\'e", 'í' to "\\'i", 'ó' to "\\'o", 'ú' to "\\'u", 'ñ' to "\\~n", 'ü' to "\\\"u",
+    'Á' to "\\'A", 'É' to "\\'E", 'Í' to "\\'I", 'Ó' to "\\'O", 'Ú' to "\\'U", 'Ñ' to "\\~N",
+)
+
+/** Ajustes para JLaTeXMath: el «\\\\[8pt]» queda como salto común y las tildes del texto van como acentos de TeX. */
+private fun prepareLatex(source: String): String {
+    var s = source.replace(ROW_SPACING, "\\\\\\\\")
+    s = TEXT_ARG.replace(s) { m ->
+        val body = buildString { for (c in m.groupValues[2]) append(ACCENTS[c] ?: c.toString()) }
+        "\\" + m.groupValues[1] + "{" + body + "}"
+    }
+    return s
+}
+
+/** Arma la fórmula; si JLaTeXMath no la entiende prueba con un array en vez de aligned, y si no, null (va como texto). */
+private fun latexDrawable(source: String, sizePx: Float, color: Int): JLatexMathDrawable? {
+    val prepared = prepareLatex(source)
+    val tries = listOf(
+        prepared,
+        prepared.replace(Regex("""\\begin\{(aligned|align\*?|split)}"""), "\\\\begin{array}{rl}")
+            .replace(Regex("""\\end\{(aligned|align\*?|split)}"""), "\\\\end{array}"),
+    ).distinct()
+    for (t in tries) {
+        val d = runCatching {
+            JLatexMathDrawable.builder(t).textSize(sizePx).color(color).padding(2).build()
+        }.getOrNull()
+        if (d != null && d.intrinsicWidth > 0 && d.intrinsicHeight > 0) return d
+    }
+    return null
+}
 
 @Composable
-private fun FormulaInk(source: String, ink: TexInk, sizeSp: Float, color: Color) {
+private fun LatexFormula(source: String, sizeSp: Float, color: Color) {
     val density = LocalDensity.current
     val sizePx = with(density) { sizeSp.sp.toPx() }
-    val box = remember(source, ink, sizePx) { ink.layout(source, sizePx) }
-    val pad = sizePx * 0.15f
+    val argb = color.toArgb()
+    val d = remember(source, sizePx, argb) { latexDrawable(source, sizePx, argb) }
+    if (d == null) {
+        Text(source, style = MaterialTheme.typography.bodyMedium, color = color)
+        return
+    }
     with(density) {
-        Canvas(Modifier.size((box.width + pad * 2).toDp(), (box.height + pad * 2).toDp())) { drawTex(box, color, pad) }
+        Canvas(Modifier.size(d.intrinsicWidth.toDp(), d.intrinsicHeight.toDp())) { drawLatex(d, 0f) }
     }
 }
 
 @Composable
-private fun DrawTex(box: TexBox, color: Color, pad: Float) {
+private fun DrawLatex(d: JLatexMathDrawable, centered: Boolean) {
     Canvas(Modifier.fillMaxSize()) {
-        // Centrado vertical dentro del espacio del renglón.
-        val dy = (size.height - box.height) / 2f - pad
-        drawTex(box, color, pad, dy)
+        drawLatex(d, if (centered) (size.height - d.intrinsicHeight) / 2f else 0f)
     }
 }
 
-private fun DrawScope.drawTex(box: TexBox, color: Color, pad: Float, extraY: Float = 0f) {
-    val ox = pad
-    val oy = pad + box.ascent + extraY
-    for (s in box.strokes) {
-        val w = s.width
-        if (s.points.size == 1) {
-            drawCircle(color, w / 2f, Offset(s.points[0].x + ox, s.points[0].y + oy))
-            continue
-        }
-        val path = Path()
-        s.points.forEachIndexed { i, p -> if (i == 0) path.moveTo(p.x + ox, p.y + oy) else path.lineTo(p.x + ox, p.y + oy) }
-        drawPath(path, color, style = Stroke(width = w, cap = StrokeCap.Round, join = StrokeJoin.Round))
-    }
-    if (box.texts.isEmpty()) return
-    val argb = color.toArgb()
+private fun DrawScope.drawLatex(d: JLatexMathDrawable, dy: Float) {
+    d.setBounds(0, 0, d.intrinsicWidth, d.intrinsicHeight)
     drawIntoCanvas { c ->
-        for (t in box.texts) {
-            val paint = ChatTex.paint(t.font)
-            paint.color = argb
-            paint.textSize = t.size
-            c.nativeCanvas.drawText(t.text, t.x + ox, t.baseline + oy, paint)
-        }
+        val n = c.nativeCanvas
+        n.save()
+        n.translate(0f, dy)
+        d.draw(n)
+        n.restore()
     }
 }

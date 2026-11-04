@@ -98,6 +98,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.core)
     implementation("com.google.mediapipe:tasks-genai:0.10.27")
+    // Solo el chat de revisión: LaTeX nativo (Canvas), sin WebView ni red.
+    implementation("ru.noties:jlatexmath-android:0.2.0")
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
