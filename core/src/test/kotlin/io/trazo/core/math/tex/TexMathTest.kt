@@ -129,4 +129,103 @@ class TexMathTest {
             assertTrue(s, box.texts.isEmpty())
         }
     }
+
+    // ---- Resoluciones apiladas ----------------------------------------------------------------------------
+
+    @Test fun `aligned apila renglones de a pares`() {
+        val src = "\\begin{aligned} I &= \\int_0^1 x^2\\,dx \\\\[8pt] &= \\left[ \\frac{x^3}{3} \\right]_0^1 \\\\[6pt] &= \\boxed{\\frac{1}{3}} \\end{aligned}"
+        val m = (TexMath.parse(src) as TexNode.Row).items.single() as TexNode.Matrix
+        assertEquals(TexNode.Align.PAIRS, m.align)
+        assertEquals(3, m.rows.size)
+        assertEquals(TexNode.Row(emptyList()), m.rows[1][0])
+        val second = m.rows[1][1] as TexNode.Row
+        assertEquals(sym("Igual", TexNode.Kind.REL), second.items[0])
+        val sc = second.items[1] as TexNode.Scripts
+        assertTrue(sc.base is TexNode.Fenced)
+        assertEquals(sym("1"), sc.sup)
+        assertEquals(sym("0"), sc.sub)
+        assertTrue((m.rows[2][1] as TexNode.Row).items[1] is TexNode.Boxed)
+    }
+
+    @Test fun `renglones sueltos sin entorno tambien se apilan`() {
+        val m = TexMath.parse("x &= 2 + 3 \\\\ &= 5") as TexNode.Matrix
+        assertEquals(TexNode.Align.PAIRS, m.align)
+        assertEquals(2, m.rows.size)
+        assertEquals(TexNode.Word("sen"), (TexMath.parse("\\operatorname{sen} x") as TexNode.Row).items[0])
+        assertEquals(TexNode.Row(listOf(sym("x"))), TexMath.parse("\\displaystyle x").let { r -> TexNode.Row((r as TexNode.Row).items.filter { it !is TexNode.Space }) })
+    }
+
+    private val typeset = TexInk(emptyList(), typeset = TexMeasure { text, _, size -> text.length * size * 0.5f })
+
+    @Test fun `en letra de imprenta las variables van en cursiva`() {
+        val b = typeset.layout("2x + \\operatorname{sen} \\alpha", 28f)
+        assertTrue(b.strokes.isEmpty())
+        val fonts = b.texts.associate { it.text to it.font }
+        assertEquals(TexFont.UPRIGHT, fonts["2"])
+        assertEquals(TexFont.ITALIC, fonts["x"])
+        assertEquals(TexFont.UPRIGHT, fonts["+"])
+        assertEquals(TexFont.UPRIGHT, fonts["sen"])
+        assertEquals(TexFont.ITALIC, fonts["α"])
+        // El cuerpo de la letra es más grande que el alto de la cifra.
+        assertEquals(40f, b.texts.first().size, 0.01f)
+    }
+
+    @Test fun `en letra de imprenta el aligned alinea los iguales`() {
+        val b = typeset.layout("\\begin{aligned} f(x) &= 3x^2 \\\\ &= 12 \\end{aligned}", 20f)
+        val equals = b.texts.filter { it.text == "=" }
+        assertEquals(2, equals.size)
+        assertEquals(equals[0].x, equals[1].x, 0.01f)
+        assertTrue(equals[1].baseline > equals[0].baseline + 20f)
+    }
+
+    @Test fun `en letra de imprenta lo alto se dibuja`() {
+        val boxed = typeset.layout("\\boxed{5}", 20f)
+        assertEquals(1, boxed.strokes.size)
+        assertTrue(boxed.width > typeset.layout("5", 20f).width)
+        val integral = typeset.layout("\\displaystyle \\int_0^{\\pi/2} \\sin x \\, dx", 20f)
+        assertTrue(integral.strokes.isNotEmpty())
+        assertTrue(integral.height > 40f)
+        val small = typeset.layout("\\left( x \\right)", 20f)
+        assertTrue(small.strokes.isEmpty())
+        val tall = typeset.layout("\\left( \\frac{1}{2} \\right)", 20f)
+        assertEquals(2, tall.strokes.count { it.points.size > 5 })
+        for (s in listOf("\\sum_{k=1}^n k", "\\prod_i a_i", "\\left\\{ \\frac{a}{b} \\right.", "\\left| \\frac{a}{b} \\right|", "\\iint f", "\\oint f", "\\sqrt{2}")) {
+            val box = typeset.layout(s, 20f)
+            assertTrue(s, box.width > 0f && box.height > 0f)
+        }
+    }
+
+    @Test fun `una respuesta tipica del tutor se lee entera`() {
+        val reply = """
+### 1\. Planteo
+
+$$
+\begin{aligned}
+\int_0^{\pi/2} x\,\operatorname{sen} x\,dx &= \left[ -x\cos x \right]_0^{\pi/2} + \int_0^{\pi/2} \cos x\,dx \\[8pt]
+&= 0 + \left[ \operatorname{sen} x \right]_0^{\pi/2} \\[8pt]
+&= \boxed{1}
+\end{aligned}
+$$
+
+* Observación: \( u = x \Rightarrow du = dx \)
+"""
+        val formulas = TexMath.split(reply).filterIsInstance<TexPart.Formula>()
+        assertEquals(listOf(true, false), formulas.map { it.display })
+        val m = (TexMath.parse(formulas[0].source) as TexNode.Row).items.single() as TexNode.Matrix
+        assertEquals(3, m.rows.size)
+        assertTrue(m.rows.all { it.size == 2 })
+        fun words(n: TexNode): List<String> = when (n) {
+            is TexNode.Word -> listOf(n.text)
+            is TexNode.Row -> n.items.flatMap(::words)
+            is TexNode.Matrix -> n.rows.flatten().flatMap(::words)
+            is TexNode.Scripts -> listOfNotNull(n.base, n.sup, n.sub).flatMap(::words)
+            is TexNode.Fenced -> words(n.body)
+            is TexNode.Frac -> words(n.num) + words(n.den)
+            is TexNode.Boxed -> words(n.body)
+            else -> emptyList()
+        }
+        assertEquals(setOf("sen", "cos"), words(m).toSet())
+        val b = typeset.layout(formulas[0].source, 20f)
+        assertTrue(b.height > 100f)
+    }
 }

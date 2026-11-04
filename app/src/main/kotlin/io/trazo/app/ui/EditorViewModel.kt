@@ -35,7 +35,6 @@ import io.trazo.ai.AiTutorPrompt
 import io.trazo.ai.TutorRole
 import io.trazo.ai.TutorTurn
 import io.trazo.app.data.AiChatMessage
-import io.trazo.core.math.tex.TexInk
 import io.trazo.app.ai.AiCapture
 import io.trazo.app.ai.AiConnectivity
 import io.trazo.app.ai.AiMarkPainter
@@ -1328,14 +1327,6 @@ class EditorViewModel(
     private var chatJob: Job? = null
     private var chatId = 0L
     private var chatPage: String? = null
-    private var texCache: Pair<List<InkPattern>, TexInk>? = null
-
-    /** Arma las fórmulas del chat con los patrones actuales del usuario. */
-    fun texInk(): TexInk {
-        val patterns = repo.patterns.value
-        texCache?.let { (p, ink) -> if (p === patterns) return ink }
-        return TexInk(patterns).also { texCache = patterns to it }
-    }
 
     /** Despliega el chat; la primera vez en la hoja pide la revisión completa. */
     fun openChat() {

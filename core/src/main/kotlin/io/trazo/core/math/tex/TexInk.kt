@@ -15,9 +15,18 @@ import io.trazo.core.bounds
 import io.trazo.core.math.layout.MathLayoutConverter
 import io.trazo.core.transformed
 import kotlin.math.max
+import kotlin.math.min
 
-/** Un texto que no tiene patrón con qué dibujarse: la app lo escribe con la letra del sistema. */
-data class TexText(val text: String, val x: Float, val baseline: Float, val size: Float, val prose: Boolean = false)
+/** Con qué letra va un texto: cursiva (las variables), derecha (cifras, signos, sen) o la de la prosa. */
+enum class TexFont { ITALIC, UPRIGHT, PROSE }
+
+/** Mide el ancho de un texto en la letra [font] de cuerpo [size]: lo pone la app, que es la que dibuja. */
+fun interface TexMeasure {
+    fun width(text: String, font: TexFont, size: Float): Float
+}
+
+/** Un texto que la app escribe con una letra del sistema; [size] es el cuerpo de la letra y [baseline] su línea. */
+data class TexText(val text: String, val x: Float, val baseline: Float, val size: Float, val font: TexFont = TexFont.UPRIGHT)
 
 /**
  * Una fórmula armada: trazos y textos sueltos alrededor de una línea de base en y = 0 (lo de arriba es
@@ -49,7 +58,12 @@ data class TexBox(
  *
  * Las medidas van en múltiplos de [size], el alto de una cifra: el eje de los signos queda a media cifra.
  */
-class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle()) {
+class TexInk(
+    patterns: List<InkPattern>,
+    private val style: InkStyle = InkStyle(),
+    /** Con una medida, la fórmula sale tipográfica (letra de imprenta y trazos vectoriales), sin patrones. */
+    private val typeset: TexMeasure? = null,
+) {
     private val ids = IdGenerator.sequential("tex")
 
     private val user = patterns.filter { it.enabled && it.outputInk.isNotEmpty() && !PresetPatterns.isSign(it) }
@@ -71,7 +85,7 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
     /** Lee y arma [source] de una vez. */
     fun layout(source: String, size: Float): TexBox = box(TexMath.parse(source), size)
 
-    private fun pattern(key: String): InkPattern? =
+    private fun pattern(key: String): InkPattern? = if (typeset != null) null else
         userByName[key] ?: (if (key.length == 1 && key[0].isLetterOrDigit()) userBySymbol[key] else null) ?: library[key]
 
     private fun box(node: TexNode, size: Float): TexBox = when (node) {
@@ -82,6 +96,7 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
         is TexNode.Root -> root(node, size)
         is TexNode.Scripts -> scripts(node, size)
         is TexNode.Fenced -> fence(box(node.body, size), node.open, node.close, size)
+        is TexNode.Boxed -> boxed(box(node.body, size), size)
         is TexNode.BigOp -> bigOp(node, size)
         is TexNode.Matrix -> fence(matrix(node, size), node.open, node.close, size)
         is TexNode.Accent -> accent(node, size)
@@ -124,10 +139,12 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
     }
 
     private fun gap(prev: TexNode.Kind, next: TexNode.Kind, size: Float): Float = size * when {
-        prev == TexNode.Kind.REL || next == TexNode.Kind.REL -> 0.3f
-        prev == TexNode.Kind.BIN || next == TexNode.Kind.BIN -> 0.22f
+        prev == TexNode.Kind.REL || next == TexNode.Kind.REL -> 0.32f
+        prev == TexNode.Kind.BIN || next == TexNode.Kind.BIN -> 0.24f
         prev == TexNode.Kind.PUNCT -> 0.25f
         next == TexNode.Kind.PUNCT -> 0.03f
+        // La letra de imprenta ya trae su aire: dos letras seguidas van juntas.
+        typeset != null -> 0.03f
         prev == TexNode.Kind.OPEN || next == TexNode.Kind.CLOSE -> 0.05f
         else -> 0.1f
     }
@@ -135,6 +152,7 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
     // ---- Signos ----------------------------------------------------------------------------------------
 
     private fun sym(s: TexNode.Sym, size: Float): TexBox {
+        if (typeset != null) return typesetSym(s, size)
         val p = pattern(s.key) ?: return text(s.key, size)
         val tall = s.kind == TexNode.Kind.OPEN || s.kind == TexNode.Kind.CLOSE || s.key in DELIMITERS
         return if (tall) stretched(p, size * 0.6f, size) ?: text(s.key, size) else glyph(p, s.kind, size) ?: text(s.key, size)
@@ -190,7 +208,7 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
     }
 
     private fun place(p: InkPattern, t: Affine, size: Float): TexBox {
-        val w = size * STROKE / DEFAULT_INK_WIDTH
+        val w = stroke(size) / DEFAULT_INK_WIDTH
         val strokes = p.outputInk.map { s ->
             s.transformed(t, scaleWidth = false).copy(
                 id = ids.next(), groupId = null, patternId = p.id, color = style.color,
@@ -201,21 +219,169 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
         return TexBox(strokes, emptyList(), max(b.right, 0f), max(-b.top, 0f), max(b.bottom, 0f))
     }
 
-    private fun text(s: String, size: Float, prose: Boolean = false): TexBox {
+    private fun text(s: String, size: Float, font: TexFont = TexFont.UPRIGHT): TexBox {
         if (s.isEmpty()) return TexBox.EMPTY
-        val per = if (prose) 0.5f else 0.6f
-        return TexBox(emptyList(), listOf(TexText(s, 0f, 0f, size, prose)), s.length * per * size, size * 0.8f, size * 0.22f)
+        val em = size / DIGIT
+        val m = typeset
+        if (m == null) {
+            val per = if (font == TexFont.PROSE) 0.5f else 0.6f
+            return TexBox(emptyList(), listOf(TexText(s, 0f, 0f, em, font)), s.length * per * size, size * 0.8f, size * 0.22f)
+        }
+        // La cursiva se inclina hacia la derecha: un poco de aire para que no pise lo que sigue.
+        val w = m.width(s, font, em) + if (font == TexFont.ITALIC) em * 0.04f else 0f
+        return TexBox(emptyList(), listOf(TexText(s, 0f, 0f, em, font)), w, size * 1.02f, size * 0.28f)
     }
 
-    private fun line(vararg pts: Pair<Float, Float>, size: Float): InkStroke = InkStroke(
-        ids.next(), pts.map { InkPoint(it.first, it.second) }, style.color, size * STROKE, brush = style.brush,
+    private fun stroke(size: Float) = size * (if (typeset != null) TYPESET_STROKE else STROKE)
+
+    private fun line(vararg pts: Pair<Float, Float>, size: Float): InkStroke = poly(pts.toList(), size)
+
+    private fun poly(pts: List<Pair<Float, Float>>, size: Float): InkStroke = InkStroke(
+        ids.next(), pts.map { InkPoint(it.first, it.second) }, style.color, stroke(size), brush = style.brush,
     )
+
+    // ---- Letra de imprenta -------------------------------------------------------------------------------
+
+    private fun typesetSym(s: TexNode.Sym, size: Float): TexBox {
+        val c = when {
+            s.kind == TexNode.Kind.OPEN && s.key == "Menor" -> "⟨"
+            s.kind == TexNode.Kind.CLOSE && s.key == "Mayor" -> "⟩"
+            else -> TYPESET_CHARS[s.key] ?: s.key
+        }
+        val font = if (c.length == 1 && (c[0] in 'a'..'z' || c[0] in 'A'..'Z' || c[0] in 'α'..'ω')) TexFont.ITALIC else TexFont.UPRIGHT
+        return text(c, size, font)
+    }
+
+    /** Un delimitador dibujado que va de [half] sobre el eje hasta [half] debajo. */
+    private fun vectorFence(key: String, half: Float, size: Float): TexBox {
+        val axis = -size / 2f
+        val top = axis - half
+        val bottom = axis + half
+        val h = bottom - top
+        val pts: List<List<Pair<Float, Float>>>
+        val width: Float
+        when (key) {
+            "Abre paréntesis", "Cierra paréntesis" -> {
+                val w = size * 0.22f + h * 0.04f
+                val curve = (0..24).map { k ->
+                    val t = k / 24f
+                    w * (1f - 0.88f * kotlin.math.sin(Math.PI.toFloat() * t)) to top + h * t
+                }
+                pts = listOf(if (key.startsWith("Abre")) curve else curve.map { w - it.first to it.second })
+                width = w
+            }
+            "Abre corchete", "Cierra corchete" -> {
+                val w = size * 0.26f
+                val l = listOf(w to top, 0f to top, 0f to bottom, w to bottom)
+                pts = listOf(if (key.startsWith("Abre")) l else l.map { w - it.first to it.second })
+                width = w
+            }
+            "Abre llave", "Cierra llave" -> {
+                val w = size * 0.36f
+                val mid = (top + bottom) / 2f
+                val d = min(size * 0.18f, h * 0.1f)
+                val l = smooth(listOf(
+                    w to top, w * 0.55f to top + d, w * 0.5f to mid - d * 1.5f, w * 0.42f to mid - d * 0.4f, 0f to mid,
+                    w * 0.42f to mid + d * 0.4f, w * 0.5f to mid + d * 1.5f, w * 0.55f to bottom - d, w to bottom,
+                ))
+                pts = listOf(if (key.startsWith("Abre")) l else l.map { w - it.first to it.second })
+                width = w
+            }
+            "Menor", "Mayor" -> {
+                val w = size * 0.3f + h * 0.03f
+                val l = listOf(w to top, 0f to (top + bottom) / 2f, w to bottom)
+                pts = listOf(if (key == "Menor") l else l.map { w - it.first to it.second })
+                width = w
+            }
+            "Paralelo" -> {
+                width = size * 0.34f
+                pts = listOf(listOf(size * 0.08f to top, size * 0.08f to bottom), listOf(size * 0.26f to top, size * 0.26f to bottom))
+            }
+            else -> {
+                width = size * 0.2f
+                pts = listOf(listOf(size * 0.1f to top, size * 0.1f to bottom))
+            }
+        }
+        val pad = stroke(size) / 2f
+        return TexBox(pts.map { poly(it, size) }, emptyList(), width + pad * 2f, -top + pad, max(bottom + pad, 0f)).let {
+            it.moved(pad, 0f).copy(width = width + pad * 2f)
+        }
+    }
+
+    /** Integral, sumatoria y productoria dibujadas, de [half] sobre el eje a [half] debajo. */
+    private fun vectorOp(key: String, half: Float, size: Float): TexBox {
+        val axis = -size / 2f
+        val top = axis - half
+        val h = half * 2f
+        fun integral(dx: Float): List<Pair<Float, Float>> {
+            val w = size * 0.55f
+            return smooth(listOf(
+                0.98f to 0.07f, 0.88f to 0.0f, 0.74f to 0.01f, 0.64f to 0.1f, 0.58f to 0.26f, 0.5f to 0.5f,
+                0.42f to 0.74f, 0.36f to 0.9f, 0.26f to 0.99f, 0.12f to 1.0f, 0.02f to 0.93f,
+            ).map { (u, v) -> dx + u * w to top + v * h })
+        }
+        val strokes: List<List<Pair<Float, Float>>>
+        val width: Float
+        when (key) {
+            "Integral doble" -> { strokes = listOf(integral(0f), integral(size * 0.32f)); width = size * 0.9f }
+            "Integral de línea" -> {
+                val r = size * 0.2f
+                val cx = size * 0.28f
+                val ring = (0..20).map { k -> val a = 2 * Math.PI.toFloat() * k / 20f; cx + r * kotlin.math.cos(a) to axis + r * kotlin.math.sin(a) }
+                strokes = listOf(integral(0f), ring); width = size * 0.6f
+            }
+            "Sumatoria" -> {
+                val w = size * 1.1f
+                val b = top + h
+                strokes = listOf(listOf(w to top + h * 0.12f, w * 0.96f to top, 0f to top, w * 0.55f to top + h / 2f, 0f to b, w * 0.96f to b, w to b - h * 0.12f))
+                width = w
+            }
+            "Productoria" -> {
+                val w = size * 1.1f
+                val b = top + h
+                strokes = listOf(listOf(0f to top, w to top), listOf(w * 0.18f to top, w * 0.18f to b), listOf(w * 0.82f to top, w * 0.82f to b))
+                width = w
+            }
+            else -> { strokes = listOf(integral(0f)); width = size * 0.6f }
+        }
+        val pad = stroke(size)
+        return TexBox(strokes.map { poly(it, size) }, emptyList(), width + pad, -top + pad, max(top + h + pad, 0f))
+    }
+
+    /** Pasa una curva por los puntos (Catmull-Rom): para que la llave y la integral no queden quebradas. */
+    private fun smooth(p: List<Pair<Float, Float>>): List<Pair<Float, Float>> {
+        if (p.size < 3) return p
+        val out = mutableListOf(p.first())
+        for (k in 0 until p.size - 1) {
+            val p0 = p[max(k - 1, 0)]; val p1 = p[k]; val p2 = p[k + 1]; val p3 = p[min(k + 2, p.size - 1)]
+            for (j in 1..6) {
+                val t = j / 6f
+                val t2 = t * t; val t3 = t2 * t
+                fun f(a: Float, b: Float, c: Float, d: Float) = 0.5f * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3)
+                out += f(p0.first, p1.first, p2.first, p3.first) to f(p0.second, p1.second, p2.second, p3.second)
+            }
+        }
+        return out
+    }
+
+    private fun boxed(body: TexBox, size: Float): TexBox {
+        val pad = size * 0.28f
+        val top = -max(body.ascent, size) - pad
+        val bottom = max(body.descent, size * 0.2f) + pad
+        val right = body.width + pad * 2f
+        val frame = line(0f to top, right to top, right to bottom, 0f to bottom, 0f to top, size = size)
+        val inner = body.moved(pad, 0f)
+        val m = stroke(size)
+        return TexBox(inner.strokes + frame, inner.texts, right + m, -top + m, bottom + m).moved(m / 2f, 0f).copy(width = right + m * 2f)
+    }
 
     // ---- Palabras -------------------------------------------------------------------------------------
 
     /** «sin», «lím»: con las letras de los patrones, juntas; la prosa (\text) va con la letra del sistema. */
     private fun word(w: TexNode.Word, size: Float): TexBox {
-        if (w.prose || w.text.any { !it.isLetter() }) return text(w.text, size, prose = true)
+        if (w.prose) return text(w.text, size, TexFont.PROSE)
+        if (typeset != null) return text(w.text, size, TexFont.UPRIGHT)
+        if (w.text.any { !it.isLetter() }) return text(w.text, size, TexFont.PROSE)
         val letters = w.text.map { c ->
             val key = when (c) { 'í' -> "i"; 'á' -> "a"; 'é' -> "e"; 'ó' -> "o"; 'ú' -> "u"; else -> c.toString() }
             pattern(key)?.let { glyph(it, TexNode.Kind.ORD, size) } ?: text(c.toString(), size)
@@ -303,6 +469,7 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
 
     private fun bigOp(op: TexNode.BigOp, size: Float): TexBox {
         if (op.word != null) return word(TexNode.Word(op.word), size)
+        if (typeset != null) return vectorOp(op.key, if (op.below) size * 0.8f else size * 1.1f, size)
         val p = pattern(op.key) ?: return text(op.key, size)
         val half = if (op.below) size * 0.75f else size * 1.0f
         return stretched(p, half, size) ?: text(op.key, size)
@@ -334,8 +501,14 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
         val cells = m.rows.map { r -> r.map { box(it, size) } }
         val columns = cells.maxOf { it.size }
         val widths = (0 until columns).map { j -> cells.maxOf { it.getOrNull(j)?.width ?: 0f } }
-        val colGap = size * (if (m.leftAligned) 0.5f else 0.8f)
-        val rowGap = size * 0.35f
+        val pairs = m.align == TexNode.Align.PAIRS
+        // En un aligned la columna de la izquierda va contra el «=» y la de la derecha sale de él.
+        fun colGap(j: Int) = size * when {
+            pairs -> if (j % 2 == 0) 0.32f else 1.5f
+            m.align == TexNode.Align.LEFT -> 0.5f
+            else -> 0.8f
+        }
+        val rowGap = size * (if (pairs) 0.6f else 0.35f)
         val rowAscent = cells.map { r -> max(r.maxOfOrNull { it.ascent } ?: 0f, size * 0.8f) }
         val rowDescent = cells.map { r -> max(r.maxOfOrNull { it.descent } ?: 0f, size * 0.2f) }
         val total = rowAscent.indices.sumOf { (rowAscent[it] + rowDescent[it]).toDouble() }.toFloat() + rowGap * (cells.size - 1)
@@ -348,14 +521,18 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
             var x = 0f
             for (j in 0 until columns) {
                 r.getOrNull(j)?.let { c ->
-                    val dx = if (m.leftAligned) x else x + (widths[j] - c.width) / 2f
+                    val dx = when {
+                        pairs && j % 2 == 0 -> x + widths[j] - c.width
+                        pairs || m.align == TexNode.Align.LEFT -> x
+                        else -> x + (widths[j] - c.width) / 2f
+                    }
                     c.moved(dx, baseline).let { strokes += it.strokes; texts += it.texts }
                 }
-                x += widths[j] + colGap
+                x += widths[j] + if (j < columns - 1) colGap(j) else 0f
             }
             y = baseline + rowDescent[i] + rowGap
         }
-        val width = widths.sum() + colGap * (columns - 1)
+        val width = widths.sum() + (0 until columns - 1).sumOf { colGap(it).toDouble() }.toFloat()
         val top = -size / 2f - total / 2f
         return TexBox(strokes, texts, width, -top, top + total)
     }
@@ -365,8 +542,8 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
         if (open == null && close == null) return body
         val axis = size / 2f
         val half = max(body.ascent - axis, body.descent + axis) + size * 0.08f
-        val l = open?.let { pattern(it)?.let { p -> stretched(p, half, size) } ?: text(it, size) }
-        val r = close?.let { pattern(it)?.let { p -> stretched(p, half, size) } ?: text(it, size) }
+        val l = open?.let { delimiterBox(it, true, body, half, size) }
+        val r = close?.let { delimiterBox(it, false, body, half, size) }
         val pad = size * 0.06f
         val parts = mutableListOf<TexBox>()
         var x = 0f
@@ -375,6 +552,15 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
         x += body.width
         if (r != null) { x += pad; parts += r.moved(x, 0f); x += r.width }
         return TexBox(parts.flatMap { it.strokes }, parts.flatMap { it.texts }, x, parts.maxOf { it.ascent }, parts.maxOf { it.descent })
+    }
+
+    private fun delimiterBox(key: String, open: Boolean, body: TexBox, half: Float, size: Float): TexBox {
+        if (typeset == null) return pattern(key)?.let { p -> stretched(p, half, size) } ?: text(key, size)
+        // Lo que entra en un renglón va con la letra; lo más alto se dibuja.
+        if (body.ascent <= size * 1.15f && body.descent <= size * 0.4f) {
+            return typesetSym(TexNode.Sym(key, if (open) TexNode.Kind.OPEN else TexNode.Kind.CLOSE), size)
+        }
+        return vectorFence(key, half, size)
     }
 
     private fun accent(a: TexNode.Accent, size: Float): TexBox {
@@ -395,14 +581,38 @@ class TexInk(patterns: List<InkPattern>, private val style: InkStyle = InkStyle(
     private fun dot(center: Boolean, size: Float): TexBox {
         val y = if (center) -size / 2f else -size * 0.04f
         val cx = size * 0.12f
-        val stroke = line(cx, y, cx + size * 0.01f, y, size = size).copy(width = size * STROKE * 1.6f)
-        return TexBox(listOf(stroke), emptyList(), size * 0.24f, -y + size * 0.05f, 0f)
+        val mark = line(cx, y, cx + size * 0.01f, y, size = size).copy(width = stroke(size) * 1.6f)
+        return TexBox(listOf(mark), emptyList(), size * 0.24f, -y + size * 0.05f, 0f)
     }
 
     private companion object {
         /** Grosor de la tinta en fracción de la cifra. */
         const val STROKE = 0.07f
+        const val TYPESET_STROKE = 0.055f
         const val MIN_SIZE = 6f
+        /** Alto de una cifra en cuerpos de letra. */
+        const val DIGIT = 0.7f
+
+        /** Los nombres de los patrones en letra de imprenta. */
+        val TYPESET_CHARS = mapOf(
+            "Más" to "+", "Menos" to "−", "Por" to "×", "Dividido" to "÷", "Más o menos" to "±", "Barra" to "/",
+            "Igual" to "=", "Menor" to "<", "Mayor" to ">", "Menor o igual" to "≤", "Mayor o igual" to "≥",
+            "Distinto" to "≠", "Aproximado" to "≈", "Equivalente" to "≡", "Flecha a la derecha" to "→",
+            "Flecha a la izquierda" to "←", "Flecha doble" to "↔", "Implica" to "⇒", "Si y solo si" to "⇔",
+            "Flecha hacia arriba" to "↑", "Flecha hacia abajo" to "↓", "Asigna" to "↦",
+            "Abre paréntesis" to "(", "Cierra paréntesis" to ")", "Abre corchete" to "[", "Cierra corchete" to "]",
+            "Abre llave" to "{", "Cierra llave" to "}", "Valor absoluto" to "|", "Paralelo" to "‖",
+            "Coma" to ",", "Factorial" to "!", "Porcentaje" to "%", "Infinito" to "∞", "Grado" to "°",
+            "Unión" to "∪", "Intersección" to "∩", "Y lógico" to "∧", "O lógico" to "∨",
+            "Pertenece" to "∈", "No pertenece" to "∉", "Subconjunto" to "⊂", "Superconjunto" to "⊃",
+            "Subconjunto o igual" to "⊆", "Superconjunto o igual" to "⊇", "Perpendicular" to "⊥",
+            "Derivada parcial" to "∂", "Nabla" to "∇", "Vacío" to "∅", "Para todo" to "∀", "Existe" to "∃",
+            "No" to "¬", "Ángulo" to "∠", "Reales" to "ℝ", "Naturales" to "ℕ", "Enteros" to "ℤ",
+            "Racionales" to "ℚ", "Complejos" to "ℂ",
+            "alfa" to "α", "beta" to "β", "gamma" to "γ", "delta" to "δ", "Delta" to "Δ", "épsilon" to "ε",
+            "eta" to "η", "theta" to "θ", "lambda" to "λ", "mu" to "μ", "pi" to "π", "rho" to "ρ",
+            "sigma" to "σ", "tau" to "τ", "fi" to "φ", "psi" to "ψ", "omega" to "ω", "Omega" to "Ω",
+        )
         val DELIMITERS = setOf("Valor absoluto", "Paralelo")
     }
 }

@@ -56,27 +56,33 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.trazo.ai.AiTutor
 import io.trazo.ai.TutorRole
 import io.trazo.app.data.AiChatMessage
 import io.trazo.core.math.tex.TexBox
+import io.trazo.core.math.tex.TexFont
 import io.trazo.core.math.tex.TexInk
+import io.trazo.core.math.tex.TexMeasure
 import io.trazo.core.math.tex.TexMath
 import io.trazo.core.math.tex.TexPart
 
 /**
  * Chat de revisión (Modo IA): un panel que se despliega a la izquierda de la hoja. El tutor rehace la
- * resolución paso a paso y marca el primer error; las fórmulas se dibujan con los patrones del usuario.
+ * resolución paso a paso y marca el primer error; las fórmulas se arman en letra de imprenta, apiladas.
  */
 @Composable
 internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
-    val ink = vm.texInk()
+    val ink = ChatTex.ink
     val messages = vm.chatMessages
     val streaming = vm.chatStreaming
     val busy = vm.chatBusy
@@ -198,10 +204,11 @@ private fun ChatRichText(text: String, ink: TexInk, color: Color = MaterialTheme
             val single = g.singleOrNull()
             if (single is TexPart.Formula && single.display) {
                 Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
-                    FormulaInk(single.source, ink, 22.sp.value, color)
+                    FormulaInk(single.source, ink, DISPLAY_DIGIT_SP, color)
                 }
             } else {
-                InlineParagraph(g, ink, color)
+                val trimmed = trimGroup(g)
+                if (trimmed.isNotEmpty()) InlineParagraph(trimmed, ink, color)
             }
         }
     }
@@ -213,7 +220,7 @@ private fun InlineParagraph(parts: List<TexPart>, ink: TexInk, color: Color) {
     val style = MaterialTheme.typography.bodyLarge
     val fontPx = with(density) { style.fontSize.toPx() }
     val boxes = remember(parts, ink, fontPx) {
-        parts.filterIsInstance<TexPart.Formula>().associate { it.source to ink.layout(it.source, fontPx * 0.85f) }
+        parts.filterIsInstance<TexPart.Formula>().associate { it.source to ink.layout(it.source, fontPx * 0.7f) }
     }
     val inline = boxes.entries.mapIndexed { i, (source, box) ->
         val w = with(density) { (box.width + fontPx * 0.2f).toSp() }
@@ -223,16 +230,73 @@ private fun InlineParagraph(parts: List<TexPart>, ink: TexInk, color: Color) {
     val ids = inline.entries.associate { (id, v) -> v.first to id }
     val annotated = buildAnnotatedString {
         for (p in parts) when (p) {
-            is TexPart.Prose -> append(cleanProse(p.text))
+            is TexPart.Prose -> append(markdown(p.text))
             is TexPart.Formula -> ids[p.source]?.let { appendInlineContent(it, p.source) } ?: append(p.source)
         }
     }
     Text(annotated, inlineContent = inline.mapValues { it.value.second }, style = style, color = color)
 }
 
-/** Lo mínimo del formato de chat: sin asteriscos de negrita ni numerales de título. */
-private fun cleanProse(s: String): String =
-    s.replace("**", "").replace(Regex("(?m)^#{1,6}\\s*"), "")
+/** Saca los renglones en blanco del principio y del final de un párrafo (los que deja una fórmula aparte). */
+private fun trimGroup(g: List<TexPart>): List<TexPart> {
+    val out = g.toMutableList()
+    (out.firstOrNull() as? TexPart.Prose)?.let { out[0] = TexPart.Prose(it.text.trimStart()) }
+    (out.lastOrNull() as? TexPart.Prose)?.let { out[out.lastIndex] = TexPart.Prose(it.text.trimEnd()) }
+    return out.filterNot { it is TexPart.Prose && it.text.isEmpty() }
+}
+
+private val HEADING = Regex("^\\s*#{1,6}\\s+(.*)$")
+private val BULLET = Regex("^(\\s*)[*\\-+]\\s+")
+private val BOLD = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__")
+
+/** El formato de chat de la prosa: títulos con «#», viñetas con «*» o «-», **negrita** y «1\\.» escapado. */
+private fun markdown(s: String): AnnotatedString = buildAnnotatedString {
+    val lines = s.split('\n')
+    for ((n, raw) in lines.withIndex()) {
+        if (n > 0) append('\n')
+        var line = raw.replace("\\.", ".").replace("\\*", "*").replace("\\#", "#")
+        if (line.trim().matches(Regex("[-*_]{3,}"))) continue
+        val heading = HEADING.find(line)
+        if (heading != null) {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontSize = 1.12.em)) { append(heading.groupValues[1].replace("**", "")) }
+            continue
+        }
+        BULLET.find(line)?.let { m -> line = m.groupValues[1] + "•  " + line.substring(m.range.last + 1) }
+        var at = 0
+        for (m in BOLD.findAll(line)) {
+            append(line.substring(at, m.range.first))
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(m.groupValues[1].ifEmpty { m.groupValues[2] }) }
+            at = m.range.last + 1
+        }
+        append(line.substring(at))
+    }
+}
+
+/** La letra de las fórmulas del chat: serif en cursiva para las variables, derecha para cifras y signos. */
+private object ChatTex {
+    private fun paint(style: Int, family: android.graphics.Typeface) = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = android.graphics.Typeface.create(family, style)
+    }
+
+    private val italic = paint(android.graphics.Typeface.ITALIC, android.graphics.Typeface.SERIF)
+    private val upright = paint(android.graphics.Typeface.NORMAL, android.graphics.Typeface.SERIF)
+    private val prose = paint(android.graphics.Typeface.NORMAL, android.graphics.Typeface.DEFAULT)
+
+    fun paint(font: TexFont): android.graphics.Paint = when (font) {
+        TexFont.ITALIC -> italic
+        TexFont.UPRIGHT -> upright
+        TexFont.PROSE -> prose
+    }
+
+    val ink = TexInk(emptyList(), typeset = TexMeasure { text, font, size ->
+        val p = paint(font)
+        p.textSize = size
+        p.measureText(text)
+    })
+}
+
+/** Alto de una cifra en las fórmulas de su propio renglón. */
+private const val DISPLAY_DIGIT_SP = 13f
 
 @Composable
 private fun FormulaInk(source: String, ink: TexInk, sizeSp: Float, color: Color) {
@@ -268,11 +332,12 @@ private fun DrawScope.drawTex(box: TexBox, color: Color, pad: Float, extraY: Flo
         drawPath(path, color, style = Stroke(width = w, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
     if (box.texts.isEmpty()) return
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { this.color = color.toArgb() }
+    val argb = color.toArgb()
     drawIntoCanvas { c ->
         for (t in box.texts) {
-            paint.textSize = t.size * (if (t.prose) 0.85f else 0.95f)
-            paint.textSkewX = if (t.prose) 0f else -0.2f
+            val paint = ChatTex.paint(t.font)
+            paint.color = argb
+            paint.textSize = t.size
             c.nativeCanvas.drawText(t.text, t.x + ox, t.baseline + oy, paint)
         }
     }

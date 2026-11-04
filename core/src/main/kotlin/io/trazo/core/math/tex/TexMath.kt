@@ -21,13 +21,18 @@ sealed interface TexNode {
     data class Fenced(val open: String?, val close: String?, val body: TexNode) : TexNode
     /** Sumatoria, integral, límite: [below] pone los límites debajo y encima en vez de al costado. */
     data class BigOp(val key: String, val below: Boolean, val word: String? = null) : TexNode
-    data class Matrix(val rows: List<List<TexNode>>, val open: String?, val close: String?, val leftAligned: Boolean = false) : TexNode
+    data class Matrix(val rows: List<List<TexNode>>, val open: String?, val close: String?, val align: Align = Align.CENTER) : TexNode
+    /** Un recuadro alrededor (\boxed): el resultado final. */
+    data class Boxed(val body: TexNode) : TexNode
     data class Accent(val kind: AccentKind, val body: TexNode) : TexNode
     data class Space(val em: Float) : TexNode
     /** Punto: a media altura (·) o en la línea (.). */
     data class Dot(val center: Boolean) : TexNode
 
     enum class AccentKind { BAR, VEC, HAT }
+
+    /** Columnas de una matriz: centradas, a la izquierda (cases) o de a pares derecha|izquierda (aligned, «&=»). */
+    enum class Align { CENTER, LEFT, PAIRS }
 }
 
 /** Un trozo de un mensaje del chat: prosa o una fórmula (en su renglón propio si [display]). */
@@ -76,13 +81,36 @@ object TexMath {
         private var i = 0
 
         fun document(): TexNode {
-            val items = mutableListOf<TexNode>()
+            // Renglones sueltos con «\\» o columnas con «&» fuera de un entorno: se leen como un aligned.
+            val rows = mutableListOf<List<TexNode>>()
+            var cells = mutableListOf<TexNode>()
+            var items = mutableListOf<TexNode>()
             while (i < s.length) {
                 items += row(setOf()).items
-                // Un cierre de más («}», «\right)» suelto) se saltea.
-                if (i < s.length) i += stopLength()
+                if (i >= s.length) break
+                when {
+                    s.startsWith("&", i) -> { i++; cells += Row(items); items = mutableListOf() }
+                    s.startsWith("\\\\", i) -> { i += 2; skipSpacing(); cells += Row(items); items = mutableListOf(); rows += cells; cells = mutableListOf() }
+                    // Un cierre de más («}», «\right)» suelto, un «\end» sin «\begin») se saltea.
+                    else -> { val end = s.startsWith("\\end", i); i += stopLength(); if (end) rawGroup() }
+                }
             }
-            return Row(items)
+            if (rows.isEmpty() && cells.isEmpty()) return Row(items)
+            cells += Row(items)
+            rows += cells
+            val kept = rows.filter { r -> r.any { !(it is TexNode.Row && it.items.isEmpty()) } }
+            if (kept.size == 1 && kept[0].size == 1) return kept[0][0]
+            return TexNode.Matrix(kept.map { r -> r.map { c -> if (c is TexNode.Row && c.items.size == 1) c.items[0] else c } }, null, null,
+                if (kept.any { it.size > 1 }) TexNode.Align.PAIRS else TexNode.Align.CENTER)
+        }
+
+        /** El espacio opcional después de un salto de renglón: «\\[8pt]». */
+        private fun skipSpacing() {
+            skipSpaces()
+            if (i < s.length && s[i] == '[') {
+                val end = s.indexOf(']', i)
+                if (end > 0 && end - i < 16) i = end + 1
+            }
         }
 
         private fun Row(items: List<TexNode>) = TexNode.Row(items)
@@ -222,7 +250,8 @@ object TexMath {
                 "overline", "bar" -> TexNode.Accent(TexNode.AccentKind.BAR, argument())
                 "vec", "overrightarrow" -> TexNode.Accent(TexNode.AccentKind.VEC, argument())
                 "hat", "widehat" -> TexNode.Accent(TexNode.AccentKind.HAT, argument())
-                "underline", "boxed", "cancel", "bcancel", "xcancel", "tilde", "widetilde", "dot", "ddot", "mathring" -> argument()
+                "boxed", "fbox", "framebox" -> TexNode.Boxed(argument())
+                "underline", "cancel", "bcancel", "xcancel", "tilde", "widetilde", "dot", "ddot", "mathring" -> argument()
                 "big", "Big", "bigg", "Bigg", "bigl", "bigr", "Bigl", "Bigr", "biggl", "biggr", "Biggl", "Biggr",
                 "limits", "nolimits" -> TexNode.Space(0f)
                 "quad" -> TexNode.Space(1f); "qquad" -> TexNode.Space(2f)
@@ -275,7 +304,7 @@ object TexMath {
 
         private fun environment(name: String): TexNode {
             val base = name.trimEnd('*')
-            if (base == "array") rawGroup() // la especificación de columnas no importa
+            if (base == "array" || base == "alignat") rawGroup() // la especificación de columnas no importa
             val rows = mutableListOf<List<TexNode>>()
             var cells = mutableListOf<TexNode>()
             while (i < s.length) {
@@ -283,7 +312,7 @@ object TexMath {
                 cells += if (cell.items.size == 1) cell.items[0] else cell
                 when {
                     s.startsWith("&", i) -> i++
-                    s.startsWith("\\\\", i) -> { i += 2; rows += cells; cells = mutableListOf() }
+                    s.startsWith("\\\\", i) -> { i += 2; skipSpacing(); rows += cells; cells = mutableListOf() }
                     s.startsWith("\\end", i) -> { i += 4; rawGroup(); break }
                     s.startsWith("}", i) || s.startsWith("\\right", i) -> break
                     else -> break
@@ -299,8 +328,12 @@ object TexMath {
                 "cases", "dcases" -> "Abre llave" to null
                 else -> null to null
             }
-            val left = base in setOf("cases", "dcases", "aligned", "align", "alignat", "gathered", "split", "eqnarray")
-            return TexNode.Matrix(rows, open, close, leftAligned = left)
+            val align = when (base) {
+                "cases", "dcases", "rcases" -> TexNode.Align.LEFT
+                "aligned", "align", "alignat", "alignedat", "split", "eqnarray", "flalign" -> TexNode.Align.PAIRS
+                else -> TexNode.Align.CENTER
+            }
+            return TexNode.Matrix(rows, open, close, align)
         }
 
         private fun char(c: Char): TexNode = when (c) {
