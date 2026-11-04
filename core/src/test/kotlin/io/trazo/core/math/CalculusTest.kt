@@ -73,12 +73,45 @@ class CalculusTest {
         assertEquals("[", MathLayoutConverter.spelling("Abre corchete"))
         assertEquals("]", MathLayoutConverter.spelling("Cierra corchete"))
         assertEquals("∫", MathLayoutConverter.spelling("Integral"))
-        fun s(label: String, x: Float, y: Float = 0f, w: Float = 10f, h: Float = 20f) = LayoutSymbol(label, x, y, x + w, y + h)
         val matrix = listOf(
             s("Abre corchete", 0f, -4f, 8f, 60f), s("1", 12f), s("2", 42f), s("3", 12f, 32f), s("4", 42f, 32f),
             s("Cierra corchete", 58f, -4f, 8f, 60f),
         )
         val text = MathLayoutConverter.convert(matrix)
         assertEquals("((1, 2), (3, 4))", eval(text).display())
+    }
+
+    private fun s(label: String, x: Float, y: Float = 0f, w: Float = 10f, h: Float = 20f) = LayoutSymbol(label, x, y, x + w, y + h)
+
+    /** ∫ alto con el límite de arriba en su punta y el de abajo al pie, como se escribe en la hoja. */
+    private fun definite(lower: List<LayoutSymbol>, upper: List<LayoutSymbol>, integrand: List<LayoutSymbol>) =
+        listOf(s("Integral", 0f, -10f, 12f, 50f)) + lower + upper + integrand
+
+    private val xdx = listOf(s("x", 30f, 5f), s("d", 44f, 5f), s("x", 56f, 5f))
+
+    @Test fun `integral definida escrita a mano con límites en las puntas`() {
+        val text = MathLayoutConverter.convert(definite(listOf(s("0", 10f, 36f, 6f, 12f)), listOf(s("1", 14f, -12f, 6f, 12f)), xdx))
+        assertEquals("∫_(0)^(1)x d x", text)
+        shows("1/2", text)
+    }
+
+    @Test fun `integral definida con límites arriba y abajo del signo`() {
+        val text = MathLayoutConverter.convert(definite(listOf(s("0", 3f, 44f, 6f, 12f)), listOf(s("2", 3f, -26f, 6f, 12f)), xdx))
+        shows("2", text)
+    }
+
+    @Test fun `integral definida con límites de varias cifras, negativos y un integrando con exponente`() {
+        val lower = listOf(s("Menos", 10f, 41f, 5f, 2f), s("1", 16f, 36f, 6f, 12f))
+        val upper = listOf(s("1", 14f, -12f, 6f, 12f), s("0", 21f, -12f, 6f, 12f))
+        val integrand = listOf(s("x", 34f, 5f), s("2", 45f, -2f, 6f, 10f), s("d", 56f, 5f), s("x", 68f, 5f))
+        val text = MathLayoutConverter.convert(definite(lower, upper, integrand))
+        assertEquals("∫_(-1)^(10)x^2d x", text)
+        shows("1001/3", text)
+    }
+
+    @Test fun `una integral sin los dos límites sigue siendo indefinida`() {
+        val text = MathLayoutConverter.convert(listOf(s("Integral", 0f, -10f, 12f, 50f)) + xdx)
+        assertEquals("∫x d x", text)
+        shows("x²/2 + C", text)
     }
 }

@@ -16,7 +16,7 @@ data class LayoutSymbol(val label: String, val minX: Float, val minY: Float, val
 
 /** Arma un árbol espacial antes de emitir texto: ningún operando se convierte por separado. */
 object MathLayoutConverter {
-    private enum class Kind { ATOM, NUMBER, BAR, ROOT_MARK, OPEN, CLOSE, SEQUENCE, ROOT, FRACTION, GROUP, POWER }
+    private enum class Kind { ATOM, NUMBER, BAR, ROOT_MARK, OPEN, CLOSE, SEQUENCE, ROOT, FRACTION, GROUP, POWER, INTEGRAL }
 
     /** La caja completa y el nivel de escritura son distintos: un exponente no mueve la base. */
     private class Node(
@@ -89,7 +89,34 @@ object MathLayoutConverter {
             items.removeAll((parts.flatMap { origins(it, items) } + bar).toSet())
             items += Node(Kind.FRACTION, box, bar.y, median(parts.map { it.emX }), median(parts.map { it.emY }), children = children)
         }
+        integralLimits(items)
         return rows(powers(items))
+    }
+
+    /**
+     * Límites de una integral definida: lo que está escrito chico arriba y abajo del signo (o a su derecha,
+     * en la punta de arriba y en la de abajo) y antes del integrando. Sin los dos límites queda indefinida.
+     */
+    private fun integralLimits(items: MutableList<Node>) {
+        for (sign in items.filter { it.kind == Kind.ATOM && it.text == "∫" }.sortedWith(order)) {
+            if (sign !in items) continue
+            val h = sign.emY
+            fun middle(node: Node) = abs(node.y - sign.y) <= h * .25 + EPS
+            val start = items.filter { it !== sign && middle(it) && it.box.left >= sign.box.right - sign.emX * .5 - EPS }
+                .minWithOrNull(order)
+            fun candidate(node: Node) = node !== sign && node.kind !in setOf(Kind.BAR, Kind.OPEN, Kind.CLOSE) &&
+                node.text != "=" && node.text != "∫" && !middle(node) && node.emY <= h * .75 + EPS &&
+                (node.box.left + node.box.right) / 2 >= sign.box.left - sign.emX * .5 - EPS &&
+                node.box.left <= sign.box.right + max(sign.emX, node.emX) * 2 + EPS &&
+                (start == null || (node.box.left + node.box.right) / 2 <= start.box.left + start.emX * .25 + EPS)
+            val upper = items.filter { candidate(it) && it.y <= sign.box.top + h * .3 + EPS && it.box.bottom >= sign.box.top - h * .6 - EPS }
+            val lower = items.filter { candidate(it) && it.y >= sign.box.bottom - h * .3 - EPS && it.box.top <= sign.box.bottom + h * .6 + EPS }
+            if (upper.isEmpty() || lower.isEmpty()) continue
+            val box = (upper + lower).fold(sign.box) { bounds, node -> bounds.union(node.box) }
+            items.removeAll((upper + lower + sign).toSet())
+            items += Node(Kind.INTEGRAL, box, sign.y, sign.emX, sign.emY, text = "∫", label = sign.label,
+                children = listOf(sequence(powers(lower)), sequence(powers(upper))))
+        }
     }
 
     /** Paréntesis y techos de raíces delimitan regiones; adentro se aplica el mismo recorrido. */
@@ -388,6 +415,10 @@ object MathLayoutConverter {
                 if (wrap) out.append('(')
                 emit(exponent, out)
                 if (wrap) out.append(')')
+            }
+            Kind.INTEGRAL -> {
+                out.append("∫_("); emit(node.children[0], out)
+                out.append(")^("); emit(node.children[1], out); out.append(')')
             }
             else -> out.append(node.text ?: fail("no se reconoce la etiqueta «${node.label}»", out.length))
         }
