@@ -318,6 +318,8 @@ fun EditorScreen(
             BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
                 // En tablet los patrones quedan en un panel lateral; en teléfono, en la hoja inferior.
                 val wide = maxWidth >= 840.dp
+                val chatFixed = maxWidth >= 720.dp
+                val chatWidth = if (maxWidth >= 1100.dp) 400.dp else 340.dp
                 val budget = TabletLayoutPolicy.decide(TabletLayoutPolicy.Input(
                     availableWidthDp = maxWidth.value.toInt(),
                     fontScale = LocalDensity.current.fontScale,
@@ -337,9 +339,8 @@ fun EditorScreen(
                         PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true })
                     }
                     // Chat de revisión fijo a la izquierda de la hoja cuando entra; en teléfono va encima.
-                    val chatFixed = maxWidth >= 720.dp
                     if (vm.chatOpen && chatFixed) {
-                        AiChatPanel(vm, Modifier.width(if (maxWidth >= 1100.dp) 400.dp else 340.dp).fillMaxHeight())
+                        AiChatPanel(vm, Modifier.width(chatWidth).fillMaxHeight())
                     }
                     Box(Modifier.weight(1f).fillMaxHeight().barContainer(selectionMover).onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
                         AndroidView(
@@ -480,7 +481,7 @@ fun EditorScreen(
                     }
                     if (dock == BarDock.RIGHT) sideToolbar()
                 }
-                if (vm.chatOpen && maxWidth < 720.dp) {
+                if (vm.chatOpen && !chatFixed) {
                     AiChatPanel(vm, Modifier.align(Alignment.TopStart).fillMaxHeight().fillMaxWidth(0.92f))
                 }
                 if (!previewOpen && !budget.tabletWindow) {
