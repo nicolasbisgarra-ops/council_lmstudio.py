@@ -1,4 +1,4 @@
-package io.trazo.app.ink
+package io.trazo.app.image
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory

@@ -1,5 +1,6 @@
 package io.trazo.app.ink
 
+import io.trazo.app.image.ImagePainter
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap

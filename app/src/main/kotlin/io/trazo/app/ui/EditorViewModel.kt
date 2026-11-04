@@ -471,7 +471,7 @@ class EditorViewModel(
 
     private fun storeImage(bmp: android.graphics.Bitmap): String {
         val bytes = io.trazo.app.data.ImageImport.encode(bmp) ?: error("La imagen es demasiado grande")
-        return repo.storeImage(bytes).also { io.trazo.app.ink.ImagePainter.stored(it) }
+        return repo.storeImage(bytes).also { io.trazo.app.image.ImagePainter.stored(it) }
     }
 
     /** Abre una imagen de la galería o de archivos en el editor de recorte, con el ajuste predeterminado. */
@@ -494,7 +494,7 @@ class EditorViewModel(
         val img = selectedImage ?: return
         if (imageBusy) return
         val name = img.source ?: img.asset
-        val file = io.trazo.app.ink.ImagePainter.file(name) ?: return
+        val file = io.trazo.app.image.ImagePainter.file(name) ?: return
         imageBusy = true
         viewModelScope.launch {
             val src = withContext(Dispatchers.IO) { io.trazo.app.data.ImageImport.decodeFile(file.path) }

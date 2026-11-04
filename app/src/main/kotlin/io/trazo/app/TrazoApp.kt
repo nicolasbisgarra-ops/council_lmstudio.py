@@ -25,7 +25,7 @@ class TrazoApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashReportHandlerInstaller.install(crashReports, appVersionName())
-        io.trazo.app.ink.ImagePainter.dir = java.io.File(filesDir, "images")
+        io.trazo.app.image.ImagePainter.dir = java.io.File(filesDir, "images")
         // Limpieza de imágenes que ya no usa ningún cuaderno, sin demorar el arranque.
         Thread({ runCatching { repository.collectUnusedImages() } }, "trazo-images-gc").apply {
             isDaemon = true

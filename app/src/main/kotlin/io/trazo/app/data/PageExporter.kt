@@ -5,7 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.pdf.PdfDocument
 import io.trazo.app.ai.AiMarkPainter
-import io.trazo.app.ink.ImagePainter
+import io.trazo.app.image.ImagePainter
 import io.trazo.app.ink.PaperColors
 import io.trazo.app.ink.PaperPainter
 import io.trazo.app.ink.StrokePainter

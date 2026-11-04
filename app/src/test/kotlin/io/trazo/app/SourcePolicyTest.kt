@@ -54,6 +54,12 @@ class SourcePolicyTest {
         assertTrue(painter.path.replace('\\', '/').contains("/app/ai/"))
     }
 
+    /** Las imágenes pegadas son una capa aparte, debajo de la tinta, que vive fuera de `ink/`, en `image/`. */
+    @Test fun `pasted images are their own layer outside ink`() {
+        val painter = sources.single { it.name == "ImagePainter.kt" }
+        assertTrue(painter.path.replace('\\', '/').contains("/app/image/"))
+    }
+
     /** Internet es solo para el Modo IA (módulo :ai); el motor y el resto de la app no tocan la red. */
     @Test fun `only the AI mode touches the network`() {
         val network = listOf("java.net", "HttpURLConnection", "okhttp", "Socket(", "UrlConnectionTransport")
