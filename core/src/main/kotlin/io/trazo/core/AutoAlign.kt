@@ -22,6 +22,10 @@ import kotlin.math.min
  * - Lo escrito claramente más arriba o más abajo que la referencia (más de [OFFSET] de su alto: un
  *   exponente, un numerador, un denominador) queda donde se escribió. Una raya con algo justo encima
  *   (la barra de una fracción) tampoco se mueve.
+ * - Un exponente o subíndice (más chico que la forma de al lado y corrido hacia arriba o abajo de su
+ *   renglón) queda donde se escribió, y uno ya escrito no sirve de referencia: lo que sigue a x² se
+ *   alinea con la x, no con el 2. Un signo arriba del renglón (el − de x⁻¹) tampoco baja.
+ * - Una forma lejos de todas (más de [MAX_GAP] altos de separación) no se alinea con nada.
  *
  * Solo mira la tinta que salió de un patrón; la escritura a mano no cuenta.
  */
@@ -78,12 +82,27 @@ object AutoAlign {
         if (gesture.height < gesture.width * 0.4f && items.any { stacked(it.bounds, gesture) }) return gesture
         val sign = isSign(pattern)
         val variable = isVariable(pattern)
-        val refs = if (isContainer(pattern)) row else row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
+        // Los exponentes y subíndices ya escritos no marcan el renglón: lo que sigue a x² se alinea con la x.
+        val bases = row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
+        val plain = row.filter { r -> bases.none { b -> b !== r && isScript(r.bounds, r.bounds.height, b.bounds) } }
+        val refs = if (isContainer(pattern)) plain else plain.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
             .let { all -> if (variable) all else all.filter { r -> lookup(r.patternId)?.let(::isVariable) != true }.ifEmpty { all } }
         // Un signo sin letras ni números al lado se centra en otro signo; lo demás nunca toma su altura.
-        val ref = (refs.takeIf { it.isNotEmpty() || !sign } ?: row.filter { r -> lookup(r.patternId)?.let(::isSign) == true })
+        val ref = (refs.takeIf { it.isNotEmpty() || !sign } ?: plain.filter { r -> lookup(r.patternId)?.let(::isSign) == true })
             .minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
         val predicted = gesture.height * scale
+        // Lejos de todo (otra cuenta en la misma altura de la hoja): queda donde se escribió.
+        if (horizontalGap(ref.bounds, gesture) > MAX_GAP * max(ref.bounds.height, predicted)) return gesture
+        if (ref in refs) {
+            val out = Bounds(gesture.left, gesture.centerY - predicted / 2f, gesture.right, gesture.centerY + predicted / 2f)
+            if (sign) {
+                // Un signo claramente arriba (x⁻¹) o debajo del renglón se escribió así a propósito.
+                val h = ref.bounds.height
+                if (out.centerY < ref.bounds.top + SIGN_RAISED * h || out.centerY > ref.bounds.bottom + SIGN_LOWERED * h) return gesture
+            } else if (isScript(out, predicted, ref.bounds)) {
+                return gesture
+            }
+        }
         val refPattern = lookup(ref.patternId)
         val byFloor = variable || refPattern?.let(::isVariable) == true
         // Entre una letra y un número de distinto alto, el desvío se mide con el más alto de los dos.
@@ -206,6 +225,30 @@ object AutoAlign {
     /** [item] está justo encima de la raya [bar], dentro de su ancho: es el numerador de una fracción. */
     private fun stacked(item: Bounds, bar: Bounds): Boolean =
         item.centerX in bar.left..bar.right && item.bottom <= bar.centerY && bar.top - item.bottom <= item.height * 0.8f
+
+    /** Alto máximo (en altos de la base) de un exponente o subíndice. */
+    const val SCRIPT_SIZE = 0.8f
+
+    /** Separación horizontal máxima (en altos) con la forma de referencia: más lejos ya no es el mismo renglón. */
+    const val MAX_GAP = 3f
+
+    /** Un signo cuyo centro queda en la franja de arriba de la referencia (esta fracción de su alto) no se baja. */
+    const val SIGN_RAISED = 0.25f
+
+    /** Un signo cuyo centro queda debajo del piso de la referencia (más de esta fracción de su alto) no se sube. */
+    const val SIGN_LOWERED = 0.1f
+
+    /**
+     * [a] (de alto [height]) es un exponente o un subíndice de [base]: claramente más chico y corrido hacia
+     * arriba (no llega al piso del renglón) o hacia abajo (empieza debajo de la mitad y cuelga del piso).
+     */
+    private fun isScript(a: Bounds, height: Float, base: Bounds): Boolean {
+        val h = base.height
+        if (h <= 0.5f || height > SCRIPT_SIZE * h) return false
+        val raised = a.bottom < base.bottom - 0.3f * h && a.centerY < base.centerY - 0.15f * h
+        val lowered = a.top > base.centerY && a.bottom > base.bottom + 0.1f * h
+        return raised || lowered
+    }
 
     private fun horizontalGap(a: Bounds, b: Bounds): Float = max(0f, max(a.left - b.right, b.left - a.right))
 

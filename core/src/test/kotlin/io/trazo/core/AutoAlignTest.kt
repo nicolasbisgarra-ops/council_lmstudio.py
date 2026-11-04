@@ -111,6 +111,39 @@ class AutoAlignTest {
         assertSame(g, alignUser(letter("x"), g, item("2", 100f, 100f, 140f, 180f)))
     }
 
+    @Test fun `un exponente escrito sobre la mitad de arriba del numero queda donde se escribio`() {
+        // El 2 de «5²» toca la mitad de arriba del 5: antes bajaba al renglón y tomaba su altura.
+        val s = preset("2").outputScale
+        val g = Bounds(145f, 140f - 35f / s, 165f, 140f - 5f / s)
+        assertSame(g, align("2", g, item("5", 100f, 100f, 140f, 180f)))
+        // Lo mismo con una letra de base y un subíndice.
+        val sub = Bounds(145f, 160f - 10f / s, 165f, 160f + 30f / s)
+        assertSame(sub, align("2", sub, item("5", 100f, 100f, 140f, 180f)))
+    }
+
+    @Test fun `lo que sigue a una potencia se alinea con la base y no con el exponente`() {
+        // «5² + 3»: el 3 iguala al 5, aunque el exponente esté más cerca.
+        val out = align(
+            "3", Bounds(260f, 115f, 290f, 175f),
+            item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f), item("mas", 180f, 125f, 220f, 165f),
+        )
+        assertEquals(80f / preset("3").outputScale, out.height, 0.5f)
+        assertEquals(140f, out.centerY, 0.5f)
+        // El + de «x² + 1» se centra en el 5, no en el exponente.
+        val plus = align("mas", Bounds(180f, 110f, 210f, 140f), item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f))
+        assertEquals(140f, plus.centerY, 0.5f)
+    }
+
+    @Test fun `un menos de exponente no baja al renglon`() {
+        val g = Bounds(145f, 108f, 170f, 114f)
+        assertSame(g, align("menos", g, item("5", 100f, 100f, 140f, 180f)))
+    }
+
+    @Test fun `lo escrito lejos de todo no se alinea`() {
+        val g = Bounds(600f, 130f, 640f, 200f)
+        assertSame(g, align("2", g, item("1", 100f, 100f, 140f, 180f)))
+    }
+
     @Test fun `closing bracket copies the height and level of its opening`() {
         val p = preset("parentesis-cierra")
         val out = align(
