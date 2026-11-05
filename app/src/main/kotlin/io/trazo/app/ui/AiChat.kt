@@ -304,8 +304,8 @@ private object LatexEngine {
 /** Tope del tamaño de una fórmula dibujada: una respuesta enorme no puede pedir un lienzo imposible. */
 private const val MAX_FORMULA_PX = 8000
 
-private val ROW_SPACING = Regex("""\\\\\s*\[[^\]]{1,15}]""")
-private val TEXT_ARG = Regex("""\\(text|textrm|textit|textbf|mbox|operatorname)\s*\{([^{}]*)}""")
+private val ROW_SPACING = Regex("""\\\\\s*\[[^\]]{1,15}\]""")
+private val TEXT_ARG = Regex("""\\(text|textrm|textit|textbf|mbox|operatorname)\s*\{([^{}]*)\}""")
 private val ACCENTS = mapOf(
     'á' to "\\'a", 'é' to "\\'e", 'í' to "\\'i", 'ó' to "\\'o", 'ú' to "\\'u", 'ñ' to "\\~n", 'ü' to "\\\"u",
     'Á' to "\\'A", 'É' to "\\'E", 'Í' to "\\'I", 'Ó' to "\\'O", 'Ú' to "\\'U", 'Ñ' to "\\~N",
@@ -327,8 +327,8 @@ private fun latexDrawable(source: String, sizePx: Float, color: Int): JLatexMath
     val prepared = prepareLatex(source)
     val tries = listOf(
         prepared,
-        prepared.replace(Regex("""\\begin\{(aligned|align\*?|split)}"""), "\\\\begin{array}{rl}")
-            .replace(Regex("""\\end\{(aligned|align\*?|split)}"""), "\\\\end{array}"),
+        prepared.replace(Regex("""\\begin\{(aligned|align\*?|split)\}"""), "\\\\begin{array}{rl}")
+            .replace(Regex("""\\end\{(aligned|align\*?|split)\}"""), "\\\\end{array}"),
     ).distinct()
     for (t in tries) {
         val d = runCatching {
