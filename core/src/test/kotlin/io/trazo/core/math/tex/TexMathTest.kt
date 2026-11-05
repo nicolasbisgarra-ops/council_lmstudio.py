@@ -27,6 +27,17 @@ class TexMathTest {
         assertEquals(listOf(TexPart.Prose("sin cerrar \\[ x")), TexMath.split("sin cerrar \\[ x"))
     }
 
+    @Test fun `un bloque display sin cerrar llega hasta el final o el renglon en blanco`() {
+        val reply = "Resultado:\n\n$$\n\\begin{aligned}\nA &= \\boxed{e^2+1} \\\\[8pt]\n&\\approx 8{,}39\n\\end{aligned}"
+        val parts = TexMath.split(reply)
+        assertEquals(TexPart.Prose("Resultado:\n\n"), parts.first())
+        val f = parts.last() as TexPart.Formula
+        assertTrue(f.display)
+        assertTrue(f.source.startsWith("\\begin{aligned}") && f.source.endsWith("\\end{aligned}"))
+        val mid = TexMath.split("$$ x^2\n\nY sigue la prosa.")
+        assertEquals(listOf(TexPart.Formula("x^2", true), TexPart.Prose("\n\nY sigue la prosa.")), mid)
+    }
+
     @Test fun `lee fracciones raices y exponentes`() {
         val n = TexMath.parse("\\frac{x^2}{\\sqrt[3]{y_1}}") as TexNode.Row
         val f = n.items.single() as TexNode.Frac

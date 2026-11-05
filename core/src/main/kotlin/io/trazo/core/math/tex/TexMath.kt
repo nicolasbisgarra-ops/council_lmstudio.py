@@ -53,7 +53,15 @@ object TexMath {
                 if (!message.startsWith(open, i)) return@firstNotNullOfOrNull null
                 val from = i + open.length
                 val end = message.indexOf(close, from)
-                if (end < 0) return@firstNotNullOfOrNull null
+                if (end < 0) {
+                    // La IA a veces abre `$$` o `\[` y no lo cierra: la fórmula llega hasta el renglón en blanco o el final.
+                    if (!display) return@firstNotNullOfOrNull null
+                    val stop = message.indexOf("\n\n", from).let { if (it < 0) message.length else it }
+                    val body = message.substring(from, stop)
+                    // Solo si el resto parece TeX (un comando, llaves, ^ o _); si no, el delimitador queda como texto.
+                    if (!LOOKS_TEX.containsMatchIn(body)) return@firstNotNullOfOrNull null
+                    return@firstNotNullOfOrNull Triple(body, stop, true)
+                }
                 val body = message.substring(from, end)
                 // Un «$» suelto (precio, «$ 5») no abre fórmula: tiene que pegarse a su contenido y cerrar en el párrafo.
                 if (open == "$" && (body.isBlank() || body.first().isWhitespace() || body.last().isWhitespace() || "\n\n" in body)) {
@@ -69,6 +77,8 @@ object TexMath {
         flushProse()
         return out
     }
+
+    private val LOOKS_TEX = Regex("""\\[A-Za-z]|[{}^_]""")
 
     private val DELIMITERS = listOf(
         Triple("$$", "$$", true), Triple("\\[", "\\]", true), Triple("\\(", "\\)", false), Triple("$", "$", false),
