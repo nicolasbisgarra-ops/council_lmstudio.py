@@ -60,6 +60,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.trazo.ai.AiTutor
@@ -222,7 +223,7 @@ private fun InlineParagraph(parts: List<TexPart>, color: Color) {
     }
     val inline = drawables.entries.filter { it.value != null }.mapIndexed { i, (source, d) ->
         val w = with(density) { (d!!.intrinsicWidth + fontPx * 0.2f).toSp() }
-        val h = with(density) { d!!.intrinsicHeight.toFloat().coerceAtLeast(fontPx).toSp() }
+        val h = with(density) { (d!!.intrinsicHeight + fontPx * 0.25f).coerceAtLeast(fontPx).toSp() }
         "f$i" to (source to InlineTextContent(Placeholder(w, h, PlaceholderVerticalAlign.TextCenter)) { DrawLatex(d!!, centered = true) })
     }.toMap()
     val ids = inline.entries.associate { (id, v) -> v.first to id }
@@ -232,7 +233,12 @@ private fun InlineParagraph(parts: List<TexPart>, color: Color) {
             is TexPart.Formula -> ids[p.source]?.let { appendInlineContent(it, p.source.ifBlank { " " }) } ?: append(p.source)
         }
     }
-    Text(annotated, inlineContent = inline.mapValues { it.value.second }, style = style, color = color)
+    // Con altura de renglón fija, una fórmula alta (∫, fracción) se dibuja encima de los renglones vecinos;
+    // sin ella, cada renglón crece hasta lo que mide su fórmula.
+    val lineH = if (style.lineHeight.isSp) with(density) { style.lineHeight.toPx() } else fontPx * 1.3f
+    val tall = drawables.values.any { it != null && it.intrinsicHeight > lineH * 0.95f }
+    val textStyle = if (tall) style.copy(lineHeight = TextUnit.Unspecified) else style
+    Text(annotated, inlineContent = inline.mapValues { it.value.second }, style = textStyle, color = color)
 }
 
 /** Saca los renglones en blanco del principio y del final de un párrafo (los que deja una fórmula aparte). */
