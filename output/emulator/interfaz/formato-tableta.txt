@@ -2,7 +2,7 @@
 
 io.trazo.app.GuiTourTest:.
 
-Time: 19.061
+Time: 18.599
 
 OK (1 test)
 

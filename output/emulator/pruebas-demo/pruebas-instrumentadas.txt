@@ -3,10 +3,11 @@ io.trazo.app.EditorInstrumentedTest:..............
 io.trazo.app.ExportInstrumentedTest:...
 io.trazo.app.ParametricExportInstrumentedTest:...
 io.trazo.app.PageHistoryInstrumentedTest:..
+io.trazo.app.AiChatInstrumentedTest:.
 
-Time: 148.455
+Time: 152.186
 
-OK (22 tests)
+OK (23 tests)
 
 
 instrumentation exit_status=0
