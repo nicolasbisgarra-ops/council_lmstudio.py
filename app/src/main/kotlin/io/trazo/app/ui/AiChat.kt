@@ -180,7 +180,7 @@ private fun VerdictCard(correct: Boolean, line: Int?, summary: String, onShow: (
 
 /** Prosa con fórmulas: las de su renglón se dibujan aparte (con desplazamiento lateral si no entran). */
 @Composable
-private fun ChatRichText(text: String, color: Color = MaterialTheme.colorScheme.onSurface) {
+internal fun ChatRichText(text: String, color: Color = MaterialTheme.colorScheme.onSurface) {
     val parts = remember(text) { TexMath.split(text) }
     val groups = remember(parts) {
         val out = mutableListOf<List<TexPart>>()
@@ -216,7 +216,9 @@ private fun InlineParagraph(parts: List<TexPart>, color: Color) {
     val fontPx = with(density) { style.fontSize.toPx() }
     val argb = color.toArgb()
     val drawables = remember(parts, fontPx, argb) {
-        parts.filterIsInstance<TexPart.Formula>().associate { it.source to latexDrawable(it.source, fontPx * 1.05f, argb) }
+        // Una fórmula vacía («\\( \\)») no se dibuja: Compose no acepta un texto alternativo vacío.
+        parts.filterIsInstance<TexPart.Formula>().filter { it.source.isNotBlank() }
+            .associate { it.source to latexDrawable(it.source, fontPx * 1.05f, argb) }
     }
     val inline = drawables.entries.filter { it.value != null }.mapIndexed { i, (source, d) ->
         val w = with(density) { (d!!.intrinsicWidth + fontPx * 0.2f).toSp() }
@@ -227,7 +229,7 @@ private fun InlineParagraph(parts: List<TexPart>, color: Color) {
     val annotated = buildAnnotatedString {
         for (p in parts) when (p) {
             is TexPart.Prose -> append(markdown(p.text))
-            is TexPart.Formula -> ids[p.source]?.let { appendInlineContent(it, p.source) } ?: append(p.source)
+            is TexPart.Formula -> ids[p.source]?.let { appendInlineContent(it, p.source.ifBlank { " " }) } ?: append(p.source)
         }
     }
     Text(annotated, inlineContent = inline.mapValues { it.value.second }, style = style, color = color)
@@ -273,21 +275,34 @@ private const val DISPLAY_SP = 18f
 
 /** JLaTeXMath carga sus fuentes una vez por proceso. */
 @Composable
-private fun rememberLatex() {
+internal fun rememberLatex() {
     val context = LocalContext.current
     remember { LatexEngine.init(context) }
 }
 
 private object LatexEngine {
-    @Volatile private var ready = false
+    @Volatile var ready = false
+        private set
+    @Volatile private var failed = false
 
+    /** Si las fuentes no cargan, el chat sigue andando: las fórmulas van como texto. */
     fun init(context: android.content.Context) {
-        if (ready) return
+        if (ready || failed) return
         synchronized(this) {
-            if (!ready) { JLatexMathAndroid.init(context.applicationContext); ready = true }
+            if (ready || failed) return
+            try {
+                JLatexMathAndroid.init(context.applicationContext)
+                ready = true
+            } catch (t: Throwable) {
+                failed = true
+                android.util.Log.w("Trazo", "JLaTeXMath no cargó; las fórmulas del chat van como texto", t)
+            }
         }
     }
 }
+
+/** Tope del tamaño de una fórmula dibujada: una respuesta enorme no puede pedir un lienzo imposible. */
+private const val MAX_FORMULA_PX = 8000
 
 private val ROW_SPACING = Regex("""\\\\\s*\[[^\]]{1,15}]""")
 private val TEXT_ARG = Regex("""\\(text|textrm|textit|textbf|mbox|operatorname)\s*\{([^{}]*)}""")
@@ -308,6 +323,7 @@ private fun prepareLatex(source: String): String {
 
 /** Arma la fórmula; si JLaTeXMath no la entiende prueba con un array en vez de aligned, y si no, null (va como texto). */
 private fun latexDrawable(source: String, sizePx: Float, color: Int): JLatexMathDrawable? {
+    if (!LatexEngine.ready || source.isBlank()) return null
     val prepared = prepareLatex(source)
     val tries = listOf(
         prepared,
@@ -318,7 +334,7 @@ private fun latexDrawable(source: String, sizePx: Float, color: Int): JLatexMath
         val d = runCatching {
             JLatexMathDrawable.builder(t).textSize(sizePx).color(color).padding(2).build()
         }.getOrNull()
-        if (d != null && d.intrinsicWidth > 0 && d.intrinsicHeight > 0) return d
+        if (d != null && d.intrinsicWidth in 1..MAX_FORMULA_PX && d.intrinsicHeight in 1..MAX_FORMULA_PX) return d
     }
     return null
 }
@@ -349,9 +365,15 @@ private fun DrawScope.drawLatex(d: JLatexMathDrawable, dy: Float) {
     d.setBounds(0, 0, d.intrinsicWidth, d.intrinsicHeight)
     drawIntoCanvas { c ->
         val n = c.nativeCanvas
-        n.save()
-        n.translate(0f, dy)
-        d.draw(n)
-        n.restore()
+        val saved = n.save()
+        try {
+            n.translate(0f, dy)
+            d.draw(n)
+        } catch (t: Throwable) {
+            // Lo que JLaTeXMath no sepa dibujar queda en blanco; nunca cierra la app.
+            android.util.Log.w("Trazo", "No se pudo dibujar una fórmula del chat", t)
+        } finally {
+            n.restoreToCount(saved)
+        }
     }
 }
