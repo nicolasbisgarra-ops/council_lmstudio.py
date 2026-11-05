@@ -16,6 +16,7 @@ import io.trazo.core.sync.SyncConfig
 import io.trazo.core.sync.SyncEngine
 import io.trazo.core.sync.SyncMessage
 import io.trazo.core.sync.SyncPeer
+import io.trazo.core.sync.SyncPairRefused
 import io.trazo.core.sync.SyncProtocol
 import io.trazo.core.sync.SyncReport
 import java.io.BufferedInputStream
@@ -228,6 +229,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         try {
             val key = PairingCode.key(normalized)
             lastPairError = null
+            lastPairRank = 0
             suspend fun tryBluetooth(devices: List<String>): Boolean {
                 for (mac in devices) {
                     _state.update { it.copy(message = "Probando por Bluetooth con ${bt.nameOf(mac) ?: mac}…") }
@@ -400,12 +402,18 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     private fun serve(conn: SyncConn, ip: String?, btAddr: String?) {
         val cfg = store.config()
         val ch = try {
-            SecureChannel.server(conn.input, conn.output, cfg.deviceId) { mode, id ->
+            SecureChannel.server(conn.input, conn.output, cfg.deviceId, deviceName(cfg)) { mode, id ->
                 when (mode) {
                     SecureChannel.Mode.SYNC -> if (cfg.enabled) store.peers().firstOrNull { it.deviceId == id }?.let { decodeKey(it.key) } else null
                     SecureChannel.Mode.PAIR -> pairingKey?.takeIf { System.currentTimeMillis() < pairingExpires }
                 }
             }
+        } catch (_: SyncPairRefused) {
+            // Alguien intentó vincularse y acá no hay código a la vista: se le avisa a quien mira esta pantalla.
+            if (_state.value.pairing == null) {
+                _state.update { it.copy(message = "Otro dispositivo quiso vincularse: tocá «Mostrar código» acá y escanealo desde el otro.") }
+            }
+            return
         } catch (_: IOException) { return }
         when (ch.mode) {
             SecureChannel.Mode.PAIR -> answerPairing(ch, ip, btAddr)
@@ -431,7 +439,10 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
 
     private fun answerPairing(ch: SecureChannel, ip: String?, btAddr: String?) {
         val hello = try { ch.receiveMessage() as? SyncMessage.PairHello } catch (_: SyncAuthException) {
-            if (pairingFailures.incrementAndGet() >= MAX_PAIRING_FAILURES) cancelCode("Demasiados intentos con un código equivocado. Generá otro.")
+            ch.refusePairing()
+            val n = pairingFailures.incrementAndGet()
+            if (n >= MAX_PAIRING_FAILURES) cancelCode("Demasiados intentos con un código equivocado. Generá otro.")
+            else _state.update { it.copy(message = "El otro probó un código equivocado ($n de $MAX_PAIRING_FAILURES). Escaneá el QR de esta pantalla.") }
             null
         } catch (_: Exception) { null } ?: return
         val cfg = store.config()
@@ -441,24 +452,47 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         runCatching { ch.send(SyncMessage.PairWelcome(cfg.deviceId, deviceName(cfg), myAddresses(), encoded)) }.onFailure { return }
         val addresses = (listOfNotNull(ip) + hello.addresses).filter { it.isNotBlank() }.distinct().take(MAX_ADDRESSES)
         store.savePeer(SyncPeer(hello.deviceId, hello.name.take(40).ifBlank { "Dispositivo" }, encoded, addresses, bluetooth = btAddr))
-        cancelCode("Vinculado con ${hello.name}.")
         scope.launch { refresh() }
-        requestSync()
+        // El código se da por usado solo cuando el otro confirma que guardó la clave; si la conexión se corta
+        // antes, el código sigue a la vista para reintentar (el par queda guardado y se reemplaza al reintentar).
+        val done = runCatching { ch.receiveMessage() == SyncMessage.PairDone }.getOrDefault(false)
+        if (done) {
+            cancelCode("Vinculado con ${hello.name}.")
+            requestSync()
+        } else {
+            _state.update { it.copy(message = "${hello.name} empezó a vincularse pero se cortó. Si no aparece como vinculado allá, volvé a escanear.") }
+        }
     }
 
     // ------------------------------------------------------------------ cliente
 
     /** Un intento de vincular; si falla, guarda el motivo en palabras para el mensaje final. */
     private inline fun attempt(block: () -> SyncPeer?): SyncPeer? = try {
-        block().also { if (it == null) lastPairError = "el otro respondió algo inesperado" }
+        block().also { if (it == null) pairError(2, "el otro respondió algo inesperado") }
     } catch (e: Exception) {
-        lastPairError = when (e) {
-            is java.net.SocketTimeoutException, is java.net.ConnectException, is java.net.NoRouteToHostException -> "el otro no responde"
-            is java.io.EOFException, is SyncAuthException -> "el otro cortó: código equivocado o no lo está mostrando"
-            is IOException -> e.message?.take(80) ?: "se cortó la conexión"
-            else -> e.message?.take(80) ?: e.javaClass.simpleName
+        when (e) {
+            // Lo que dijo el otro Trazo es lo más útil: gana sobre «no responde» de otras direcciones probadas.
+            is SyncPairRefused -> {
+                val who = e.peerName.ifBlank { "El otro" }.let { "«$it»" }
+                pairError(4, when (e.reason) {
+                    SyncPairRefused.Reason.NOT_SHOWING -> "$who no está mostrando un código: tocá «Mostrar código» allá"
+                    SyncPairRefused.Reason.WRONG_CODE -> "$who dice que el código no coincide: escaneá el QR que muestra ahora"
+                })
+            }
+            is java.net.SocketTimeoutException, is java.net.ConnectException, is java.net.NoRouteToHostException -> pairError(1, "el otro no responde")
+            is java.io.EOFException, is SyncAuthException ->
+                pairError(3, "el otro cortó sin explicar: puede tener una versión vieja de Trazo; instalá la misma en los dos")
+            is IOException -> pairError(1, e.message?.take(80) ?: "se cortó la conexión")
+            else -> pairError(1, e.message?.take(80) ?: e.javaClass.simpleName)
         }
         null
+    }
+
+    @Volatile private var lastPairRank = 0
+
+    /** Guarda el motivo del fallo si dice más que el anterior de esta misma vinculación. */
+    private fun pairError(rank: Int, text: String) {
+        if (lastPairError == null || rank >= lastPairRank) { lastPairError = text; lastPairRank = rank }
     }
 
     private fun pairWith(address: InetAddress, key: ByteArray): SyncPeer? =
@@ -473,6 +507,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         val addresses = (listOfNotNull(ip) + w.addresses).filter { it.isNotBlank() }.distinct().take(MAX_ADDRESSES)
         val peer = SyncPeer(w.deviceId, w.name.take(40).ifBlank { "Dispositivo" }, w.key, addresses, bluetooth = btAddr)
         store.savePeer(peer)
+        runCatching { ch.send(SyncMessage.PairDone) }
         return peer
     }
 

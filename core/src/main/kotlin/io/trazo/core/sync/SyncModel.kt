@@ -126,6 +126,8 @@ sealed class SyncMessage {
     @Serializable @SerialName("busy") data object Busy : SyncMessage()
     @Serializable @SerialName("bye") data object Bye : SyncMessage()
     @Serializable @SerialName("pairHello") data class PairHello(val deviceId: String, val name: String, val addresses: List<String> = emptyList()) : SyncMessage()
+    /** El que pidió vincular confirma que guardó la clave; recién ahí el otro da el código por usado. */
+    @Serializable @SerialName("pairDone") data object PairDone : SyncMessage()
     @Serializable @SerialName("pairWelcome") data class PairWelcome(val deviceId: String, val name: String, val addresses: List<String> = emptyList(), val key: String) : SyncMessage()
 }
 

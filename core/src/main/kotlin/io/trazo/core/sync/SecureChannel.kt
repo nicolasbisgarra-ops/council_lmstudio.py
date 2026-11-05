@@ -17,6 +17,15 @@ import javax.crypto.spec.SecretKeySpec
 class SyncAuthException(message: String) : IOException(message)
 
 /**
+ * El otro dispositivo rechazó la vinculación y dijo por qué: no está mostrando un código o el código no
+ * coincide. [peerName] es el nombre que dio (vacío si no lo dijo). Así el que escanea ve la causa real en
+ * lugar de una conexión cortada sin explicación.
+ */
+class SyncPairRefused(val reason: Reason, val peerName: String = "") : IOException(reason.name) {
+    enum class Reason(val code: Int) { NOT_SHOWING(1), WRONG_CODE(2) }
+}
+
+/**
  * Canal cifrado y autenticado entre dos dispositivos que comparten una clave de 32 bytes (o la que sale
  * del código de vinculación). Cada conexión deriva claves propias para cada sentido a partir de dos
  * números al azar, así nada de una conexión sirve en otra. Cada mensaje va con AES-256-GCM y un
@@ -51,6 +60,10 @@ class SecureChannel private constructor(
 
     fun receive(): ByteArray {
         val size = inp.readInt()
+        if (size == 0 && mode == Mode.PAIR) {
+            val r = inp.readUnsignedByte()
+            throw SyncPairRefused(SyncPairRefused.Reason.entries.firstOrNull { it.code == r } ?: SyncPairRefused.Reason.WRONG_CODE)
+        }
         if (size < 16 || size > MAX_FRAME) throw SyncAuthException("Mensaje de tamaño inválido")
         val enc = ByteArray(size)
         inp.readFully(enc)
@@ -59,6 +72,15 @@ class SecureChannel private constructor(
         return try { c.doFinal(enc) } catch (e: java.security.GeneralSecurityException) {
             throw SyncAuthException("No se pudo autenticar el mensaje")
         }
+    }
+
+    /**
+     * Vinculación: avisa al otro que su primer mensaje no se pudo abrir (código equivocado). Va sin cifrar
+     * porque no hay clave en común; solo dice el motivo, nada secreto.
+     */
+    fun refusePairing() {
+        if (mode != Mode.PAIR) return
+        runCatching { out.writeInt(0); out.writeByte(SyncPairRefused.Reason.WRONG_CODE.code); out.flush() }
     }
 
     fun send(m: SyncMessage) = send(SyncProtocol.encode(m))
@@ -83,7 +105,14 @@ class SecureChannel private constructor(
             o.write(MAGIC); o.writeByte(mode.code); writeId(o, myId); o.write(nc); o.flush()
             val magic = ByteArray(4).also(i::readFully)
             if (!magic.contentEquals(MAGIC)) throw SyncAuthException("No es Trazo")
-            val serverId = readId(i)
+            val n = i.readUnsignedByte()
+            if (n == 0) {
+                // Rechazo explicado: motivo + nombre del que atiende.
+                val r = i.readUnsignedByte()
+                val name = runCatching { readName(i) }.getOrDefault("")
+                throw SyncPairRefused(SyncPairRefused.Reason.entries.firstOrNull { it.code == r } ?: SyncPairRefused.Reason.NOT_SHOWING, name)
+            }
+            val serverId = readId(i, n)
             val ns = ByteArray(NONCE).also(i::readFully)
             val (c2s, s2c) = sessionKeys(key, mode, myId, serverId, nc, ns)
             return SecureChannel(input, output, c2s, s2c, serverId, mode)
@@ -92,21 +121,35 @@ class SecureChannel private constructor(
         /**
          * Atiende una conexión: lee el saludo, pide la clave para ese id y modo ([keyFor], null rechaza)
          * y responde. La clave equivocada se nota en el primer mensaje, que no se puede abrir.
+         * Si piden vincular y no hay código a la vista, se contesta el motivo con [myName] (así el otro sabe
+         * qué pasa) y se lanza [SyncPairRefused]; a una sincronización de un desconocido no se le contesta nada.
          */
         fun server(
             input: InputStream,
             output: OutputStream,
             myId: String,
+            myName: String = "",
             keyFor: (mode: Mode, peerId: String) -> ByteArray?,
         ): SecureChannel {
             val i = DataInputStream(input)
             val o = DataOutputStream(output)
             val magic = ByteArray(4).also(i::readFully)
             if (!magic.contentEquals(MAGIC)) throw SyncAuthException("No es Trazo")
-            val mode = Mode.entries.firstOrNull { it.code == i.readUnsignedByte() } ?: throw SyncAuthException("Modo desconocido")
+            // Un solo byte: leerlo dentro de firstOrNull lo leía una vez por modo probado y la vinculación
+            // (modo 2) se comía el largo del id y se cortaba siempre.
+            val modeCode = i.readUnsignedByte()
+            val mode = Mode.entries.firstOrNull { it.code == modeCode } ?: throw SyncAuthException("Modo desconocido")
             val clientId = readId(i)
             val nc = ByteArray(NONCE).also(i::readFully)
-            val key = keyFor(mode, clientId) ?: throw SyncAuthException("Dispositivo no vinculado")
+            val key = keyFor(mode, clientId) ?: run {
+                if (mode == Mode.PAIR) {
+                    runCatching {
+                        o.write(MAGIC); o.writeByte(0); o.writeByte(SyncPairRefused.Reason.NOT_SHOWING.code); writeName(o, myName); o.flush()
+                    }
+                    throw SyncPairRefused(SyncPairRefused.Reason.NOT_SHOWING)
+                }
+                throw SyncAuthException("Dispositivo no vinculado")
+            }
             val ns = ByteArray(NONCE).also(random::nextBytes)
             o.write(MAGIC); writeId(o, myId); o.write(ns); o.flush()
             val (c2s, s2c) = sessionKeys(key, mode, clientId, myId, nc, ns)
@@ -119,13 +162,24 @@ class SecureChannel private constructor(
             o.writeByte(b.size); o.write(b)
         }
 
-        private fun readId(i: DataInputStream): String {
-            val n = i.readUnsignedByte()
+        private fun readId(i: DataInputStream, n: Int = i.readUnsignedByte()): String {
             if (n !in 1..MAX_ID) throw SyncAuthException("Id inválido")
             return ByteArray(n).also(i::readFully).toString(Charsets.UTF_8)
         }
 
         private const val MAX_ID = 64
+
+        private fun writeName(o: DataOutputStream, name: String) {
+            var b = name.toByteArray(Charsets.UTF_8)
+            if (b.size > MAX_ID) b = name.take(MAX_ID / 4).toByteArray(Charsets.UTF_8)
+            o.writeByte(b.size); o.write(b)
+        }
+
+        private fun readName(i: DataInputStream): String {
+            val n = i.readUnsignedByte()
+            if (n > MAX_ID) return ""
+            return ByteArray(n).also(i::readFully).toString(Charsets.UTF_8).filter { !it.isISOControl() }
+        }
 
         private fun sessionKeys(key: ByteArray, mode: Mode, clientId: String, serverId: String, nc: ByteArray, ns: ByteArray): Pair<ByteArray, ByteArray> {
             fun derive(label: String): ByteArray {

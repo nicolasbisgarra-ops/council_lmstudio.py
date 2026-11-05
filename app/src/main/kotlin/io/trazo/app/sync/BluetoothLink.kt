@@ -57,11 +57,15 @@ internal class BluetoothLink(private val context: Context) {
             .map { BluetoothPeer(runCatching { it.name }.getOrNull()?.takeIf { n -> n.isNotBlank() } ?: it.address, it.address) }
     }
 
-    /** Los emparejados que pueden tener Trazo: teléfonos, tabletas y computadoras (no auriculares ni relojes). */
+    /**
+     * Los emparejados que pueden tener Trazo: teléfonos, tabletas y computadoras (no auriculares ni relojes).
+     * Primero los que Android ya sabe que ofrecen el servicio de Trazo, así no se espera por cada equipo.
+     */
     fun likely(): List<BluetoothPeer> {
         if (!ready()) return emptyList()
         val devices = runCatching { adapter?.bondedDevices.orEmpty().toList() }.getOrDefault(emptyList())
         return devices.filter { likelyTrazo(it.bluetoothClass) }
+            .sortedBy { d -> if (runCatching { d.uuids.orEmpty().any { it.uuid == SERVICE } }.getOrDefault(false)) 0 else 1 }
             .map { BluetoothPeer(runCatching { it.name }.getOrNull() ?: it.address, it.address) }
     }
 
@@ -82,11 +86,23 @@ internal class BluetoothLink(private val context: Context) {
         } catch (e: Exception) {
             throw IOException(e.message ?: "Bluetooth", e)
         }
+        runCatching { a.cancelDiscovery() }
+        // connect() no tiene tiempo de espera propio: si el otro no tiene Trazo escuchando puede tardar mucho.
+        // Un vigilante cierra el socket a los CONNECT_MILLIS y connect() corta con error.
+        val done = java.util.concurrent.atomic.AtomicBoolean(false)
+        val timer = Thread({
+            try { Thread.sleep(CONNECT_MILLIS) } catch (_: InterruptedException) { return@Thread }
+            if (!done.get()) runCatching { socket.close() }
+        }, "trazo-bt-connect").apply { isDaemon = true; start() }
         try {
             socket.connect()
+            done.set(true)
         } catch (e: Exception) {
+            done.set(true)
             runCatching { socket.close() }
-            throw if (e is IOException) e else IOException(e.message ?: "Bluetooth", e)
+            throw if (e is IOException) java.net.SocketTimeoutException("Bluetooth: ${e.message ?: "no responde"}") else IOException(e.message ?: "Bluetooth", e)
+        } finally {
+            timer.interrupt()
         }
         return guard(socket)
     }
@@ -139,6 +155,7 @@ internal class BluetoothLink(private val context: Context) {
         /** Servicio RFCOMM de Trazo (fijo: los dos lados lo buscan por este UUID). */
         val SERVICE: UUID = UUID.fromString("6f1c2a5e-3b7d-4c1e-9a2f-7e0d5b8c4a11")
         const val IDLE_MILLIS = 30_000L
+        const val CONNECT_MILLIS = 12_000L
         val PERMISSION: String? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Manifest.permission.BLUETOOTH_CONNECT else null
     }
 }

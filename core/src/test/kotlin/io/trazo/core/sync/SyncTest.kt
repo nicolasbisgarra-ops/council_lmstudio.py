@@ -194,6 +194,47 @@ class SyncTest {
         assertThrows(SyncAuthException::class.java) { server() }
     }
 
+    @Test fun `pairing with the right code ends with an acknowledgement`() {
+        val code = PairingCode.generate()
+        val p = Pipe()
+        val server = async(p) {
+            val ch = SecureChannel.server(p.bIn, p.bOut, "tablet", "Tablet") { mode, _ -> if (mode == SecureChannel.Mode.PAIR) PairingCode.key(code) else null }
+            val hello = ch.receiveMessage() as SyncMessage.PairHello
+            ch.send(SyncMessage.PairWelcome("tablet", "Tablet", key = "k"))
+            assertEquals(SyncMessage.PairDone, ch.receiveMessage())
+            hello.deviceId
+        }
+        val ch = SecureChannel.client(p.aIn, p.aOut, "phone", SecureChannel.Mode.PAIR, PairingCode.key(code))
+        ch.send(SyncMessage.PairHello("phone", "Teléfono"))
+        assertTrue(ch.receiveMessage() is SyncMessage.PairWelcome)
+        ch.send(SyncMessage.PairDone)
+        assertEquals("phone", server())
+    }
+
+    @Test fun `pairing when no code is shown says so and who answered`() {
+        val p = Pipe()
+        val server = async(p) { SecureChannel.server(p.bIn, p.bOut, "tablet", "Tab S11") { _, _ -> null } }
+        val e = assertThrows(SyncPairRefused::class.java) {
+            SecureChannel.client(p.aIn, p.aOut, "phone", SecureChannel.Mode.PAIR, PairingCode.key(PairingCode.generate()))
+        }
+        assertEquals(SyncPairRefused.Reason.NOT_SHOWING, e.reason)
+        assertEquals("Tab S11", e.peerName)
+        assertThrows(SyncPairRefused::class.java) { server() }
+    }
+
+    @Test fun `pairing with a wrong code is refused with a reason`() {
+        val p = Pipe()
+        val server = async(p) {
+            val ch = SecureChannel.server(p.bIn, p.bOut, "tablet", "Tablet") { _, _ -> PairingCode.key(PairingCode.generate()) }
+            try { ch.receive() } catch (e: SyncAuthException) { ch.refusePairing(); throw e }
+        }
+        val ch = SecureChannel.client(p.aIn, p.aOut, "phone", SecureChannel.Mode.PAIR, PairingCode.key(PairingCode.generate()))
+        ch.send(SyncMessage.PairHello("phone", "Teléfono"))
+        val e = assertThrows(SyncPairRefused::class.java) { ch.receiveMessage() }
+        assertEquals(SyncPairRefused.Reason.WRONG_CODE, e.reason)
+        assertThrows(SyncAuthException::class.java) { server() }
+    }
+
     @Test fun `pairing codes`() {
         val code = PairingCode.generate()
         assertEquals(PairingCode.LENGTH, code.length)
