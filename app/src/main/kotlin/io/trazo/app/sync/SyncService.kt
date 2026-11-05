@@ -6,6 +6,7 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import io.trazo.app.data.TrazoRepository
 import io.trazo.core.sync.PairingCode
+import io.trazo.core.sync.PairingQr
 import io.trazo.core.sync.SecureChannel
 import io.trazo.core.sync.SyncAddresses
 import io.trazo.core.sync.SyncAuthException
@@ -158,30 +159,50 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     }
 
     /** Se vincula con el que muestra [code]; sin [address] lo busca en la red de casa. */
-    fun link(code: String, address: String) = scope.launch {
+    fun link(code: String, address: String) = link(code, listOf(address.trim()).filter { it.isNotEmpty() }, discover = false)
+
+    /** Lo leído del QR del otro: prueba sus direcciones (casa o Tailscale) y, si ninguna responde, la red de casa. */
+    fun linkScanned(text: String): Boolean {
+        val p = PairingQr.decode(text) ?: run {
+            _state.update { it.copy(message = "Ese QR no es de Trazo. Escaneá el que aparece en «Mostrar código».") }
+            return false
+        }
+        link(p.code, p.addresses, discover = true)
+        return true
+    }
+
+    private fun link(code: String, addresses: List<String>, discover: Boolean) = scope.launch {
         val normalized = PairingCode.normalize(code)
         if (normalized == null) { _state.update { it.copy(message = "El código tiene 10 letras y números, como ABCDE-FGH23.") }; return@launch }
         if (!store.config().enabled) { store.saveConfig(store.config().copy(enabled = true)); start() }
         _state.update { it.copy(linking = true, message = "Buscando el otro dispositivo…") }
         try {
             val key = PairingCode.key(normalized)
-            val hosts = if (address.isNotBlank()) listOf(address.trim()) else {
+            suspend fun searched(): List<String> {
                 startDiscovery()
                 // Se da un momento a la búsqueda en la red de casa.
                 repeat(8) { if (unpaired.isEmpty() && nearby.isEmpty()) delay(500) }
-                (unpaired.values + nearby.values).distinct()
+                return (unpaired.values + nearby.values).distinct()
             }
-            if (hosts.isEmpty()) {
+            val first = addresses.ifEmpty { searched() }
+            if (first.isEmpty()) {
                 _state.update { it.copy(message = "No se encontró otro Trazo en esta red. Escribí su dirección (la de Tailscale sirve).") }
                 return@launch
             }
-            for (host in hosts) for (a in resolve(host)) {
-                val peer = runCatching { pairWith(a, key) }.getOrNull() ?: continue
-                _state.update { it.copy(message = "Vinculado con ${peer.name}.") }
-                refresh()
-                requestSync()
-                return@launch
+            val tried = HashSet<String>()
+            suspend fun tryHosts(hosts: List<String>): Boolean {
+                for (host in hosts) for (a in resolve(host)) {
+                    if (!tried.add(a.hostAddress.orEmpty())) continue
+                    val peer = runCatching { pairWith(a, key) }.getOrNull() ?: continue
+                    _state.update { it.copy(message = "Vinculado con ${peer.name}.") }
+                    refresh()
+                    requestSync()
+                    return true
+                }
+                return false
             }
+            if (tryHosts(first)) return@launch
+            if (discover && addresses.isNotEmpty() && tryHosts(searched())) return@launch
             _state.update { it.copy(message = "No se pudo vincular: revisá el código (vence a los 5 minutos) y que los dos estén en la misma red o en Tailscale.") }
         } finally {
             _state.update { it.copy(linking = false) }

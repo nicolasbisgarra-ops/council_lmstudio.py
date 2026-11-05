@@ -205,6 +205,18 @@ class SyncTest {
         assertNull(PairingCode.normalize("ABCDEFGHI0"))
     }
 
+    @Test fun `pairing qr carries code and addresses`() {
+        val code = PairingCode.generate()
+        val text = PairingQr.encode(code, listOf("192.168.1.20", "100.101.102.103", "fd7a:115c:a1e0::1", "bad addr!", "192.168.1.20"))
+        val p = PairingQr.decode(text)!!
+        assertEquals(code, p.code)
+        assertEquals(listOf("192.168.1.20", "100.101.102.103", "fd7a:115c:a1e0::1"), p.addresses)
+        assertEquals(PairingQr.Payload(code, emptyList()), PairingQr.decode(PairingQr.encode(code, emptyList())))
+        assertEquals(code, PairingQr.decode(PairingCode.pretty(code))!!.code)
+        assertNull(PairingQr.decode("https://example.com"))
+        assertNull(PairingQr.decode("trazo-pair:1:ABC:192.168.1.2"))
+    }
+
     // ------------------------------------------------------------------ una vuelta completa
 
     /** Un dispositivo en memoria con las mismas reglas que el repositorio de la app. */

@@ -174,3 +174,32 @@ object PairingCode {
         return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
     }
 }
+
+/**
+ * Contenido del QR de vinculación: `trazo-pair:1:CODIGO:dir1,dir2`. Lleva el código y las direcciones del que lo
+ * muestra, así el que escanea lo encuentra también por Tailscale sin escribir nada. Las direcciones son una pista:
+ * la clave sigue saliendo solo del código.
+ */
+object PairingQr {
+    private const val PREFIX = "trazo-pair:1:"
+    private const val MAX_ADDRESSES = 6
+    private val ADDRESS = Regex("[0-9A-Za-z.:%_-]{1,80}")
+
+    data class Payload(val code: String, val addresses: List<String>)
+
+    fun encode(code: String, addresses: List<String>): String {
+        val c = PairingCode.normalize(code) ?: throw IllegalArgumentException("Código inválido")
+        return PREFIX + c + ":" + addresses.filter { ADDRESS.matches(it) }.distinct().take(MAX_ADDRESSES).joinToString(",")
+    }
+
+    /** null si no es un QR de Trazo. Acepta también un código suelto (un QR hecho a mano con solo el código). */
+    fun decode(text: String): Payload? {
+        val t = text.trim()
+        if (!t.startsWith(PREFIX)) return PairingCode.normalize(t)?.let { Payload(it, emptyList()) }
+        val rest = t.removePrefix(PREFIX)
+        val code = PairingCode.normalize(rest.substringBefore(':')) ?: return null
+        val addresses = rest.substringAfter(':', "").split(',').map { it.trim() }
+            .filter { it.isNotEmpty() && ADDRESS.matches(it) }.distinct().take(MAX_ADDRESSES)
+        return Payload(code, addresses)
+    }
+}

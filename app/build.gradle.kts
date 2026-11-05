@@ -100,6 +100,8 @@ dependencies {
     implementation("com.google.mediapipe:tasks-genai:0.10.27")
     // Solo el chat de revisión: LaTeX nativo (Canvas), sin WebView ni red.
     implementation("ru.noties:jlatexmath-android:0.2.0")
+    // QR para vincular dispositivos (escanear con la cámara y dibujar el código). Todo local, sin servicios.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)

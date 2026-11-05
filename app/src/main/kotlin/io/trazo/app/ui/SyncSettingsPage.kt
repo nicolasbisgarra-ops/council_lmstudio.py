@@ -1,6 +1,22 @@
 package io.trazo.app.ui
 
 import android.text.format.DateUtils
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.common.BitMatrix
+import com.google.zxing.qrcode.QRCodeWriter
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.trazo.app.trazo
 import io.trazo.core.sync.PairingCode
+import io.trazo.core.sync.PairingQr
 import kotlinx.coroutines.delay
 
 /** Sincronización entre los dispositivos del usuario: vincular con un código y ver el estado. */
@@ -68,8 +85,18 @@ internal fun SyncSettingsPage() {
     PrefCard("Vincular un dispositivo") {
         val pairing = state.pairing
         var entering by rememberSaveable { mutableStateOf(false) }
+        val scanner = rememberLauncherForActivityResult(ScanContract()) { r -> r.contents?.let { sync.linkScanned(it) } }
         if (pairing != null) {
-            Text("En el otro dispositivo, elegí «Ingresar código» y escribí:", style = MaterialTheme.typography.bodyMedium)
+            Text("En el otro dispositivo, elegí «Escanear QR» o «Ingresar código» y escribí:", style = MaterialTheme.typography.bodyMedium)
+            val qr = remember(pairing.code, state.addresses) {
+                runCatching {
+                    QRCodeWriter().encode(
+                        PairingQr.encode(pairing.code, state.addresses), BarcodeFormat.QR_CODE, 0, 0,
+                        mapOf(EncodeHintType.MARGIN to 1),
+                    )
+                }.getOrNull()
+            }
+            qr?.let { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrImage(it) } }
             Text(
                 PairingCode.pretty(pairing.code),
                 fontSize = 34.sp,
@@ -114,13 +141,27 @@ internal fun SyncSettingsPage() {
             }
         } else {
             Text(
-                "En uno elegí «Mostrar código» y en el otro «Ingresar código». Se hace una sola vez.",
+                "En uno elegí «Mostrar código» y en el otro «Escanear QR» (o «Ingresar código»). Se hace una sola vez.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { sync.showCode() }) { Text("Mostrar código") }
                 OutlinedButton(onClick = { entering = true }) { Text("Ingresar código") }
+            }
+            Button(
+                onClick = {
+                    scanner.launch(
+                        ScanOptions()
+                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            .setPrompt("Apuntá al QR que muestra el otro dispositivo")
+                            .setBeepEnabled(false)
+                            .setOrientationLocked(false),
+                    )
+                },
+                enabled = !state.linking,
+            ) {
+                Text(if (state.linking) "Vinculando…" else "Escanear QR")
             }
         }
         state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
@@ -165,6 +206,17 @@ internal fun SyncSettingsPage() {
                 confirmButton = { TextButton(onClick = { sync.forget(id); forgetting = null }) { Text("Olvidar") } },
                 dismissButton = { TextButton(onClick = { forgetting = null }) { Text("Cancelar") } },
             )
+        }
+    }
+}
+
+/** QR negro sobre blanco aunque el tema sea oscuro, para que cualquier cámara lo lea. */
+@Composable
+private fun QrImage(m: BitMatrix) {
+    Canvas(Modifier.size(220.dp).background(Color.White).padding(4.dp)) {
+        val cell = minOf(size.width / m.width, size.height / m.height)
+        for (y in 0 until m.height) for (x in 0 until m.width) {
+            if (m[x, y]) drawRect(Color.Black, Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f))
         }
     }
 }
