@@ -144,16 +144,26 @@ class SyncTest {
         val aOut = PipedOutputStream(bIn)
     }
 
-    private fun <T> async(block: () -> T): () -> T {
+    /**
+     * Corre el lado servidor en otro hilo. Al terminar (bien o mal) cierra su
+     * salida, así el cliente recibe fin de flujo en vez de esperar para siempre.
+     */
+    private fun <T> async(p: Pipe, block: () -> T): () -> T {
         val result = AtomicReference<Result<T>>()
-        val t = Thread { result.set(runCatching(block)) }.apply { isDaemon = true; start() }
-        return { t.join(20_000); result.get().getOrThrow() }
+        val t = Thread {
+            result.set(runCatching(block))
+            runCatching { p.bOut.close() }
+        }.apply { isDaemon = true; start() }
+        return {
+            t.join(20_000)
+            (result.get() ?: error("El servidor no terminó a tiempo")).getOrThrow()
+        }
     }
 
     @Test fun `a shared key opens the channel both ways`() {
         val key = SecureChannel.newKey()
         val p = Pipe()
-        val server = async {
+        val server = async(p) {
             val ch = SecureChannel.server(p.bIn, p.bOut, "tablet") { mode, id -> if (mode == SecureChannel.Mode.SYNC && id == "phone") key else null }
             val got = ch.receive().toString(Charsets.UTF_8)
             ch.send("eco $got".toByteArray())
@@ -168,7 +178,7 @@ class SyncTest {
 
     @Test fun `a wrong key is rejected`() {
         val p = Pipe()
-        val server = async {
+        val server = async(p) {
             val ch = SecureChannel.server(p.bIn, p.bOut, "tablet") { _, _ -> SecureChannel.newKey() }
             ch.receive()
         }
@@ -179,7 +189,7 @@ class SyncTest {
 
     @Test fun `an unknown device gets no answer`() {
         val p = Pipe()
-        val server = async { SecureChannel.server(p.bIn, p.bOut, "tablet") { _, _ -> null } }
+        val server = async(p) { SecureChannel.server(p.bIn, p.bOut, "tablet") { _, _ -> null } }
         runCatching { SecureChannel.client(p.aIn, p.aOut, "intruso", SecureChannel.Mode.SYNC, SecureChannel.newKey()) }
         assertThrows(SyncAuthException::class.java) { server() }
     }
@@ -236,7 +246,7 @@ class SyncTest {
 
     private fun sync(client: MemStore, server: MemStore): SyncReport {
         val p = Pipe()
-        val s = async {
+        val s = async(p) {
             val ch = SecureChannel.server(p.bIn, p.bOut, server.deviceId) { _, _ -> key }
             SyncEngine(server).serve(ch)
         }
