@@ -226,4 +226,6 @@ if has demo; then
   [ -s "$OUT/demo-real-android-emulador.mp4" ] || { echo "FALLÓ: falta el video de la demo"; status=1; }
 fi
 [ $status -ne 0 ] && failure_diag
+# El runner a veces no ve salir a qemu tras «emu kill» y el job cuelga hasta el tope: si sigue vivo al minuto, se mata.
+nohup setsid bash -c 'sleep 60; pkill -9 -f qemu-system' >/dev/null 2>&1 &
 exit $status
