@@ -72,6 +72,12 @@ data class SyncUiState(
     val bluetoothReady: Boolean = false,
     /** Emparejados en los ajustes de Android (para vincular por Bluetooth). */
     val bluetoothDevices: List<BluetoothPeer> = emptyList(),
+    /** El equipo tiene Google Play Services (para «Cerca, sin red»). */
+    val nearbyAvailable: Boolean = false,
+    /** Con los permisos de «Dispositivos cercanos». */
+    val nearbyReady: Boolean = false,
+    /** Cuántos Trazo se ven cerca ahora. */
+    val nearbySeen: Int = 0,
 )
 
 /**
@@ -93,6 +99,15 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     @Volatile private var server: ServerSocket? = null
     private val bt = BluetoothLink(app)
     @Volatile private var btServer: BluetoothServerSocket? = null
+    private val near = NearbyLink(
+        app,
+        myDeviceId = { store.config().deviceId },
+        myName = { deviceName(store.config()) },
+        onIncoming = { c -> serve(c, ip = null, btAddr = null) },
+        onChange = { scope.launch { refresh() }; requestSync() },
+    )
+    /** El último motivo por el que falló un intento de vincular (para decirlo al final). */
+    @Volatile private var lastPairError: String? = null
     private val connections = AtomicInteger()
     private val wake = Channel<Unit>(Channel.CONFLATED)
     @Volatile private var foreground = false
@@ -144,12 +159,27 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         refresh()
     }
 
+    /** «Cerca, sin red» con Nearby (sin router, internet ni Tailscale). */
+    fun setNearby(on: Boolean) = scope.launch {
+        store.saveConfig(store.config().copy(nearby = on))
+        if (on && store.config().enabled && foreground) near.start() else if (!on) near.stop()
+        refresh()
+    }
+
     /** La app pasó a primer plano o a segundo: solo se busca y se sincroniza en primer plano. */
     fun setForeground(on: Boolean) {
         foreground = on
         scope.launch {
-            if (!store.config().enabled) return@launch
-            if (on) { startBtServer(); refresh(); startDiscovery(); requestSync() } else stopDiscovery()
+            val cfg = store.config()
+            if (!cfg.enabled) return@launch
+            if (on) {
+                startBtServer()
+                if (cfg.nearby) near.start()
+                refresh(); startDiscovery(); requestSync()
+            } else {
+                stopDiscovery()
+                near.stop()
+            }
         }
     }
 
@@ -197,10 +227,11 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         _state.update { it.copy(linking = true, message = "Buscando el otro dispositivo…") }
         try {
             val key = PairingCode.key(normalized)
+            lastPairError = null
             suspend fun tryBluetooth(devices: List<String>): Boolean {
                 for (mac in devices) {
                     _state.update { it.copy(message = "Probando por Bluetooth con ${bt.nameOf(mac) ?: mac}…") }
-                    val peer = runCatching { bt.connect(mac).use { pair(it, key, ip = null, btAddr = mac) } }.getOrNull() ?: continue
+                    val peer = attempt { bt.connect(mac).use { pair(it, key, ip = null, btAddr = mac) } } ?: continue
                     _state.update { it.copy(message = "Vinculado con ${peer.name} por Bluetooth.") }
                     refresh()
                     requestSync()
@@ -211,7 +242,8 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
             if (bluetooth != null) {
                 if (!bt.ready()) { _state.update { it.copy(message = "Prendé el Bluetooth y dale permiso a Trazo.") }; return@launch }
                 if (tryBluetooth(listOf(bluetooth))) return@launch
-                _state.update { it.copy(message = "No se pudo vincular por Bluetooth: revisá el código y que el otro tenga Trazo abierto con «Usar también Bluetooth».") }
+                val why = lastPairError?.let { " ($it)" }.orEmpty()
+                _state.update { it.copy(message = "No se pudo vincular por Bluetooth$why: revisá el código y que el otro tenga Trazo abierto con «Usar también Bluetooth».") }
                 return@launch
             }
             suspend fun searched(): List<String> {
@@ -220,17 +252,35 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                 repeat(8) { if (unpaired.isEmpty() && nearby.isEmpty()) delay(500) }
                 return (unpaired.values + nearby.values).distinct()
             }
+            val tried = HashSet<String>()
+            // «Cerca, sin red» primero: no depende del router ni de Tailscale.
+            val viaNearby = store.config().nearby && near.ready()
+            if (viaNearby) {
+                near.start()
+                _state.update { it.copy(message = "Buscando cerca, sin red…") }
+                val paired = store.peers().map { it.deviceId }.toSet()
+                repeat(16) { if (near.seen().none { it.deviceId !in paired }) delay(500) }
+                for (e in near.seen().filter { it.deviceId !in paired }) {
+                    tried += "nearby:" + e.endpointId
+                    _state.update { it.copy(message = "Probando cerca con ${e.name}…") }
+                    val peer = attempt { near.connect(e.endpointId).use { pair(it, key, ip = null, btAddr = null) } } ?: continue
+                    _state.update { it.copy(message = "Vinculado con ${peer.name} (cerca, sin red).") }
+                    refresh()
+                    requestSync()
+                    return@launch
+                }
+            }
             val first = addresses.ifEmpty { searched() }
             val viaBluetooth = store.config().bluetooth && bt.ready()
-            if (first.isEmpty() && !viaBluetooth) {
-                _state.update { it.copy(message = "No se encontró otro Trazo en esta red. Escribí su dirección (la de Tailscale sirve) o usá Bluetooth.") }
+            if (first.isEmpty() && !viaBluetooth && !viaNearby) {
+                _state.update { it.copy(message = "No se encontró otro Trazo en esta red. Activá «Cerca, sin red» en los dos, o escribí su dirección (la de Tailscale sirve).") }
                 return@launch
             }
-            val tried = HashSet<String>()
             suspend fun tryHosts(hosts: List<String>): Boolean {
                 for (host in hosts) for (a in resolve(host)) {
                     if (!tried.add(a.hostAddress.orEmpty())) continue
-                    val peer = runCatching { pairWith(a, key) }.getOrNull() ?: continue
+                    _state.update { it.copy(message = "Probando ${a.hostAddress?.substringBefore('%')}…") }
+                    val peer = attempt { pairWith(a, key) } ?: continue
                     _state.update { it.copy(message = "Vinculado con ${peer.name}.") }
                     refresh()
                     requestSync()
@@ -241,7 +291,11 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
             if (tryHosts(first)) return@launch
             if (discover && addresses.isNotEmpty() && tryHosts(searched())) return@launch
             if (viaBluetooth && tryBluetooth(bt.likely().map { it.address })) return@launch
-            _state.update { it.copy(message = "No se pudo vincular: revisá el código (vence a los 5 minutos) y que los dos estén en la misma red, en Tailscale o cerca por Bluetooth.") }
+            val why = lastPairError?.let { " ($it)" }.orEmpty()
+            _state.update {
+                it.copy(message = "No se pudo vincular$why. Revisá que el otro esté mostrando el código (vence a los 5 minutos) y " +
+                    if (viaNearby) "que tenga «Cerca, sin red» activado y Trazo abierto." else "probá «Cerca, sin red» en los dos: no necesita red.")
+            }
         } finally {
             _state.update { it.copy(linking = false) }
         }
@@ -260,6 +314,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         startBtServer()
         register()
         if (foreground) startDiscovery()
+        if (foreground && store.config().nearby) near.start()
         if (loop == null) loop = scope.launch {
             while (isActive) {
                 withTimeoutOrNull(PERIOD_MILLIS) { wake.receive() }
@@ -272,6 +327,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         runCatching { server?.close() }
         server = null
         stopBtServer()
+        near.stop()
         unregister()
         stopDiscovery()
         cancelCode()
@@ -392,6 +448,19 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
 
     // ------------------------------------------------------------------ cliente
 
+    /** Un intento de vincular; si falla, guarda el motivo en palabras para el mensaje final. */
+    private inline fun attempt(block: () -> SyncPeer?): SyncPeer? = try {
+        block().also { if (it == null) lastPairError = "el otro respondió algo inesperado" }
+    } catch (e: Exception) {
+        lastPairError = when (e) {
+            is java.net.SocketTimeoutException, is java.net.ConnectException, is java.net.NoRouteToHostException -> "el otro no responde"
+            is java.io.EOFException, is SyncAuthException -> "el otro cortó: código equivocado o no lo está mostrando"
+            is IOException -> e.message?.take(80) ?: "se cortó la conexión"
+            else -> e.message?.take(80) ?: e.javaClass.simpleName
+        }
+        null
+    }
+
     private fun pairWith(address: InetAddress, key: ByteArray): SyncPeer? =
         tcp(connect(address)).use { pair(it, key, ip = address.hostAddress, btAddr = null) }
 
@@ -432,6 +501,12 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
             // Primero la red (casa o Tailscale); si no responde, Bluetooth. El segundo valor es la IP usada.
             val targets = ArrayList<() -> Pair<SyncConn, String?>>()
             for (h in hosts) for (a in resolve(h)) targets += { tcp(connect(a)) to a.hostAddress }
+            val ep = if (cfg.nearby) near.endpointFor(peer.deviceId) else null
+            // Visto cerca y no en la red de casa: Nearby primero (las direcciones guardadas pueden tardar en fallar).
+            if (ep != null) {
+                val viaNearby: () -> Pair<SyncConn, String?> = { near.connect(ep.endpointId) to NEARBY }
+                targets.add(if (nearby[peer.deviceId] == null) 0 else targets.size, viaNearby)
+            }
             val mac = peer.bluetooth
             if (mac != null && cfg.bluetooth && bt.ready()) targets += { bt.connect(mac) to null }
             for (open in targets) {
@@ -441,7 +516,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                         val ch = SecureChannel.client(c.input, c.output, cfg.deviceId, SecureChannel.Mode.SYNC, key)
                         if (ch.peerId != peer.deviceId) throw SyncAuthException("Otro dispositivo")
                         val report = engine.runClient(ch)
-                        synced(peer.deviceId, ip, if (ip == null) peer.bluetooth else null, report)
+                        synced(peer.deviceId, ip?.takeIf { it != NEARBY }, if (ip == null) peer.bluetooth else null, report)
                         return
                     }
                 } catch (_: SyncBusyException) {
@@ -454,7 +529,11 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                     continue
                 }
             }
-            messages[peer.deviceId] = if (cfg.bluetooth) "No está en la misma red, ni en Tailscale, ni cerca por Bluetooth." else "No está en la misma red ni en Tailscale."
+            messages[peer.deviceId] = when {
+                cfg.nearby -> "No se lo encontró: ni cerca, ni en la misma red, ni en Tailscale."
+                cfg.bluetooth -> "No está en la misma red, ni en Tailscale, ni cerca por Bluetooth."
+                else -> "No está en la misma red ni en Tailscale. Probá «Cerca, sin red»."
+            }
         } finally {
             setRunning(peer.deviceId, false)
         }
@@ -575,7 +654,11 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
             override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) = done()
             override fun onServiceResolved(info: NsdServiceInfo) {
                 val id = info.attributes["id"]?.toString(Charsets.UTF_8)
-                val host = info.host
+                // Una IPv4 antes que una IPv6 de enlace local (sin la interfaz no se puede conectar a esa).
+                val candidates = (if (Build.VERSION.SDK_INT >= 34) runCatching { info.hostAddresses }.getOrDefault(emptyList()) else emptyList()) +
+                    listOfNotNull(info.host)
+                val host = candidates.filter { !it.isLinkLocalAddress || (it is java.net.Inet6Address && it.scopedInterface != null) }
+                    .minByOrNull { if (it.address.size == 4) 0 else 1 }
                 val mine = store.config().deviceId
                 if (id != null && id != mine && host != null && SyncAddresses.isAllowed(host.address)) {
                     val addr = host.hostAddress.orEmpty()
@@ -612,6 +695,8 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                 config = cfg, deviceName = deviceName(cfg), peers = peers, addresses = myAddresses(),
                 bluetoothAvailable = bt.available, bluetoothReady = btReady,
                 bluetoothDevices = if (btReady && cfg.bluetooth) bt.bonded() else emptyList(),
+                nearbyAvailable = near.available, nearbyReady = near.ready(),
+                nearbySeen = if (cfg.nearby) near.seen().size else 0,
             )
         }
     }
@@ -635,7 +720,9 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         const val PERIOD_MILLIS = 60_000L
         const val PAIRING_MILLIS = 5 * 60_000L
         const val MAX_PAIRING_FAILURES = 5
-        const val CONNECT_TIMEOUT = 3_000
+        const val CONNECT_TIMEOUT = 6_000
+        /** Marca de «la conexión fue por Nearby» (no es una dirección para guardar). */
+        const val NEARBY = "nearby"
         const val READ_TIMEOUT = 30_000
         const val MAX_CONNECTIONS = 4
         const val MAX_ADDRESSES = 6

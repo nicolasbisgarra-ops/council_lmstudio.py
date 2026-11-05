@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Trazo funciona sin conexión. Solo el Modo IA usa internet, y solo cuando el usuario lo pide; la sincronización
-     entre los dispositivos del usuario usa solo la red de casa, Tailscale o Bluetooth. -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+     entre los dispositivos del usuario usa solo la red de casa, Tailscale, Bluetooth o «cerca, sin red» (Nearby, entre los dos equipos). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -10,7 +11,17 @@
     <!-- Sincronización por Bluetooth con los emparejados (sin buscar equipos: no hace falta ubicación). -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- «Cerca, sin red» (Nearby Connections): Bluetooth y Wi‑Fi directo entre los dos equipos. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
 
     <!-- Texto plano (http) permitido para servidores de la red local, como LM Studio u Ollama. -->
     <application

@@ -4,6 +4,7 @@ import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import io.trazo.app.sync.BluetoothLink
+import io.trazo.app.sync.NearbyLink
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -64,7 +65,7 @@ internal fun SyncSettingsPage() {
         SwitchRow(
             "Sincronizar con mis dispositivos", state.config.enabled, { sync.setEnabled(it) },
             subtitle = "Cuadernos, carpetas, patrones e imágenes van directo de un dispositivo al otro, cifrados y sin " +
-                "servidores. Solo cuando están en la misma red (la de tu casa), conectados por Tailscale o, si lo activás, por Bluetooth.",
+                "servidores. Solo cuando están en la misma red (la de tu casa), conectados por Tailscale, por Bluetooth o «cerca, sin red».",
         )
         if (state.bluetoothAvailable) {
             val askBt = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -76,6 +77,23 @@ internal fun SyncSettingsPage() {
                 subtitle = "Para cuando no hay red ni Tailscale: con los dispositivos ya emparejados en los ajustes de " +
                     "Bluetooth de Android. Es más lento; conviene para pocos cambios." +
                     if (state.config.bluetooth && !state.bluetoothReady) " Ahora está apagado o sin permiso." else "",
+            )
+        }
+        if (state.nearbyAvailable) {
+            val askNear = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+                sync.setNearby(res.values.all { it })
+            }
+            SwitchRow(
+                "Cerca, sin red", state.config.nearby,
+                { on -> if (on && !state.nearbyReady) askNear.launch(NearbyLink.PERMISSIONS) else sync.setNearby(on) },
+                subtitle = "Los dos equipos se conectan directo entre sí (Bluetooth y Wi‑Fi directo), sin router, internet " +
+                    "ni Tailscale. Activalo en los dos y dejá la app abierta." +
+                    when {
+                        !state.config.nearby -> ""
+                        !state.nearbyReady -> " Falta el permiso de «Dispositivos cercanos»."
+                        state.nearbySeen > 0 -> " Ve ${state.nearbySeen} cerca."
+                        else -> " Buscando…"
+                    },
             )
         }
         var name by rememberSaveable(state.config.deviceId) { mutableStateOf(state.config.name) }
@@ -169,7 +187,7 @@ internal fun SyncSettingsPage() {
             }
         } else {
             Text(
-                "En uno elegí «Mostrar código» y en el otro «Escanear QR» (o «Ingresar código»). Se hace una sola vez.",
+                "En uno elegí «Mostrar código» y en el otro «Escanear QR» (o «Ingresar código»). Se hace una sola vez. Sin red en común, activá antes «Cerca, sin red» en los dos.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

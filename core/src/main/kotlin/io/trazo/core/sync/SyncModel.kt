@@ -76,6 +76,8 @@ data class SyncConfig(
     val enabled: Boolean = false,
     /** Usar también Bluetooth con los dispositivos emparejados en Android, para cuando no hay red. */
     val bluetooth: Boolean = false,
+    /** «Cerca, sin red»: Nearby Connections (Bluetooth y Wi‑Fi directo entre los dos, sin router ni internet). */
+    val nearby: Boolean = false,
 )
 
 /** Qué archivo representa una clave: un cuaderno o los archivos compartidos. */
