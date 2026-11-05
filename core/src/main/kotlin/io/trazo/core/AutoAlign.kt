@@ -10,6 +10,8 @@ import kotlin.math.min
  *
  * - Un cierre de paréntesis, corchete o llave toma la altura y la posición vertical de su apertura
  *   (la última sin cerrar, a su izquierda, en el mismo renglón).
+ * - Una apertura (o un cierre sin pareja) solo toma la altura de otro signo de agrupación: junto a
+ *   un número, una x, un + o un − se centra en su línea sin cambiar de tamaño.
  * - Cualquier otra forma se iguala con la forma reconocida más cercana del renglón: si su tamaño es
  *   parecido (entre la mitad y el doble) toma su misma altura; si no (=, −, ∫…), solo se centra en
  *   su misma línea, sin cambiar de tamaño.
@@ -85,6 +87,24 @@ object AutoAlign {
         // Los exponentes y subíndices ya escritos no marcan el renglón: lo que sigue a x² se alinea con la x.
         val bases = row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
         val plain = row.filter { r -> bases.none { b -> b !== r && isScript(r.bounds, r.bounds.height, b.bounds) } }
+        // Paréntesis, corchetes y llaves: solo toman la altura de otro signo de agrupación; junto a
+        // números, letras (x…) o signos (+, −) se centran en su línea sin cambiar de tamaño.
+        if (kindOf(pattern) != null) {
+            val ref = plain.minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
+            val refPattern = lookup(ref.patternId)
+            val predicted = gesture.height * scale
+            val reach = max(ref.bounds.height, predicted)
+            if (horizontalGap(ref.bounds, gesture) > MAX_GAP * reach) return gesture
+            if (abs(ref.bounds.centerY - gesture.centerY) > OFFSET * reach) return gesture
+            if (refPattern?.let(::kindOf) != null) {
+                val ratio = predicted / ref.bounds.height.coerceAtLeast(0.5f)
+                if (ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) return resized(gesture, ref.bounds, scale)
+            } else if (refPattern != null && isContainer(refPattern)) {
+                return gesture
+            }
+            val dy = ref.bounds.centerY - gesture.centerY
+            return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
+        }
         val refs = if (isContainer(pattern)) plain else plain.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
             .let { all -> if (variable) all else all.filter { r -> lookup(r.patternId)?.let(::isVariable) != true }.ifEmpty { all } }
         // Un signo sin letras ni números al lado se centra en otro signo; lo demás nunca toma su altura.

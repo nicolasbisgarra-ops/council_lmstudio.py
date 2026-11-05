@@ -155,6 +155,22 @@ class AutoAlignTest {
         assertEquals(200f, out.centerY, 0.5f)
     }
 
+    @Test fun `un parentesis junto a un numero, una x, un mas o un menos se centra sin cambiar de tamano`() {
+        val g = Bounds(200f, 140f, 230f, 240f)
+        for (next in listOf(item("2", 100f, 120f, 140f, 200f), item("letra-x", 100f, 130f, 140f, 190f), item("mas", 100f, 140f, 140f, 180f), item("menos", 100f, 158f, 140f, 162f))) {
+            val out = align("parentesis-abre", g, next)
+            assertEquals("junto a ${next.patternId}", 100f, out.height, 0.5f)
+            assertEquals("junto a ${next.patternId}", next.bounds.centerY, out.centerY, 0.5f)
+        }
+    }
+
+    @Test fun `un corchete toma la altura de otro signo de agrupacion parecido`() {
+        val p = preset("parentesis-abre")
+        val out = align("parentesis-abre", Bounds(200f, 140f, 230f, 240f), item("corchete-abre", 150f, 110f, 175f, 250f))
+        assertEquals(140f / p.outputScale, out.height, 0.5f)
+        assertEquals(180f, out.centerY, 0.5f)
+    }
+
     @Test fun `nested brackets close the innermost open one`() {
         val out = align(
             "corchete-cierra", Bounds(600f, 180f, 620f, 260f),
