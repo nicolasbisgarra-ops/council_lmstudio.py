@@ -75,7 +75,13 @@ class DemoExerciseTest {
 
         val strokes = s.strokes()
         val groups = strokes.filter { it.patternId != null }.groupBy { it.groupId }.mapValues { it.value.first().patternId }
-        assertEquals(setOf(DefaultPatterns.INTEGRAL, DefaultPatterns.ROOT, DefaultPatterns.FRACTION), groups.values.toSet())
+        val gestures = setOf(DefaultPatterns.INTEGRAL, DefaultPatterns.ROOT, DefaultPatterns.FRACTION)
+        val found = groups.values.filterNotNull().toSet()
+        assertTrue("faltan gestos: ${gestures - found}", found.containsAll(gestures))
+        // Lo escrito a mano (el «3» de 3x², por ejemplo) puede coincidir con un patrón precargado del
+        // usuario y convertirse: está bien, pero solo con patrones que existen.
+        val known = app.repository.patterns.value.mapTo(HashSet()) { it.id }
+        assertTrue("patrones desconocidos: ${found - known}", known.containsAll(found))
         assertTrue(strokes.size > 40)
     }
 
