@@ -100,7 +100,7 @@ internal class BluetoothLink(private val context: Context) {
         } catch (e: Exception) {
             done.set(true)
             runCatching { socket.close() }
-            throw if (e is IOException) java.net.SocketTimeoutException("Bluetooth: ${e.message ?: "no responde"}") else IOException(e.message ?: "Bluetooth", e)
+            throw if (e is IOException) java.io.InterruptedIOException("Bluetooth: ${e.message ?: "no responde"}") else IOException(e.message ?: "Bluetooth", e)
         } finally {
             timer.interrupt()
         }

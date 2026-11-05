@@ -479,7 +479,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                     SyncPairRefused.Reason.WRONG_CODE -> "$who dice que el código no coincide: escaneá el QR que muestra ahora"
                 })
             }
-            is java.net.SocketTimeoutException, is java.net.ConnectException, is java.net.NoRouteToHostException -> pairError(1, "el otro no responde")
+            is java.io.InterruptedIOException, is java.net.ConnectException, is java.net.NoRouteToHostException -> pairError(1, "el otro no responde")
             is java.io.EOFException, is SyncAuthException ->
                 pairError(3, "el otro cortó sin explicar: puede tener una versión vieja de Trazo; instalá la misma en los dos")
             is IOException -> pairError(1, e.message?.take(80) ?: "se cortó la conexión")
