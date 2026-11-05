@@ -52,6 +52,8 @@ data class SyncManifest(
     val order: String? = null,
     /** Imágenes y portadas presentes: `images/<sha>.webp`, `covers/<sha>.webp`… */
     val blobs: Set<String> = emptySet(),
+    /** Direcciones actuales del dispositivo (casa y Tailscale): así se aprende una de Tailscale nueva. */
+    val addresses: List<String> = emptyList(),
 )
 
 /** Otro dispositivo vinculado, con la clave que comparten. */

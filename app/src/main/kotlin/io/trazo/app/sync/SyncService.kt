@@ -130,7 +130,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     private val messages = ConcurrentHashMap<String, String>()
     private val running = ConcurrentHashMap.newKeySet<String>()
 
-    private val engine by lazy { SyncEngine(SyncRepositoryStore(repo, store, store.config().deviceId)) }
+    private val engine by lazy { SyncEngine(SyncRepositoryStore(repo, store, store.config().deviceId), addresses = { myAddresses() }) }
 
     init {
         scope.launch {
@@ -543,7 +543,9 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         store.update(peerId) { p ->
             p.copy(
                 lastSync = System.currentTimeMillis(),
-                addresses = (listOfNotNull(address?.takeIf { it.isNotBlank() }) + p.addresses).distinct().take(MAX_ADDRESSES),
+                // Primero la que funcionó, después las que anunció el otro (así se aprende la de Tailscale), después las viejas.
+                addresses = (listOfNotNull(address?.takeIf { it.isNotBlank() }) + announced(report) + p.addresses)
+                    .distinct().take(MAX_ADDRESSES),
                 bluetooth = btAddr ?: p.bluetooth,
             )
         }
@@ -553,6 +555,25 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
             report.deferred > 0 -> "Al día, salvo ${report.deferred} cuaderno(s) abiertos: siguen al cerrarlos."
             else -> "Al día."
         }
+    }
+
+    /** Las direcciones que el otro anunció: IP de casa o Tailscale, o un nombre (MagicDNS). */
+    private fun announced(report: SyncReport?): List<String> =
+        report?.remoteAddresses.orEmpty().map { cleanHost(it) }.filter { h ->
+            h.isNotEmpty() && (!looksLikeIp(h) || runCatching { SyncAddresses.isAllowed(InetAddress.getByName(h).address) }.getOrDefault(false))
+        }
+
+    private fun looksLikeIp(h: String) = h.contains(':') || h.all { it.isDigit() || it == '.' }
+
+    /** Agrega a mano una dirección del otro (por ejemplo su IP 100.x de Tailscale o su nombre MagicDNS). */
+    fun addAddress(peerId: String, address: String) = scope.launch {
+        val h = cleanHost(address)
+        if (h.isEmpty()) return@launch
+        val found = resolve(h)
+        store.update(peerId) { p -> p.copy(addresses = (listOf(h) + p.addresses).distinct().take(MAX_ADDRESSES)) }
+        messages[peerId] = if (found.isEmpty()) "Guardada «$h», pero ahora no se encuentra: ¿Tailscale conectado en los dos?" else "Dirección guardada: $h."
+        refresh()
+        requestSync()
     }
 
     private fun connect(a: InetAddress): Socket {
@@ -571,14 +592,19 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
 
     /** Las direcciones permitidas de un nombre o IP (un nombre de MagicDNS de Tailscale también sirve). */
     private fun resolve(host: String): List<InetAddress> {
-        val clean = host.trim().removePrefix("[").substringBefore("]").let { h ->
-            // «100.64.1.2:47821» o «nombre:47821»: el puerto es fijo, se ignora.
-            if (h.count { it == ':' } == 1) h.substringBefore(':') else h
-        }
+        val clean = cleanHost(host)
         if (clean.isEmpty()) return emptyList()
         return runCatching { InetAddress.getAllByName(clean).toList() }.getOrDefault(emptyList())
             .filter { SyncAddresses.isAllowed(it.address) }
             .sortedBy { if (it.address.size == 4) 0 else 1 }
+    }
+
+    /** «https://nombre.ts.net:8443/x», «[fd7a::1]:47821» o «100.64.1.2:47821» → solo el equipo: el puerto es fijo. */
+    private fun cleanHost(host: String): String {
+        var h = host.trim().substringAfter("://").substringBefore('/').substringBefore('?').substringAfter('@')
+        h = if (h.startsWith("[")) h.removePrefix("[").substringBefore("]")
+        else if (h.count { it == ':' } == 1) h.substringBefore(':') else h
+        return h.trim().trimEnd('.').lowercase()
     }
 
     // ------------------------------------------------------------------ red de casa (NSD)

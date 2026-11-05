@@ -44,13 +44,20 @@ data class SyncReport(
     val conflicts: Int = 0,
     /** Cuadernos que quedaron para la próxima (abiertos o cambiados durante la vuelta). */
     val deferred: Int = 0,
+    /** Direcciones que el otro anunció (casa y Tailscale): se guardan para la próxima vuelta. */
+    val remoteAddresses: List<String> = emptyList(),
 )
 
 /**
  * Una vuelta de sincronización. El que llama ([runClient]) pide el estado del otro, fusiona aquí y le
  * manda el resultado; el otro ([serve]) solo lee y escribe lo que le piden.
  */
-class SyncEngine(private val store: SyncStore, private val ids: IdGenerator = IdGenerator.RANDOM) {
+class SyncEngine(
+    private val store: SyncStore,
+    private val ids: IdGenerator = IdGenerator.RANDOM,
+    /** Direcciones actuales de este dispositivo (casa y Tailscale), para que el otro las tenga al día. */
+    private val addresses: () -> List<String> = { emptyList() },
+) {
 
     private var patternsMemo: Pair<String, Map<String, String>>? = null
     private var foldersMemo: Pair<String, Map<String, String>>? = null
@@ -66,6 +73,7 @@ class SyncEngine(private val store: SyncStore, private val ids: IdGenerator = Id
             folders = folderHashes(store.read(SyncKey.Folders)),
             order = SyncMerge.orderHash(order),
             blobs = store.blobNames().filter(SyncProtocol::isValidBlob).toSet(),
+            addresses = runCatching { addresses() }.getOrDefault(emptyList()).take(MAX_ADDRESSES),
         )
     }
 
@@ -214,7 +222,8 @@ class SyncEngine(private val store: SyncStore, private val ids: IdGenerator = Id
         ch.receiveMessage() as? SyncMessage.Ok ?: throw SyncAuthException("Respuesta inesperada")
         store.saveBase(peer, next)
         ch.send(SyncMessage.Bye)
-        return SyncReport(received, sent, conflicts, deferred)
+        val announced = remote.addresses.map { it.trim() }.filter { it.isNotEmpty() && it.length <= 64 }.distinct().take(MAX_ADDRESSES)
+        return SyncReport(received, sent, conflicts, deferred, announced)
     }
 
     private fun decodeNotebook(text: String, id: String): LazyNotebook? =
@@ -282,3 +291,5 @@ class SyncEngine(private val store: SyncStore, private val ids: IdGenerator = Id
         }
     }
 }
+
+private const val MAX_ADDRESSES = 8

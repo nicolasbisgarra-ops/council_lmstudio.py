@@ -256,11 +256,11 @@ class SyncTest {
 
     private val key = SecureChannel.newKey()
 
-    private fun sync(client: MemStore, server: MemStore): SyncReport {
+    private fun sync(client: MemStore, server: MemStore, serverAddresses: List<String> = emptyList()): SyncReport {
         val p = Pipe()
         val s = async(p) {
             val ch = SecureChannel.server(p.bIn, p.bOut, server.deviceId) { _, _ -> key }
-            SyncEngine(server).serve(ch)
+            SyncEngine(server, addresses = { serverAddresses }).serve(ch)
         }
         val ch = SecureChannel.client(p.aIn, p.aOut, client.deviceId, SecureChannel.Mode.SYNC, key)
         val report = SyncEngine(client).runClient(ch)
@@ -272,6 +272,11 @@ class SyncTest {
         val bytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(32) { seed.toByte() }
         val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         return "images/$sha.png" to bytes
+    }
+
+    @Test fun `the other side announces its current addresses`() {
+        val report = sync(MemStore("phone"), MemStore("tablet"), listOf("192.168.1.20", " 100.101.102.103 ", "", "192.168.1.20"))
+        assertEquals(listOf("192.168.1.20", "100.101.102.103"), report.remoteAddresses)
     }
 
     @Test fun `first sync copies everything both ways`() {

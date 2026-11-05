@@ -107,7 +107,13 @@ internal fun SyncSettingsPage() {
         )
         if (state.addresses.isNotEmpty()) {
             Text(
-                "Direcciones de este dispositivo: " + state.addresses.joinToString(" · "),
+                state.addresses.partition { it.startsWith("100.") || it.startsWith("fd7a:115c:a1e0", ignoreCase = true) }
+                    .let { (ts, home) ->
+                        listOfNotNull(
+                            home.takeIf { it.isNotEmpty() }?.let { "Red: " + it.joinToString(" · ") },
+                            ts.takeIf { it.isNotEmpty() }?.let { "Tailscale: " + it.joinToString(" · ") },
+                        ).joinToString("\n")
+                    },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -215,6 +221,7 @@ internal fun SyncSettingsPage() {
 
     PrefCard("Dispositivos vinculados") {
         var forgetting by remember { mutableStateOf<String?>(null) }
+        var adding by remember { mutableStateOf<String?>(null) }
         if (state.peers.isEmpty()) {
             Text("Todavía ninguno.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -236,6 +243,7 @@ internal fun SyncSettingsPage() {
                 p.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { sync.syncNow() }, enabled = state.config.enabled && !p.running) { Text("Sincronizar ahora") }
+                    TextButton(onClick = { adding = p.peer.deviceId }) { Text("Dirección") }
                     TextButton(onClick = { forgetting = p.peer.deviceId }) { Text("Olvidar") }
                 }
             }
@@ -246,6 +254,29 @@ internal fun SyncSettingsPage() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        adding?.let { id ->
+            val peerName = state.peers.firstOrNull { it.peer.deviceId == id }?.peer?.name.orEmpty()
+            var text by remember(id) { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { adding = null },
+                title = { Text("Dirección de $peerName") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Para sincronizar por Tailscale fuera de casa: escribí la IP 100.x del otro (la ves en la app de " +
+                                "Tailscale o en estos mismos ajustes del otro, bajo su nombre) o su nombre, por ejemplo tablet.tu-red.ts.net. " +
+                                "Igual se aprende sola en cada sincronización.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true, label = { Text("100.x.y.z o nombre") })
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { sync.addAddress(id, text); adding = null }, enabled = text.isNotBlank()) { Text("Guardar") }
+                },
+                dismissButton = { TextButton(onClick = { adding = null }) { Text("Cancelar") } },
+            )
+        }
         forgetting?.let { id ->
             val peerName = state.peers.firstOrNull { it.peer.deviceId == id }?.peer?.name.orEmpty()
             AlertDialog(
