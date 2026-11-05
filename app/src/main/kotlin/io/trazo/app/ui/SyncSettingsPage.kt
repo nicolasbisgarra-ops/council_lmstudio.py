@@ -2,6 +2,8 @@ package io.trazo.app.ui
 
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import io.trazo.app.sync.BluetoothLink
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -62,8 +64,20 @@ internal fun SyncSettingsPage() {
         SwitchRow(
             "Sincronizar con mis dispositivos", state.config.enabled, { sync.setEnabled(it) },
             subtitle = "Cuadernos, carpetas, patrones e imágenes van directo de un dispositivo al otro, cifrados y sin " +
-                "servidores. Solo cuando están en la misma red (la de tu casa) o conectados por Tailscale.",
+                "servidores. Solo cuando están en la misma red (la de tu casa), conectados por Tailscale o, si lo activás, por Bluetooth.",
         )
+        if (state.bluetoothAvailable) {
+            val askBt = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                sync.setBluetooth(granted)
+            }
+            SwitchRow(
+                "Usar también Bluetooth", state.config.bluetooth,
+                { on -> if (on && BluetoothLink.PERMISSION != null && !state.bluetoothReady) askBt.launch(BluetoothLink.PERMISSION) else sync.setBluetooth(on) },
+                subtitle = "Para cuando no hay red ni Tailscale: con los dispositivos ya emparejados en los ajustes de " +
+                    "Bluetooth de Android. Es más lento; conviene para pocos cambios." +
+                    if (state.config.bluetooth && !state.bluetoothReady) " Ahora está apagado o sin permiso." else "",
+            )
+        }
         var name by rememberSaveable(state.config.deviceId) { mutableStateOf(state.config.name) }
         OutlinedTextField(
             value = name,
@@ -139,6 +153,20 @@ internal fun SyncSettingsPage() {
                 }
                 TextButton(onClick = { entering = false }) { Text("Cancelar") }
             }
+            if (state.config.bluetooth && state.bluetoothDevices.isNotEmpty()) {
+                Text(
+                    "O por Bluetooth, con uno emparejado (el otro tiene que tener «Usar también Bluetooth»):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                state.bluetoothDevices.take(6).forEach { d ->
+                    OutlinedButton(
+                        onClick = { sync.linkBluetooth(code, d.address) },
+                        enabled = !state.linking && PairingCode.normalize(code) != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Bluetooth: ${d.name}") }
+                }
+            }
         } else {
             Text(
                 "En uno elegí «Mostrar código» y en el otro «Escanear QR» (o «Ingresar código»). Se hace una sola vez.",
@@ -178,7 +206,10 @@ internal fun SyncSettingsPage() {
                 Text(p.peer.name, style = MaterialTheme.typography.titleSmall)
                 val last = if (p.peer.lastSync == 0L) "Nunca" else
                     DateUtils.getRelativeTimeSpanString(p.peer.lastSync, now, DateUtils.MINUTE_IN_MILLIS).toString()
-                val where = if (p.nearby) "en esta red" else p.peer.addresses.firstOrNull()?.let { "última dirección $it" } ?: ""
+                val where = listOfNotNull(
+                    if (p.nearby) "en esta red" else p.peer.addresses.firstOrNull()?.let { "última dirección $it" },
+                    if (p.peer.bluetooth != null && state.config.bluetooth) "Bluetooth" else null,
+                ).joinToString(" · ")
                 Text(
                     listOf(if (p.running) "Sincronizando…" else "Última vez: $last", where).filter { it.isNotEmpty() }.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,

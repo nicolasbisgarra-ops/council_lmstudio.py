@@ -64,6 +64,8 @@ data class SyncPeer(
     /** Direcciones conocidas (LAN, Tailscale 100.x o nombre MagicDNS). */
     val addresses: List<String> = emptyList(),
     val lastSync: Long = 0L,
+    /** Dirección Bluetooth del otro (si alguna vez se conectaron por Bluetooth). */
+    val bluetooth: String? = null,
 )
 
 /** Configuración de la sincronización de este dispositivo. */
@@ -72,6 +74,8 @@ data class SyncConfig(
     val deviceId: String = java.util.UUID.randomUUID().toString(),
     val name: String = "",
     val enabled: Boolean = false,
+    /** Usar también Bluetooth con los dispositivos emparejados en Android, para cuando no hay red. */
+    val bluetooth: Boolean = false,
 )
 
 /** Qué archivo representa una clave: un cuaderno o los archivos compartidos. */

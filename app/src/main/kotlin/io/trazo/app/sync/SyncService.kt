@@ -1,5 +1,6 @@
 package io.trazo.app.sync
 
+import android.bluetooth.BluetoothServerSocket
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -65,6 +66,12 @@ data class SyncUiState(
     val pairing: SyncPairing? = null,
     val linking: Boolean = false,
     val message: String? = null,
+    /** El equipo tiene Bluetooth. */
+    val bluetoothAvailable: Boolean = false,
+    /** Bluetooth prendido y con permiso. */
+    val bluetoothReady: Boolean = false,
+    /** Emparejados en los ajustes de Android (para vincular por Bluetooth). */
+    val bluetoothDevices: List<BluetoothPeer> = emptyList(),
 )
 
 /**
@@ -84,6 +91,8 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     val state: StateFlow<SyncUiState> = _state.asStateFlow()
 
     @Volatile private var server: ServerSocket? = null
+    private val bt = BluetoothLink(app)
+    @Volatile private var btServer: BluetoothServerSocket? = null
     private val connections = AtomicInteger()
     private val wake = Channel<Unit>(Channel.CONFLATED)
     @Volatile private var foreground = false
@@ -128,12 +137,19 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         refresh()
     }
 
+    /** Usar también Bluetooth con los emparejados en Android (cuando no hay red de casa ni Tailscale). */
+    fun setBluetooth(on: Boolean) = scope.launch {
+        store.saveConfig(store.config().copy(bluetooth = on))
+        if (on && store.config().enabled) startBtServer() else stopBtServer()
+        refresh()
+    }
+
     /** La app pasó a primer plano o a segundo: solo se busca y se sincroniza en primer plano. */
     fun setForeground(on: Boolean) {
         foreground = on
         scope.launch {
             if (!store.config().enabled) return@launch
-            if (on) { startDiscovery(); requestSync() } else stopDiscovery()
+            if (on) { startBtServer(); refresh(); startDiscovery(); requestSync() } else stopDiscovery()
         }
     }
 
@@ -161,6 +177,9 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     /** Se vincula con el que muestra [code]; sin [address] lo busca en la red de casa. */
     fun link(code: String, address: String) = link(code, listOf(address.trim()).filter { it.isNotEmpty() }, discover = false)
 
+    /** Se vincula por Bluetooth con [address], un emparejado en los ajustes de Android. */
+    fun linkBluetooth(code: String, address: String) = link(code, emptyList(), discover = false, bluetooth = address)
+
     /** Lo leído del QR del otro: prueba sus direcciones (casa o Tailscale) y, si ninguna responde, la red de casa. */
     fun linkScanned(text: String): Boolean {
         val p = PairingQr.decode(text) ?: run {
@@ -171,13 +190,30 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         return true
     }
 
-    private fun link(code: String, addresses: List<String>, discover: Boolean) = scope.launch {
+    private fun link(code: String, addresses: List<String>, discover: Boolean, bluetooth: String? = null) = scope.launch {
         val normalized = PairingCode.normalize(code)
         if (normalized == null) { _state.update { it.copy(message = "El código tiene 10 letras y números, como ABCDE-FGH23.") }; return@launch }
         if (!store.config().enabled) { store.saveConfig(store.config().copy(enabled = true)); start() }
         _state.update { it.copy(linking = true, message = "Buscando el otro dispositivo…") }
         try {
             val key = PairingCode.key(normalized)
+            suspend fun tryBluetooth(devices: List<String>): Boolean {
+                for (mac in devices) {
+                    _state.update { it.copy(message = "Probando por Bluetooth con ${bt.nameOf(mac) ?: mac}…") }
+                    val peer = runCatching { bt.connect(mac).use { pair(it, key, ip = null, btAddr = mac) } }.getOrNull() ?: continue
+                    _state.update { it.copy(message = "Vinculado con ${peer.name} por Bluetooth.") }
+                    refresh()
+                    requestSync()
+                    return true
+                }
+                return false
+            }
+            if (bluetooth != null) {
+                if (!bt.ready()) { _state.update { it.copy(message = "Prendé el Bluetooth y dale permiso a Trazo.") }; return@launch }
+                if (tryBluetooth(listOf(bluetooth))) return@launch
+                _state.update { it.copy(message = "No se pudo vincular por Bluetooth: revisá el código y que el otro tenga Trazo abierto con «Usar también Bluetooth».") }
+                return@launch
+            }
             suspend fun searched(): List<String> {
                 startDiscovery()
                 // Se da un momento a la búsqueda en la red de casa.
@@ -185,8 +221,9 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                 return (unpaired.values + nearby.values).distinct()
             }
             val first = addresses.ifEmpty { searched() }
-            if (first.isEmpty()) {
-                _state.update { it.copy(message = "No se encontró otro Trazo en esta red. Escribí su dirección (la de Tailscale sirve).") }
+            val viaBluetooth = store.config().bluetooth && bt.ready()
+            if (first.isEmpty() && !viaBluetooth) {
+                _state.update { it.copy(message = "No se encontró otro Trazo en esta red. Escribí su dirección (la de Tailscale sirve) o usá Bluetooth.") }
                 return@launch
             }
             val tried = HashSet<String>()
@@ -203,7 +240,8 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
             }
             if (tryHosts(first)) return@launch
             if (discover && addresses.isNotEmpty() && tryHosts(searched())) return@launch
-            _state.update { it.copy(message = "No se pudo vincular: revisá el código (vence a los 5 minutos) y que los dos estén en la misma red o en Tailscale.") }
+            if (viaBluetooth && tryBluetooth(bt.likely().map { it.address })) return@launch
+            _state.update { it.copy(message = "No se pudo vincular: revisá el código (vence a los 5 minutos) y que los dos estén en la misma red, en Tailscale o cerca por Bluetooth.") }
         } finally {
             _state.update { it.copy(linking = false) }
         }
@@ -219,6 +257,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
 
     private fun start() {
         startServer()
+        startBtServer()
         register()
         if (foreground) startDiscovery()
         if (loop == null) loop = scope.launch {
@@ -232,6 +271,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     private fun stop() {
         runCatching { server?.close() }
         server = null
+        stopBtServer()
         unregister()
         stopDiscovery()
         cancelCode()
@@ -247,6 +287,38 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         }
         server = ss
         Thread({ acceptLoop(ss) }, "trazo-sync-server").apply { isDaemon = true; start() }
+    }
+
+    /** Atiende por Bluetooth (RFCOMM) si está activado, prendido y con permiso. */
+    @Synchronized
+    private fun startBtServer() {
+        if (btServer != null || !store.config().enabled || !store.config().bluetooth) return
+        val ss = bt.listen() ?: return
+        btServer = ss
+        Thread({
+            while (true) {
+                val s = try { ss.accept() } catch (_: Exception) { break }
+                if (connections.get() >= MAX_CONNECTIONS) { runCatching { s.close() }; continue }
+                connections.incrementAndGet()
+                Thread({
+                    try {
+                        bt.guard(s).use { c -> serve(c, ip = null, btAddr = runCatching { s.remoteDevice.address }.getOrNull()) }
+                    } finally {
+                        connections.decrementAndGet()
+                    }
+                }, "trazo-bt-conn").apply { isDaemon = true; start() }
+            }
+            // Bluetooth apagado o servidor cerrado: se vuelve a abrir al volver a primer plano.
+            synchronized(this@SyncService) { if (btServer === ss) btServer = null }
+            runCatching { ss.close() }
+        }, "trazo-bt-server").apply { isDaemon = true; start() }
+    }
+
+    @Synchronized
+    private fun stopBtServer() {
+        val ss = btServer ?: return
+        btServer = null
+        runCatching { ss.close() }
     }
 
     private fun acceptLoop(ss: ServerSocket) {
@@ -265,27 +337,32 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
     private fun handle(socket: Socket) = socket.use { s ->
         s.soTimeout = READ_TIMEOUT
         s.tcpNoDelay = true
+        serve(tcp(s), ip = s.inetAddress.hostAddress, btAddr = null)
+    }
+
+    /** Atiende una conexión entrante, por la red ([ip]) o por Bluetooth ([btAddr]). */
+    private fun serve(conn: SyncConn, ip: String?, btAddr: String?) {
         val cfg = store.config()
         val ch = try {
-            SecureChannel.server(BufferedInputStream(s.getInputStream()), BufferedOutputStream(s.getOutputStream()), cfg.deviceId) { mode, id ->
+            SecureChannel.server(conn.input, conn.output, cfg.deviceId) { mode, id ->
                 when (mode) {
                     SecureChannel.Mode.SYNC -> if (cfg.enabled) store.peers().firstOrNull { it.deviceId == id }?.let { decodeKey(it.key) } else null
                     SecureChannel.Mode.PAIR -> pairingKey?.takeIf { System.currentTimeMillis() < pairingExpires }
                 }
             }
-        } catch (_: IOException) { return@use }
+        } catch (_: IOException) { return }
         when (ch.mode) {
-            SecureChannel.Mode.PAIR -> answerPairing(ch, s)
+            SecureChannel.Mode.PAIR -> answerPairing(ch, ip, btAddr)
             SecureChannel.Mode.SYNC -> {
                 if (!busy.tryLock()) {
                     runCatching { ch.receive(); ch.send(SyncMessage.Busy) }
-                    return@use
+                    return
                 }
                 val peer = ch.peerId
                 try {
                     setRunning(peer, true)
                     engine.serve(ch)
-                    synced(peer, s.inetAddress.hostAddress, null)
+                    synced(peer, ip, btAddr, null)
                 } catch (e: Exception) {
                     if (e !is SyncAuthException) messages[peer] = "Se cortó la conexión."
                 } finally {
@@ -296,7 +373,7 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         }
     }
 
-    private fun answerPairing(ch: SecureChannel, s: Socket) {
+    private fun answerPairing(ch: SecureChannel, ip: String?, btAddr: String?) {
         val hello = try { ch.receiveMessage() as? SyncMessage.PairHello } catch (_: SyncAuthException) {
             if (pairingFailures.incrementAndGet() >= MAX_PAIRING_FAILURES) cancelCode("Demasiados intentos con un código equivocado. Generá otro.")
             null
@@ -306,8 +383,8 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         val key = SecureChannel.newKey()
         val encoded = Base64.getEncoder().encodeToString(key)
         runCatching { ch.send(SyncMessage.PairWelcome(cfg.deviceId, deviceName(cfg), myAddresses(), encoded)) }.onFailure { return }
-        val addresses = (listOf(s.inetAddress.hostAddress.orEmpty()) + hello.addresses).filter { it.isNotBlank() }.distinct().take(MAX_ADDRESSES)
-        store.savePeer(SyncPeer(hello.deviceId, hello.name.take(40).ifBlank { "Dispositivo" }, encoded, addresses))
+        val addresses = (listOfNotNull(ip) + hello.addresses).filter { it.isNotBlank() }.distinct().take(MAX_ADDRESSES)
+        store.savePeer(SyncPeer(hello.deviceId, hello.name.take(40).ifBlank { "Dispositivo" }, encoded, addresses, bluetooth = btAddr))
         cancelCode("Vinculado con ${hello.name}.")
         scope.launch { refresh() }
         requestSync()
@@ -315,19 +392,22 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
 
     // ------------------------------------------------------------------ cliente
 
-    private fun pairWith(address: InetAddress, key: ByteArray): SyncPeer? {
+    private fun pairWith(address: InetAddress, key: ByteArray): SyncPeer? =
+        tcp(connect(address)).use { pair(it, key, ip = address.hostAddress, btAddr = null) }
+
+    private fun pair(conn: SyncConn, key: ByteArray, ip: String?, btAddr: String?): SyncPeer? {
         val cfg = store.config()
-        connect(address).use { s ->
-            val ch = SecureChannel.client(BufferedInputStream(s.getInputStream()), BufferedOutputStream(s.getOutputStream()), cfg.deviceId, SecureChannel.Mode.PAIR, key)
-            ch.send(SyncMessage.PairHello(cfg.deviceId, deviceName(cfg), myAddresses()))
-            val w = ch.receiveMessage() as? SyncMessage.PairWelcome ?: return null
-            if (w.deviceId == cfg.deviceId || runCatching { decodeKey(w.key) }.getOrNull()?.size != 32) return null
-            val addresses = (listOf(address.hostAddress.orEmpty()) + w.addresses).filter { it.isNotBlank() }.distinct().take(MAX_ADDRESSES)
-            val peer = SyncPeer(w.deviceId, w.name.take(40).ifBlank { "Dispositivo" }, w.key, addresses)
-            store.savePeer(peer)
-            return peer
-        }
+        val ch = SecureChannel.client(conn.input, conn.output, cfg.deviceId, SecureChannel.Mode.PAIR, key)
+        ch.send(SyncMessage.PairHello(cfg.deviceId, deviceName(cfg), myAddresses()))
+        val w = ch.receiveMessage() as? SyncMessage.PairWelcome ?: return null
+        if (w.deviceId == cfg.deviceId || runCatching { decodeKey(w.key) }.getOrNull()?.size != 32) return null
+        val addresses = (listOfNotNull(ip) + w.addresses).filter { it.isNotBlank() }.distinct().take(MAX_ADDRESSES)
+        val peer = SyncPeer(w.deviceId, w.name.take(40).ifBlank { "Dispositivo" }, w.key, addresses, bluetooth = btAddr)
+        store.savePeer(peer)
+        return peer
     }
+
+    private fun tcp(s: Socket) = SyncConn(BufferedInputStream(s.getInputStream()), BufferedOutputStream(s.getOutputStream()), s)
 
     private suspend fun syncAll(manual: Boolean) {
         val peers = store.peers()
@@ -349,13 +429,19 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         setRunning(peer.deviceId, true)
         try {
             val hosts = (listOfNotNull(nearby[peer.deviceId]) + peer.addresses).distinct()
-            for (host in hosts) for (a in resolve(host)) {
+            // Primero la red (casa o Tailscale); si no responde, Bluetooth. El segundo valor es la IP usada.
+            val targets = ArrayList<() -> Pair<SyncConn, String?>>()
+            for (h in hosts) for (a in resolve(h)) targets += { tcp(connect(a)) to a.hostAddress }
+            val mac = peer.bluetooth
+            if (mac != null && cfg.bluetooth && bt.ready()) targets += { bt.connect(mac) to null }
+            for (open in targets) {
                 try {
-                    connect(a).use { s ->
-                        val ch = SecureChannel.client(BufferedInputStream(s.getInputStream()), BufferedOutputStream(s.getOutputStream()), cfg.deviceId, SecureChannel.Mode.SYNC, key)
+                    val (conn, ip) = open()
+                    conn.use { c ->
+                        val ch = SecureChannel.client(c.input, c.output, cfg.deviceId, SecureChannel.Mode.SYNC, key)
                         if (ch.peerId != peer.deviceId) throw SyncAuthException("Otro dispositivo")
                         val report = engine.runClient(ch)
-                        synced(peer.deviceId, a.hostAddress, report)
+                        synced(peer.deviceId, ip, if (ip == null) peer.bluetooth else null, report)
                         return
                     }
                 } catch (_: SyncBusyException) {
@@ -368,17 +454,18 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                     continue
                 }
             }
-            messages[peer.deviceId] = "No está en la misma red ni en Tailscale."
+            messages[peer.deviceId] = if (cfg.bluetooth) "No está en la misma red, ni en Tailscale, ni cerca por Bluetooth." else "No está en la misma red ni en Tailscale."
         } finally {
             setRunning(peer.deviceId, false)
         }
     }
 
-    private fun synced(peerId: String, address: String?, report: SyncReport?) {
+    private fun synced(peerId: String, address: String?, btAddr: String?, report: SyncReport?) {
         store.update(peerId) { p ->
             p.copy(
                 lastSync = System.currentTimeMillis(),
                 addresses = (listOfNotNull(address?.takeIf { it.isNotBlank() }) + p.addresses).distinct().take(MAX_ADDRESSES),
+                bluetooth = btAddr ?: p.bluetooth,
             )
         }
         messages[peerId] = when {
@@ -519,7 +606,14 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         val peers = store.peers().map { p ->
             SyncPeerStatus(p, nearby.containsKey(p.deviceId), p.deviceId in running, messages[p.deviceId])
         }
-        _state.update { it.copy(config = cfg, deviceName = deviceName(cfg), peers = peers, addresses = myAddresses()) }
+        val btReady = bt.ready()
+        _state.update {
+            it.copy(
+                config = cfg, deviceName = deviceName(cfg), peers = peers, addresses = myAddresses(),
+                bluetoothAvailable = bt.available, bluetoothReady = btReady,
+                bluetoothDevices = if (btReady && cfg.bluetooth) bt.bonded() else emptyList(),
+            )
+        }
     }
 
     private fun deviceName(cfg: SyncConfig) = cfg.name.ifBlank { Build.MODEL ?: "Trazo" }
