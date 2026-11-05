@@ -41,6 +41,15 @@ class FoldersAndCoversTest {
         assertEquals(n, TrazoFormat.decodeNotebook(TrazoFormat.encodeLazy(LazyNotebook.of(n))))
     }
 
+    @Test fun `streamed notebook matches encoded text and last page reads without decoding pages`() {
+        val n = LazyNotebook.of(Notebook("n", "Largo", listOf(Page("p1"), Page("p2"), Page("p3")), lastPage = 2, folderId = "f1"))
+        val text = TrazoFormat.encodeLazy(n)
+        assertEquals(text, StringBuilder().also { TrazoFormat.writeLazy(n, it) }.toString())
+        assertEquals(2, TrazoFormat.lastPage(text))
+        assertEquals(0, TrazoFormat.lastPage(TrazoFormat.encodeLazy(n.copy(lastPage = 0))))
+        assertEquals(0, TrazoFormat.lastPage("no es json"))
+    }
+
     @Test fun `unknown cover kind from a future version falls back to first page`() {
         val text = legacyV1.replace("\"lastPage\":1", "\"lastPage\":1,\"coverKind\":\"VIDEO\"")
         assertEquals(CoverKind.FIRST_PAGE, TrazoFormat.decodeNotebook(text).coverKind)

@@ -151,26 +151,18 @@ class SyncEngine(
             }
             if (id in local.busy || id in remote.busy) { deferred++; continue }
             val key = SyncKey.NotebookKey(id)
-            val localText = if (lp != null) store.read(key) else null
-            val localNb = localText?.let { decodeNotebook(it, id) }
-            if (localText != null && localNb == null) { deferred++; continue }
-            val r = if (rp != null) get(key) else null
-            val remoteNb = r?.text?.let { decodeNotebook(it, id) }
-            if (r?.text != null && remoteNb == null) { deferred++; continue }
-            val result = SyncMerge.notebook(base.notebooks[id], localNb, remoteNb, ids)
-            val merged = result.notebook
-            val mergedPrint = merged?.let(SyncMerge::print)
-            val mergedText = merged?.let(TrazoFormat::encodeLazy)
+            val m = mergeNotebook(key, base.notebooks[id], lp != null, rp != null, ::get)
+            if (m == null) { deferred++; continue }
             var ok = true
-            if (mergedPrint != lp) {
-                if (store.replace(key, SyncHash.fingerprint(localText), mergedText)) received++ else ok = false
+            if (m.print != lp) {
+                if (store.replace(key, m.localFingerprint, m.text)) received++ else ok = false
             }
-            if (ok && mergedPrint != rp) {
-                if (put(key, mergedText, r?.fingerprint ?: SyncHash.fingerprint(null))) sent++ else ok = false
+            if (ok && m.print != rp) {
+                if (put(key, m.text, m.remoteFingerprint)) sent++ else ok = false
             }
             if (ok) {
-                conflicts += result.conflicts
-                if (mergedPrint == null) notebooks.remove(id) else notebooks[id] = mergedPrint
+                conflicts += m.conflicts
+                if (m.print == null) notebooks.remove(id) else notebooks[id] = m.print
             } else deferred++
         }
 
@@ -224,6 +216,41 @@ class SyncEngine(
         ch.send(SyncMessage.Bye)
         val announced = remote.addresses.map { it.trim() }.filter { it.isNotEmpty() && it.length <= 64 }.distinct().take(MAX_ADDRESSES)
         return SyncReport(received, sent, conflicts, deferred, announced)
+    }
+
+    private class MergedNotebook(
+        val print: NotebookPrint?,
+        val text: String?,
+        val conflicts: Int,
+        val localFingerprint: String,
+        val remoteFingerprint: String,
+    )
+
+    /**
+     * Fusiona un cuaderno y devuelve solo su texto final y las huellas: los textos leídos y los cuadernos
+     * decodificados se sueltan apenas dejan de hacer falta, así un cuaderno largo no ocupa la memoria
+     * varias veces. Null si alguno de los dos no se pudo leer.
+     */
+    private fun mergeNotebook(
+        key: SyncKey.NotebookKey,
+        base: NotebookPrint?,
+        hasLocal: Boolean,
+        hasRemote: Boolean,
+        get: (SyncKey) -> SyncMessage.Text,
+    ): MergedNotebook? {
+        var localText = if (hasLocal) store.read(key) else null
+        val localFingerprint = SyncHash.fingerprint(localText)
+        val localNb = localText?.let { decodeNotebook(it, key.id) }
+        if (localText != null && localNb == null) return null
+        localText = null
+        var remoteText = if (hasRemote) get(key) else null
+        val remoteFingerprint = remoteText?.fingerprint ?: SyncHash.fingerprint(null)
+        val remoteNb = remoteText?.text?.let { decodeNotebook(it, key.id) }
+        if (remoteText?.text != null && remoteNb == null) return null
+        remoteText = null
+        val result = SyncMerge.notebook(base, localNb, remoteNb, ids)
+        val merged = result.notebook
+        return MergedNotebook(merged?.let(SyncMerge::print), merged?.let(TrazoFormat::encodeLazy), result.conflicts, localFingerprint, remoteFingerprint)
     }
 
     private fun decodeNotebook(text: String, id: String): LazyNotebook? =

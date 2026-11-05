@@ -346,7 +346,7 @@ class TrazoRepository(root: File) {
     }
 
     fun saveLazy(n: LazyNotebook) = synchronized(lock) {
-        write(fileFor(n.id), TrazoFormat.encodeLazy(n))
+        writeNotebook(fileFor(n.id), n)
     }
 
     fun saveNotebook(n: Notebook) = synchronized(lock) {
@@ -490,14 +490,15 @@ class TrazoRepository(root: File) {
      */
     fun syncReplace(key: SyncKey, expect: String, text: String?): Boolean = synchronized(lock) {
         if (key is SyncKey.NotebookKey && key.id in openNotebooks) return false
-        val current = syncRead(key)
-        if (SyncHash.fingerprint(current) != expect) return false
+        // Del archivo actual solo hacen falta su huella y la última hoja: no se lo retiene entero.
+        val keep = syncRead(key).let { current ->
+            if (SyncHash.fingerprint(current) != expect) return false
+            if (key is SyncKey.NotebookKey) current?.let(TrazoFormat::lastPage) ?: 0 else 0
+        }
         val f = syncFile(key)
         when (key) {
             is SyncKey.NotebookKey -> if (text == null) f.delete() else {
-                val incoming = TrazoFormat.decodeLazy(text)
-                val keep = current?.let { runCatching { TrazoFormat.decodeLazy(it).lastPage }.getOrNull() } ?: 0
-                write(f, TrazoFormat.encodeLazy(incoming.copy(lastPage = keep)))
+                writeNotebook(f, TrazoFormat.decodeLazy(text).copy(lastPage = keep))
             }
             SyncKey.Patterns -> {
                 val list = TrazoFormat.decodePatterns(text ?: return false)
@@ -533,6 +534,23 @@ class TrazoRepository(root: File) {
     }
 
     private fun write(file: AtomicFile, text: String) = write(file, text.toByteArray(Charsets.UTF_8))
+
+    /** Un cuaderno directo al archivo, sin armar su texto ni sus bytes enteros en memoria. */
+    private fun writeNotebook(file: AtomicFile, n: LazyNotebook) {
+        val out = file.startWrite()
+        try {
+            val w = java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 64 * 1024)
+            TrazoFormat.writeLazy(n, w)
+            w.flush()
+            file.finishWrite(out)
+        } catch (e: Exception) {
+            file.failWrite(out)
+            throw e
+        } catch (e: OutOfMemoryError) {
+            file.failWrite(out)
+            throw e
+        }
+    }
 
     private fun write(file: AtomicFile, bytes: ByteArray) {
         val out = file.startWrite()

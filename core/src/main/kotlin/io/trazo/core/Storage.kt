@@ -293,14 +293,28 @@ object TrazoFormat {
     fun decodePage(text: String): Page = json.decodeFromString(Page.serializer(), text)
 
     /** Mismo archivo que [encodeNotebook]; las páginas fijas se copian tal cual, sin decodificarlas. */
-    fun encodeLazy(n: LazyNotebook): String {
+    fun encodeLazy(n: LazyNotebook): String =
+        StringBuilder(n.slots.sumOf { it.json().length } + 512).also { writeLazy(n, it) }.toString()
+
+    /**
+     * Lo mismo que [encodeLazy], escrito de a partes en [out]: guardar un cuaderno largo directo a un
+     * archivo no arma el texto entero en memoria.
+     */
+    fun writeLazy(n: LazyNotebook, out: Appendable) {
         val meta = json.encodeToString(NotebookMeta.serializer(), NotebookMeta(n.id, n.name, n.paper, n.createdAt, n.updatedAt, n.lastPage, n.coverKind, n.coverImage, n.folderId))
-        val out = StringBuilder(n.slots.sumOf { it.json().length } + meta.length + 96)
-        out.append("{\"format\":\"").append(FORMAT).append("\",\"schemaVersion\":").append(SCHEMA_VERSION).append(",\"notebook\":")
+        out.append("{\"format\":\"").append(FORMAT).append("\",\"schemaVersion\":").append(SCHEMA_VERSION.toString()).append(",\"notebook\":")
         out.append(meta, 0, meta.length - 1).append(",\"pages\":[")
         n.slots.forEachIndexed { i, slot -> if (i > 0) out.append(','); out.append(slot.json()) }
-        return out.append("]}}").toString()
+        out.append("]}}")
     }
+
+    /** La última hoja abierta, sin copiar las páginas; 0 si el texto no tiene la forma esperada. */
+    fun lastPage(text: String): Int = runCatching {
+        val scan = JsonSpans(text)
+        val nb = scan.members(0).getValue("\"notebook\"")
+        val r = scan.members(nb.first)["\"lastPage\""] ?: return 0
+        text.substring(r.first, r.last + 1).trim().toInt()
+    }.getOrDefault(0)
 
     /**
      * Lee un cuaderno dejando todas las páginas fijas como texto: abrir un cuaderno largo no decodifica

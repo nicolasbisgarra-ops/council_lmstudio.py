@@ -560,6 +560,10 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
                 } catch (e: IllegalStateException) {
                     messages[peer.deviceId] = e.message ?: "No se pudo sincronizar."
                     return
+                } catch (_: OutOfMemoryError) {
+                    // Un cuaderno enorme no tumba la app: se avisa y se sigue con los demás dispositivos.
+                    messages[peer.deviceId] = "Un cuaderno es demasiado grande para sincronizar en este equipo."
+                    return
                 } catch (_: IOException) {
                     continue
                 }
