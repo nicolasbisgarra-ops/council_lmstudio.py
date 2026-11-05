@@ -4,7 +4,7 @@ io.trazo.app.ExportInstrumentedTest:...
 io.trazo.app.ParametricExportInstrumentedTest:...
 io.trazo.app.PageHistoryInstrumentedTest:..
 
-Time: 106.046
+Time: 136.168
 
 OK (22 tests)
 
