@@ -869,9 +869,11 @@ class InkCanvasView @JvmOverloads constructor(
         }
         // El grosor del borde depende del zoom: se regraba solo si el zoom cambió de verdad.
         val scaleChanged = mode == Mode.NOTEBOOK && paperColors.border != 0 && kotlin.math.abs(pxPerUnit - dryNodeScale) > 0.02f * dryNodeScale
-        val sized = node.width == max(1, pageWidth) && node.height == max(1, pageHeight)
+        val w = max(1, kotlin.math.ceil(pageWidth.toDouble()).toInt())
+        val h = max(1, kotlin.math.ceil(pageHeight.toDouble()).toInt())
+        val sized = node.width == w && node.height == h
         if (!dryNodeValid || !sized || !node.hasDisplayList() || version != dryNodeVersion || math !== dryNodeMath || scaleChanged) {
-            node.setPosition(0, 0, max(1, pageWidth), max(1, pageHeight))
+            node.setPosition(0, 0, w, h)
             val cc = node.beginRecording()
             try {
                 if (mode == Mode.NOTEBOOK && paperColors.shadow != 0) cc.drawRect(4f, 6f, pageWidth + 4f, pageHeight + 6f, shadowPaint)
