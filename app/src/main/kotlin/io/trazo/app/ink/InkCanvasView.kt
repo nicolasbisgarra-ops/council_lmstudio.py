@@ -319,6 +319,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun invalidateContent() {
         cacheValid = false
+        dryNodeValid = false
         inkOverlayVersion = -1L
         invalidate()
     }
@@ -450,6 +451,7 @@ class InkCanvasView @JvmOverloads constructor(
         cancelContact()
         controller?.removeListener(listener)
         cache?.recycle(); cache = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { dryNode?.discardDisplayList(); dryNodeValid = false }
         inkOverlay?.recycle(); inkOverlay = null; inkOverlayVersion = -1L
         super.onDetachedFromWindow()
     }
@@ -847,7 +849,60 @@ class InkCanvasView @JvmOverloads constructor(
         canvas.drawRect(topLeft.first, topLeft.second, bottomRight.first, bottomRight.second, workspaceBorderPaint)
     }
 
+    // Capa seca en la GPU (API 29+): la hoja se graba una vez como lista de dibujo en coordenadas de la hoja y
+    // en cada cuadro solo cambia la matriz. Mover o hacer zoom ya no vuelve a pintar ni subir un bitmap de
+    // pantalla completa, y escribir solo dibuja la tinta húmeda encima: así se sostienen los 120 Hz.
+    private var dryNode: android.graphics.RenderNode? = null
+    private var dryNodeValid = false
+    private var dryNodeVersion = -1L
+    private var dryNodeMath: List<InkStroke> = emptyList()
+    private var dryNodeScale = 0f
+
+    private fun drawDryNode(canvas: Canvas): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !canvas.isHardwareAccelerated) return false
+        val c = controller
+        val version = c?.page?.version ?: -1L
+        val math = c?.mathResults.orEmpty()
+        val node = dryNode ?: android.graphics.RenderNode("trazo-dry").also {
+            it.setClipToBounds(false)
+            dryNode = it
+        }
+        // El grosor del borde depende del zoom: se regraba solo si el zoom cambió de verdad.
+        val scaleChanged = mode == Mode.NOTEBOOK && paperColors.border != 0 && kotlin.math.abs(pxPerUnit - dryNodeScale) > 0.02f * dryNodeScale
+        val sized = node.width == max(1, pageWidth) && node.height == max(1, pageHeight)
+        if (!dryNodeValid || !sized || !node.hasDisplayList() || version != dryNodeVersion || math !== dryNodeMath || scaleChanged) {
+            node.setPosition(0, 0, max(1, pageWidth), max(1, pageHeight))
+            val cc = node.beginRecording()
+            try {
+                if (mode == Mode.NOTEBOOK && paperColors.shadow != 0) cc.drawRect(4f, 6f, pageWidth + 4f, pageHeight + 6f, shadowPaint)
+                PaperPainter.draw(cc, paper, pageWidth, pageHeight, paperColors)
+                if (mode == Mode.NOTEBOOK && paperColors.border != 0) {
+                    borderPaint.color = paperColors.border
+                    borderPaint.strokeWidth = 1.5f * density / pxPerUnit
+                    cc.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), borderPaint)
+                }
+                c?.page?.images?.takeIf { it.isNotEmpty() }?.let { ImagePainter.draw(cc, it, paperColors.dark) }
+                c?.page?.allInk?.let { StrokePainter.drawAll(cc, it, paperColors.dark) }
+                StrokePainter.drawInkOnly(cc, math, paperColors.dark)
+            } finally {
+                node.endRecording()
+            }
+            dryNodeVersion = version
+            dryNodeMath = math
+            dryNodeScale = pxPerUnit
+            dryNodeValid = true
+        }
+        canvas.save()
+        canvas.concat(docToScreen)
+        canvas.drawRenderNode(node)
+        canvas.restore()
+        // La capa raster ya no hace falta: se libera su memoria.
+        cache?.let { it.recycle(); cache = null; cacheValid = false }
+        return true
+    }
+
     private fun drawDryLayer(canvas: Canvas) {
+        if (drawDryNode(canvas)) return
         val c = controller
         docToScreen.getValues(currentMatrixValues)
         val version = c?.page?.version ?: -1L

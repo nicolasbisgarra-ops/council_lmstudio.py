@@ -1063,14 +1063,26 @@ class InkController(
         return stroke.copy(points = head + end)
     }
 
-    private fun currentStroke() = InkStroke(
-        id = currentId,
-        points = points.toList(),
-        color = contactStyle.color,
-        width = contactStyle.width,
-        startTime = strokeClock(downTime),
-        brush = contactStyle.brush,
-    )
+    /**
+     * Trazo en curso. Se dibuja en cada cuadro (120 Hz), así que se reutiliza mientras no lleguen puntos nuevos:
+     * los puntos solo se agregan al final o se vacían, de modo que tamaño + id + inicio identifican la versión.
+     */
+    private fun currentStroke(): InkStroke {
+        wetCache?.let { c ->
+            if (c.points.size == points.size && c.id == currentId && wetCacheDown == downTime && wetCacheStyle == contactStyle) return c
+        }
+        return InkStroke(
+            id = currentId,
+            points = points.toList(),
+            color = contactStyle.color,
+            width = contactStyle.width,
+            startTime = strokeClock(downTime),
+            brush = contactStyle.brush,
+        ).also { wetCache = it; wetCacheDown = downTime; wetCacheStyle = contactStyle }
+    }
+    private var wetCache: InkStroke? = null
+    private var wetCacheDown = 0L
+    private var wetCacheStyle: InkStyle? = null
 
     /** Trazos de la forma arrastrada; vacío mientras es demasiado chica (un toque no deja una forma). */
     private fun shapeStrokes(idGen: IdGenerator): List<InkStroke> {

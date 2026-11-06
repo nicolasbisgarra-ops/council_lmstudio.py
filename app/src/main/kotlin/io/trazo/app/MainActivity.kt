@@ -67,9 +67,28 @@ class NavViewModel : ViewModel() {
 class MainActivity : ComponentActivity() {
     private val nav: NavViewModel by viewModels()
 
+    /**
+     * Pide el modo de pantalla más rápido (120 Hz en tabletas y teléfonos que lo tienen) con la misma
+     * resolución. Sin esto muchos equipos bajan a 60 Hz en apps que no lo piden y la tinta se siente atrasada.
+     */
+    @Suppress("DEPRECATION")
+    private fun preferHighestRefreshRate() {
+        runCatching {
+            val display = windowManager.defaultDisplay ?: return
+            val current = display.mode
+            val best = display.supportedModes
+                .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            if (best.modeId != window.attributes.preferredDisplayModeId) {
+                window.attributes = window.attributes.also { it.preferredDisplayModeId = best.modeId }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        preferHighestRefreshRate()
         if (savedInstanceState == null && nav.stack.size == 1) {
             intent.getStringExtra(EXTRA_NOTEBOOK_ID)?.let { nav.push(Screen.Editor(it)) }
         }
