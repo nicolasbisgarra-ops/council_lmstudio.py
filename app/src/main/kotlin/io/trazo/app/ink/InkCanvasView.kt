@@ -237,6 +237,9 @@ class InkCanvasView @JvmOverloads constructor(
         pathEffect = DashPathEffect(floatArrayOf(8f * density, 6f * density), 0f)
     }
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /** Halos de la integral o la raíz recién puesta: zona translúcida para escribir extremos o radicando. */
+    private val haloFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val haloRect = RectF()
     private val selectionFill = Paint().apply { style = Paint.Style.FILL }
     /** Contorno de la goma: claro y oscuro a la vez para verse sobre cualquier tinta. */
     private val eraserOuter = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -283,6 +286,19 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
+    /** Acomoda lo escrito en un halo de extremo cuando pasa la pausa sin seguir escribiendo en él. */
+    private val haloSettle = Runnable {
+        val c = controller ?: return@Runnable
+        if (c.haloTick(SystemClock.uptimeMillis())) invalidateContent() else if (!c.isContactActive) scheduleHaloSettle()
+        invalidate()
+    }
+
+    private fun scheduleHaloSettle() {
+        removeCallbacks(haloSettle)
+        val due = controller?.haloDeadline ?: return
+        postDelayed(haloSettle, max(0L, due - SystemClock.uptimeMillis()) + 16L)
+    }
+
     init {
         isFocusable = true
         tag = TAG
@@ -296,6 +312,7 @@ class InkCanvasView @JvmOverloads constructor(
         lassoPaint.color = accentColor
         handlePaint.color = accentColor
         selectionFill.color = withAlpha(accentColor, 24)
+        haloFill.color = withAlpha(accentColor, 26)
     }
 
     private fun withAlpha(color: Int, alpha: Int) = (color and 0xFFFFFF) or (alpha shl 24)
@@ -629,6 +646,7 @@ class InkCanvasView @JvmOverloads constructor(
                     } else {
                         val (x, y) = boundedScreenInkPoint(event.getX(index), event.getY(index))
                         c.penUp(x, y, event.getPressure(index), event.eventTime)
+                        scheduleHaloSettle()
                     }
                     drawingPointerId = INVALID
                     if (drawingKind != PointerKind.FINGER) stylusNearUntil = event.eventTime + PALM_WINDOW_MS
@@ -759,6 +777,16 @@ class InkCanvasView @JvmOverloads constructor(
         canvas.concat(docToScreen)
         StrokePainter.drawInkOnly(canvas, wet, paperColors.dark)
         // Capa del Modo IA: encima de la tinta, se oculta con el ojo.
+        val halos = c.halos()
+        if (halos.isNotEmpty()) {
+            lassoPaint.strokeWidth = 1.2f * density / pxPerUnit
+            val r = 8f * density / pxPerUnit
+            halos.forEach { h ->
+                haloRect.set(h.zone.left, h.zone.top, h.zone.right, h.zone.bottom)
+                canvas.drawRoundRect(haloRect, r, r, haloFill)
+                canvas.drawRoundRect(haloRect, r, r, lassoPaint)
+            }
+        }
         c.page.ai?.takeIf { c.aiVisible }?.let { ai -> AiMarkPainter.draw(canvas, ai.notes, ai.verdict(c.page.strokes)) }
         val lasso = c.lassoPath
         if (lasso.size > 1) {

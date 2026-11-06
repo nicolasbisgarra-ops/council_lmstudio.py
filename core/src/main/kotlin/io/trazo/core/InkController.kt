@@ -185,6 +185,61 @@ class InkController(
     private var shapeX1 = 0f
     private var shapeY1 = 0f
 
+    // Halos de la última integral o raíz puesta ([Halos]).
+    private var haloGroup: String? = null
+    private var contactHalo: Halo? = null
+    private val pendingLimit = ArrayList<String>()
+    private var pendingKind: Halo.Kind? = null
+    private var pendingAt = 0L
+    private val placedLimits = HashMap<Halo.Kind, Float>()
+
+    /** Halos visibles (zonas para escribir los extremos de la integral o el radicando). */
+    fun halos(): List<Halo> = haloGroup?.let { Halos.of(page.strokes, it) }.orEmpty()
+
+    /** Momento (reloj de eventos) en que lo escrito en un halo de extremo se acomoda; null si no hay nada. */
+    val haloDeadline: Long? get() = if (pendingLimit.isEmpty()) null else pendingAt + HALO_SETTLE_MS
+
+    /** Acomoda lo escrito en un halo de extremo si ya pasó el tiempo. @return true si cambió la hoja. */
+    fun haloTick(nowMs: Long): Boolean {
+        val due = haloDeadline ?: return false
+        if (mode != Mode.NONE || nowMs < due) return false
+        return commitPendingLimit()
+    }
+
+    private fun commitPendingLimit(): Boolean {
+        val kind = pendingKind
+        val strokes = pendingLimit.mapNotNull { page.find(it) }
+        pendingLimit.clear(); pendingKind = null
+        val group = haloGroup?.let { g -> page.strokes.filter { it.groupId == g } }.orEmpty()
+        if (kind == null || strokes.isEmpty() || group.isEmpty()) return false
+        val moved = Halos.placeLimit(kind, group.bounds(), strokes, placedLimits[kind])
+        history.perform(page, StrokeEdit(strokes, moved, StrokeEdit.Kind.TRANSFORM))
+        placedLimits[kind] = moved.bounds().right
+        emit(InkEvent.PageChanged)
+        return true
+    }
+
+    private fun clearHalos() {
+        haloGroup = null; contactHalo = null
+        pendingLimit.clear(); pendingKind = null; placedLimits.clear()
+    }
+
+    private fun showHalosFor(output: List<InkStroke>) {
+        val first = output.firstOrNull() ?: return
+        if (first.patternId != DefaultPatterns.INTEGRAL && first.patternId != DefaultPatterns.ROOT) return
+        clearHalos()
+        haloGroup = first.groupId
+    }
+
+    /** Salida de [pattern] en [anchor]; la raíz sigue el trazo de la mano ([RootFit]). */
+    private fun outputFor(pattern: InkPattern, anchor: Bounds, gesture: List<InkStroke>, start: Long, style: InkStyle?): List<InkStroke> {
+        if (pattern.id == DefaultPatterns.ROOT) {
+            val dy = anchor.centerY - gesture.bounds().centerY
+            RootFit.fit(pattern, gesture, ids, start, style, dy)?.let { return it }
+        }
+        return InkReplacement.place(pattern, anchor, ids, start, style = style)
+    }
+
     /** Trazo en curso (tinta húmeda) para dibujar sin esperar al reconocimiento. */
     val inProgress: InkStroke?
         get() = if (mode == Mode.DRAW && points.isNotEmpty()) currentStroke() else null
@@ -230,6 +285,7 @@ class InkController(
         clearShapeSelection()
         this.page = page
         this.history = history
+        clearHalos()
         emit(InkEvent.PageChanged)
     }
 
@@ -270,6 +326,16 @@ class InkController(
                 dismissedSelection = true
             }
             clearSelection()
+        }
+        // Lo escrito en un halo de extremo se acomoda al escribir fuera de él o con otra herramienta.
+        if (pendingLimit.isNotEmpty()) {
+            val zone = halos().firstOrNull { it.kind == pendingKind }?.zone
+            if (effective != Tool.PEN || zone == null || !zone.contains(x, y)) commitPendingLimit()
+        }
+        contactHalo = null
+        if (haloGroup != null && effective != Tool.PAN) {
+            contactHalo = if (effective == Tool.PEN) halos().firstOrNull { it.zone.contains(x, y) } else null
+            if (contactHalo == null && pendingLimit.isEmpty()) clearHalos()
         }
         when (effective) {
             Tool.PEN -> {
@@ -359,6 +425,7 @@ class InkController(
                 val explained = tap && !dismissedSelection && tapAt(x, y, wholeLine = false)
                 if (!heldWithoutInk && !tapToDismiss && !explained) {
                     history.perform(page, StrokeEdit(emptyList(), listOf(stroke), StrokeEdit.Kind.DRAW))
+                    contactHalo?.let { inHalo(it, stroke, timeMs) }
                     emit(InkEvent.PageChanged)
                 }
                 resetContact()
@@ -416,6 +483,25 @@ class InkController(
             }
             Mode.CONSUMED -> resetContact()
             Mode.NONE -> resetContact()
+        }
+    }
+
+    /** El trazo [stroke] se escribió en [halo]: queda pendiente como extremo, o alarga la barra de la raíz. */
+    private fun inHalo(halo: Halo, stroke: InkStroke, timeMs: Long) {
+        when (halo.kind) {
+            Halo.Kind.RADICAND -> {
+                val group = page.strokes.filter { it.groupId == halo.groupId }
+                val bar = RootFit.barOf(group) ?: return
+                val h = group.bounds().height.coerceAtLeast(1f)
+                if (stroke.bounds.right <= bar.bounds.right - 0.05f * h) return
+                val longer = Halos.extendBar(bar, stroke.bounds.right + 0.15f * h) ?: return
+                history.amendLast(page, StrokeEdit(listOf(bar), listOf(longer), StrokeEdit.Kind.TRANSFORM))
+            }
+            else -> {
+                if (pendingKind != halo.kind) { pendingLimit.clear(); pendingKind = halo.kind }
+                pendingLimit += stroke.id
+                pendingAt = timeMs
+            }
         }
     }
 
@@ -492,6 +578,7 @@ class InkController(
 
     fun undo(): Boolean {
         if (mode != Mode.NONE) return false
+        clearHalos()
         clearSelection()
         clearShapeSelection()
         return (history.undo(page) != null).also { if (it) emit(InkEvent.PageChanged) }
@@ -499,6 +586,7 @@ class InkController(
 
     fun redo(): Boolean {
         if (mode != Mode.NONE) return false
+        clearHalos()
         clearSelection()
         clearShapeSelection()
         return (history.redo(page) != null).also { if (it) emit(InkEvent.PageChanged) }
@@ -523,9 +611,10 @@ class InkController(
         }
         val start = strokeClock(if (nowMs != 0L) nowMs else gesture.last().endTime)
         val anchor = alignedAnchor(pattern, gesture.bounds(), gestureIds.toSet())
-        val output = InkReplacement.place(pattern, anchor, ids, start, style = gesture.last().style)
+        val output = outputFor(pattern, anchor, gesture, start, gesture.last().style)
         history.perform(page, StrokeEdit(gesture, output, StrokeEdit.Kind.CONVERT))
         refreshCalcs(output)
+        showHalosFor(output)
         if (selection.any { it in gestureIds }) clearSelection()
         emit(InkEvent.Converted(pattern, 1f, gesture, output))
         emit(InkEvent.PageChanged)
@@ -542,6 +631,7 @@ class InkController(
         val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style, elastic = false)
         history.perform(page, StrokeEdit(emptyList(), output, StrokeEdit.Kind.INSERT))
         refreshCalcs(output)
+        showHalosFor(output)
         emit(InkEvent.PageChanged)
         return output
     }
@@ -698,6 +788,7 @@ class InkController(
         )
         if (edit.isEmpty) return
         history.perform(page, edit)
+        clearHalos()
         selection = emptyList(); clearShapeSelection()
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
     }
@@ -909,11 +1000,12 @@ class InkController(
             return
         }
         val anchor = alignedAnchor(r.match.pattern, anchorGesture.bounds(), r.gesture.map { it.id }.toSet())
-        val output = InkReplacement.place(r.match.pattern, anchor, ids, strokeClock(downTime), style = contactStyle)
+        val output = outputFor(r.match.pattern, anchor, anchorGesture, strokeClock(downTime), contactStyle)
         // Un solo comando: deshacer restaura todo el gesto (incluido el trazo en curso).
         val edit = StrokeEdit(r.gesture, output, StrokeEdit.Kind.CONVERT)
         history.perform(page, edit)
         refreshCalcs(output)
+        showHalosFor(output)
         mode = Mode.CONSUMED
         points.clear()
         emit(InkEvent.Converted(r.match.pattern, r.match.score, r.gesture, output))
@@ -1119,6 +1211,7 @@ class InkController(
         const val MIN_SHAPE_PX = 6f
         /** Un contacto más corto que esto es un toque. */
         const val TAP_MS = 300L
+        const val HALO_SETTLE_MS = 900L
         val PREVIEW_IDS = IdGenerator { "preview" }
     }
 }

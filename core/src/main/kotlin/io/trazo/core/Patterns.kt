@@ -275,7 +275,7 @@ object InkReplacement {
         return copy(from = a, to = b, minFactor = minFactor.coerceIn(0f, 1f))
     }
 
-    private fun InkStroke.adopting(style: InkStyle?): InkStroke {
+    internal fun InkStroke.adopting(style: InkStyle?): InkStroke {
         // El resaltador no se hereda: la salida es tinta.
         if (style == null || style.brush == Brush.HIGHLIGHTER || color != DEFAULT_INK_COLOR) return this
         return copy(
