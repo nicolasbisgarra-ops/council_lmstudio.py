@@ -11,16 +11,16 @@ import kotlin.math.min
  * - Un cierre de paréntesis, corchete o llave toma la altura y la posición vertical de su apertura
  *   (la última sin cerrar, a su izquierda, en el mismo renglón).
  * - Una apertura (o un cierre sin pareja) solo toma la altura de otro signo de agrupación: junto a
- *   un número, una x, un + o un − se centra en su línea sin cambiar de tamaño.
- * - Cualquier otra forma se iguala con la forma reconocida más cercana del renglón: si su tamaño es
- *   parecido (entre la mitad y el doble) toma su misma altura; si no (=, −, ∫…), solo se centra en
- *   su misma línea, sin cambiar de tamaño.
+ *   un número, una x, un + o un − se centra en su línea, y junto a una integral en su medio, sin
+ *   cambiar de tamaño.
+ * - Los números y las letras nunca cambian de tamaño: se apoyan en el piso de la forma reconocida
+ *   más cercana del renglón. Las integrales, raíces y sumatorias solo se centran en su línea.
  * - Los "contenedores" (paréntesis, integrales, raíz, fracción, sumatoria) no sirven de referencia
  *   para las demás formas: un número dentro de una matriz no se centra en el corchete.
  * - Los signos de operación (+, −, ×, ÷, =, <…) tampoco: no marcan la altura del renglón. Ellos se
  *   centran en la línea de las letras y números más cercanos, sin cambiar de tamaño.
  * - Las variables (x, y, letras griegas…) nunca cambian de tamaño: solo bajan o suben hasta el piso
- *   de la forma de al lado. Un número toma la altura de otro número, no la de una letra.
+ *   de la forma de al lado. Un número se apoya en otro número antes que en una letra.
  * - Lo escrito claramente más arriba o más abajo que la referencia (más de [OFFSET] de su alto: un
  *   exponente, un numerador, un denominador) queda donde se escribió. Una raya con algo justo encima
  *   (la barra de una fracción) tampoco se mueve.
@@ -99,9 +99,8 @@ object AutoAlign {
             if (refPattern?.let(::kindOf) != null) {
                 val ratio = predicted / ref.bounds.height.coerceAtLeast(0.5f)
                 if (ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) return resized(gesture, ref.bounds, scale)
-            } else if (refPattern != null && isContainer(refPattern)) {
-                return gesture
             }
+            // Junto a una integral, una raíz o una sumatoria se centra en su medio.
             val dy = ref.bounds.centerY - gesture.centerY
             return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
         }
@@ -124,23 +123,19 @@ object AutoAlign {
             }
         }
         val refPattern = lookup(ref.patternId)
-        val byFloor = variable || refPattern?.let(::isVariable) == true
-        // Entre una letra y un número de distinto alto, el desvío se mide con el más alto de los dos.
-        val reach = if (byFloor) max(ref.bounds.height, predicted) else ref.bounds.height
+        // Números y letras se apoyan en el piso de la forma de al lado, sin cambiar de tamaño.
+        val byFloor = ref in refs && !sign && !isContainer(pattern)
+        // Entre formas de distinto alto, el desvío se mide con la más alta de las dos.
+        val reach = if (sign) ref.bounds.height else max(ref.bounds.height, predicted)
         if (ref in refs && abs(ref.bounds.centerY - gesture.centerY) > OFFSET * reach) return gesture
-        if (ref in refs && byFloor) {
+        if (byFloor) {
             // La salida se dibuja centrada en el gesto y mide predicted de alto: su piso queda a floor(pattern) de su arriba.
             val refFloor = ref.bounds.top + ref.bounds.height * (refPattern?.let(::floor) ?: 1f)
             val dy = refFloor - (gesture.centerY - predicted / 2f + predicted * floor(pattern))
             return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
         }
-        val ratio = predicted / ref.bounds.height.coerceAtLeast(0.5f)
-        return if (!sign && ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) {
-            resized(gesture, ref.bounds, scale)
-        } else {
-            val dy = ref.bounds.centerY - gesture.centerY
-            Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
-        }
+        val dy = ref.bounds.centerY - gesture.centerY
+        return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
     }
 
     /** Apertura que cierra [pattern] si es un cierre: la última sin pareja a la izquierda del gesto. */

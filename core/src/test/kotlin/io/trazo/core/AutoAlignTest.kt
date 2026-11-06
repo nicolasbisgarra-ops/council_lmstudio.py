@@ -16,11 +16,20 @@ class AutoAlignTest {
     private fun align(key: String, gesture: Bounds, vararg items: AutoAlign.Item) =
         AutoAlign.anchor(preset(key), gesture, items.toList(), lookup)
 
-    @Test fun `a similar sized shape takes the height and line of the nearest one`() {
-        val p = preset("2")
-        val out = align("2", Bounds(300f, 130f, 340f, 200f), item("1", 100f, 100f, 140f, 180f), item("3", 900f, 0f, 940f, 60f))
-        assertEquals(80f / p.outputScale, out.height, 0.5f)
-        assertEquals(140f, out.centerY, 0.5f)
+    /** Piso (línea de escritura) de la salida de [key] anclada en [out]. */
+    private fun floorOf(key: String, out: Bounds): Float {
+        val p = preset(key)
+        val h = out.height * p.outputScale
+        return out.centerY - h / 2f + h * AutoAlign.floor(p)
+    }
+
+    private fun refFloor(key: String, top: Float, bottom: Float) = top + (bottom - top) * AutoAlign.floor(preset(key))
+
+    @Test fun `un numero se apoya en el piso del mas cercano sin cambiar de tamano`() {
+        val g = Bounds(300f, 130f, 340f, 200f)
+        val out = align("2", g, item("1", 100f, 100f, 140f, 180f), item("3", 900f, 0f, 940f, 60f))
+        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(refFloor("1", 100f, 180f), floorOf("2", out), 0.5f)
         assertEquals(320f, out.centerX, 0.5f)
     }
 
@@ -34,8 +43,8 @@ class AutoAlignTest {
     @Test fun `un signo no marca la altura del renglon para el numero siguiente`() {
         // «5 + 3»: el 3 toma la altura del 5 aunque el + esté más cerca.
         val out = align("3", Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), item("mas", 170f, 125f, 210f, 165f))
-        assertEquals(80f / preset("3").outputScale, out.height, 0.5f)
-        assertEquals(140f, out.centerY, 0.5f)
+        assertEquals(50f, out.height, 0.01f)
+        assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
         // Solo un signo al lado: el número queda como se escribió.
         val g = Bounds(260f, 120f, 290f, 170f)
         assertSame(g, align("3", g, item("mas", 170f, 125f, 210f, 165f)))
@@ -95,10 +104,11 @@ class AutoAlignTest {
         assertEquals(180f, out.top + out.height * AutoAlign.floor(preset("pi")), 0.5f)
     }
 
-    @Test fun `un numero toma la altura de otro numero, no la de una letra`() {
+    @Test fun `un numero se apoya en otro numero, no en una letra`() {
         // «5x + 3»: el 3 iguala al 5 aunque la x esté más cerca.
         val out = alignUser(preset("3"), Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
-        assertEquals(80f / preset("3").outputScale, out.height, 0.5f)
+        assertEquals(50f, out.height, 0.01f)
+        assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
         // Solo una letra al lado: no cambia de tamaño, apoya en su piso.
         val g = Bounds(260f, 120f, 290f, 170f)
         val alone = alignUser(preset("3"), g, AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
@@ -127,8 +137,8 @@ class AutoAlignTest {
             "3", Bounds(260f, 115f, 290f, 175f),
             item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f), item("mas", 180f, 125f, 220f, 165f),
         )
-        assertEquals(80f / preset("3").outputScale, out.height, 0.5f)
-        assertEquals(140f, out.centerY, 0.5f)
+        assertEquals(60f, out.height, 0.01f)
+        assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
         // El + de «x² + 1» se centra en el 5, no en el exponente.
         val plus = align("mas", Bounds(180f, 110f, 210f, 140f), item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f))
         assertEquals(140f, plus.centerY, 0.5f)
@@ -161,6 +171,15 @@ class AutoAlignTest {
             val out = align("parentesis-abre", g, next)
             assertEquals("junto a ${next.patternId}", 100f, out.height, 0.5f)
             assertEquals("junto a ${next.patternId}", next.bounds.centerY, out.centerY, 0.5f)
+        }
+    }
+
+    @Test fun `un parentesis junto a una integral se centra en su medio sin cambiar de tamano`() {
+        val g = Bounds(160f, 120f, 180f, 200f)
+        for (side in listOf(AutoAlign.Item(DefaultPatterns.INTEGRAL, Bounds(100f, 50f, 140f, 250f)), AutoAlign.Item(DefaultPatterns.INTEGRAL, Bounds(200f, 50f, 240f, 250f)))) {
+            val out = align("parentesis-abre", g, side)
+            assertEquals(80f, out.height, 0.01f)
+            assertEquals(150f, out.centerY, 0.5f)
         }
     }
 
