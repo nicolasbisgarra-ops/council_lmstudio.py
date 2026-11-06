@@ -25,10 +25,16 @@ class AutoAlignTest {
 
     private fun refFloor(key: String, top: Float, bottom: Float) = top + (bottom - top) * AutoAlign.floor(preset(key))
 
-    @Test fun `un numero se apoya en el piso del mas cercano sin cambiar de tamano`() {
+    /** Alto sobre la línea (la escala) de la salida de [p] anclada en [out]. */
+    private fun body(p: InkPattern, out: Bounds) = out.height * p.outputScale * AutoAlign.floor(p)
+    private fun body(key: String, out: Bounds) = body(preset(key), out)
+    private fun refBody(key: String, top: Float, bottom: Float) = (bottom - top) * AutoAlign.floor(preset(key))
+
+    @Test fun `un numero toma la escala del mas cercano y se apoya en su piso`() {
         val g = Bounds(300f, 130f, 340f, 200f)
         val out = align("2", g, item("1", 100f, 100f, 140f, 180f), item("3", 900f, 0f, 940f, 60f))
-        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(refBody("1", 100f, 180f), body("2", out), 0.5f)
+        assertEquals(g.width / g.height, out.width / out.height, 0.01f)
         assertEquals(refFloor("1", 100f, 180f), floorOf("2", out), 0.5f)
         assertEquals(320f, out.centerX, 0.5f)
     }
@@ -43,7 +49,7 @@ class AutoAlignTest {
     @Test fun `un signo no marca la altura del renglon para el numero siguiente`() {
         // «5 + 3»: el 3 toma la altura del 5 aunque el + esté más cerca.
         val out = align("3", Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), item("mas", 170f, 125f, 210f, 165f))
-        assertEquals(50f, out.height, 0.01f)
+        assertEquals(refBody("5", 100f, 180f), body("3", out), 0.5f)
         assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
         // Solo un signo al lado: el número queda como se escribió.
         val g = Bounds(260f, 120f, 290f, 170f)
@@ -79,11 +85,11 @@ class AutoAlignTest {
     private fun alignUser(p: InkPattern, gesture: Bounds, vararg items: AutoAlign.Item) =
         AutoAlign.anchor(p, gesture, items.toList()) { presets[it] ?: if (it == "user-x") letter("x") else null }
 
-    @Test fun `una variable no toma la altura del numero, solo baja a su piso`() {
-        // «5x»: la x queda de su tamaño, apoyada en el piso del 5.
+    @Test fun `una variable toma la escala del numero de al lado y baja a su piso`() {
+        // «5x»: la x toma la escala del 5 y se apoya en su piso.
         val g = Bounds(160f, 130f, 190f, 165f)
         val out = alignUser(letter("x"), g, item("5", 100f, 100f, 140f, 180f))
-        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(refBody("5", 100f, 180f), body(letter("x"), out), 0.5f)
         assertEquals(180f, out.bottom, 0.5f)
         // «Equis» y una incógnita con otro nombre también son variables.
         assertEquals(180f, alignUser(letter("Equis"), g, item("5", 100f, 100f, 140f, 180f)).bottom, 0.5f)
@@ -93,26 +99,27 @@ class AutoAlignTest {
     @Test fun `la cola de la y baja del piso`() {
         val g = Bounds(160f, 130f, 190f, 190f)
         val out = alignUser(letter("y"), g, item("5", 100f, 100f, 140f, 180f))
-        assertEquals(g.height, out.height, 0.01f)
+        // El cuerpo (sin la cola) mide lo del 5.
+        assertEquals(refBody("5", 100f, 180f), body(letter("y"), out), 0.5f)
         assertEquals(180f, out.top + out.height * (1f - AutoAlign.DESCENDER), 0.5f)
     }
 
-    @Test fun `una letra griega de la biblioteca se apoya en su linea sin cambiar de tamano`() {
+    @Test fun `una letra griega de la biblioteca toma la escala del numero y se apoya en su linea`() {
         val g = Bounds(160f, 120f, 200f, 160f)
         val out = align("pi", g, item("5", 100f, 100f, 140f, 180f))
-        assertEquals(g.height, out.height, 0.01f)
+        assertEquals(refBody("5", 100f, 180f), body("pi", out), 0.5f)
         assertEquals(180f, out.top + out.height * AutoAlign.floor(preset("pi")), 0.5f)
     }
 
     @Test fun `un numero se apoya en otro numero, no en una letra`() {
         // «5x + 3»: el 3 iguala al 5 aunque la x esté más cerca.
         val out = alignUser(preset("3"), Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
-        assertEquals(50f, out.height, 0.01f)
+        assertEquals(refBody("5", 100f, 180f), body("3", out), 0.5f)
         assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
-        // Solo una letra al lado: no cambia de tamaño, apoya en su piso.
+        // Solo una letra al lado: toma su escala y apoya en su piso.
         val g = Bounds(260f, 120f, 290f, 170f)
         val alone = alignUser(preset("3"), g, AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
-        assertEquals(g.height, alone.height, 0.01f)
+        assertEquals(30f, body("3", alone), 0.5f)
         assertEquals(180f, alone.top + alone.height * AutoAlign.floor(preset("3")), 0.5f)
     }
 
@@ -137,7 +144,7 @@ class AutoAlignTest {
             "3", Bounds(260f, 115f, 290f, 175f),
             item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f), item("mas", 180f, 125f, 220f, 165f),
         )
-        assertEquals(60f, out.height, 0.01f)
+        assertEquals(refBody("5", 100f, 180f), body("3", out), 0.5f)
         assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
         // El + de «x² + 1» se centra en el 5, no en el exponente.
         val plus = align("mas", Bounds(180f, 110f, 210f, 140f), item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f))
@@ -152,6 +159,29 @@ class AutoAlignTest {
     @Test fun `lo escrito lejos de todo no se alinea`() {
         val g = Bounds(600f, 130f, 640f, 200f)
         assertSame(g, align("2", g, item("1", 100f, 100f, 140f, 180f)))
+    }
+
+    @Test fun `solo toma la escala de lo que esta a menos de tres veces el tamano`() {
+        // A 2,9 altos del 1 todavía la toma; a 3,1 ya es otra cuenta y queda como se escribió.
+        val s = preset("2").outputScale
+        val h = 70f / s
+        val near = Bounds(140f + 2.9f * 80f, 130f, 140f + 2.9f * 80f + 40f, 130f + h)
+        assertEquals(refBody("1", 100f, 180f), body("2", align("2", near, item("1", 100f, 100f, 140f, 180f))), 0.5f)
+        val far = Bounds(140f + 3.1f * 80f, 130f, 140f + 3.1f * 80f + 40f, 130f + h)
+        assertSame(far, align("2", far, item("1", 100f, 100f, 140f, 180f)))
+    }
+
+    @Test fun `toma la escala del mas cercano de dos`() {
+        // «1 … 4  2»: el 2 iguala al 4, que está más cerca, y no al 1.
+        val out = align("2", Bounds(300f, 120f, 330f, 170f), item("1", 100f, 100f, 140f, 180f), item("4", 240f, 125f, 265f, 165f))
+        assertEquals(refBody("4", 125f, 165f), body("2", out), 0.5f)
+        assertEquals(refFloor("4", 125f, 165f), floorOf("2", out), 0.5f)
+    }
+
+    @Test fun `una coma no le cambia la escala al numero siguiente`() {
+        val g = Bounds(200f, 120f, 230f, 170f)
+        val out = align("3", g, item("coma", 160f, 170f, 168f, 190f))
+        assertEquals(g.height, out.height, 0.01f)
     }
 
     @Test fun `closing bracket copies the height and level of its opening`() {

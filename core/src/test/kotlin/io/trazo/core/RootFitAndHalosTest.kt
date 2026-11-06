@@ -74,4 +74,86 @@ class RootFitAndHalosTest {
         val next = Halos.placeLimit(Halo.Kind.UPPER_LIMIT, b, written, after = u.right).bounds()
         assertTrue(next.left > u.right)
     }
+
+    @Test
+    fun fractionHalosSitAboveAndBelowTheBar() {
+        val bar = InkStroke(
+            "b", pts(100f to 200f, 150f to 200f, 200f to 200f),
+            groupId = "F", patternId = DefaultPatterns.FRACTION,
+        )
+        val halos = Halos.of(listOf(bar), "F")
+        assertEquals(listOf(Halo.Kind.NUMERATOR, Halo.Kind.DENOMINATOR), halos.map { it.kind })
+        val num = halos.first { it.kind == Halo.Kind.NUMERATOR }.zone
+        val den = halos.first { it.kind == Halo.Kind.DENOMINATOR }.zone
+        assertTrue("numerador arriba: $num", num.bottom <= bar.bounds.top && num.top < bar.bounds.top)
+        assertTrue("denominador abajo: $den", den.top >= bar.bounds.bottom && den.bottom > bar.bounds.bottom)
+        assertTrue("ancho con margen: $num", num.left < bar.bounds.left && num.right > bar.bounds.right)
+        assertTrue("ancho con margen: $den", den.left < bar.bounds.left && den.right > bar.bounds.right)
+        assertTrue(num.contains(150f, 170f))
+        assertTrue(den.contains(150f, 230f))
+    }
+
+    @Test
+    fun fractionNumeratorAndDenominatorCenterWithoutShrinking() {
+        val bar = InkStroke(
+            "b", pts(100f to 200f, 200f to 200f),
+            groupId = "F", patternId = DefaultPatterns.FRACTION,
+        )
+        val b = bar.bounds
+        val writtenNum = listOf(InkStroke("n", pts(110f to 140f, 140f to 180f)))
+        val num = Halos.placeLimit(Halo.Kind.NUMERATOR, b, writtenNum).bounds()
+        assertEquals(b.centerX, num.centerX, 0.01f)
+        assertEquals(30f, num.width, 0.01f)
+        assertEquals(40f, num.height, 0.01f)
+        assertTrue("piso arriba de la barra: $num", num.bottom < b.top && b.top - num.bottom <= 0.3f * num.height)
+
+        val writtenDen = listOf(InkStroke("d", pts(160f to 220f, 190f to 260f)))
+        val den = Halos.placeLimit(Halo.Kind.DENOMINATOR, b, writtenDen).bounds()
+        assertEquals(b.centerX, den.centerX, 0.01f)
+        assertEquals(30f, den.width, 0.01f)
+        assertEquals(40f, den.height, 0.01f)
+        assertTrue("techo debajo de la barra: $den", den.top > b.bottom && den.top - b.bottom <= 0.3f * den.height)
+    }
+
+    @Test
+    fun fractionInControllerCentersPartsAndExtendsBarWhenContentIsWider() {
+        val controller = InkController(patterns = { DefaultPatterns.all() }, ids = IdGenerator.sequential())
+        val barOut = controller.insertPattern(DefaultPatterns.fraction(), 200f, 200f, 50f)
+        val barId = barOut.single().id
+        val initialBar = controller.page.find(barId)!!.bounds
+        assertEquals(setOf(Halo.Kind.NUMERATOR, Halo.Kind.DENOMINATOR), controller.halos().map { it.kind }.toSet())
+
+        // Numerador más angosto que la barra: se centra arriba sin alargar la barra.
+        val numZone = controller.halos().first { it.kind == Halo.Kind.NUMERATOR }.zone
+        val ny = numZone.centerY
+        controller.penDown(initialBar.left + 5f, ny, 0.8f, 100L, PointerKind.STYLUS)
+        controller.penMove(initialBar.left + 15f, ny + 10f, 0.8f, 120L)
+        controller.penUp(initialBar.left + 25f, ny + 20f, 0.8f, 140L)
+        val numId = controller.page.strokes.last().id
+        assertTrue(controller.haloTick(1200L))
+        val nb = controller.page.find(numId)!!.bounds
+        assertEquals(initialBar.centerX, nb.centerX, 0.5f)
+        assertTrue(nb.bottom < initialBar.top)
+        assertEquals(initialBar.width, controller.page.find(barId)!!.bounds.width, 0.01f)
+
+        // Denominador más ancho que la barra: se centra abajo y alarga la barra para cubrirlo.
+        val denZone = controller.halos().first { it.kind == Halo.Kind.DENOMINATOR }.zone
+        val dy = denZone.centerY
+        val wideEnd = initialBar.left + initialBar.width + 80f
+        controller.penDown(initialBar.left, dy, 0.8f, 2000L, PointerKind.STYLUS)
+        controller.penMove((initialBar.left + wideEnd) / 2f, dy + 15f, 0.8f, 2020L)
+        controller.penUp(wideEnd, dy + 30f, 0.8f, 2040L)
+        val denId = controller.page.strokes.last().id
+        assertTrue(controller.haloTick(3100L))
+        val db = controller.page.find(denId)!!.bounds
+        val grownBar = controller.page.find(barId)!!.bounds
+        assertEquals(initialBar.centerX, db.centerX, 0.5f)
+        assertTrue(db.top > grownBar.bottom)
+        assertTrue("barra cubre al denominador: $grownBar vs $db", grownBar.left <= db.left && grownBar.right >= db.right)
+        assertTrue(grownBar.width > initialBar.width)
+
+        // Deshacer revierte el acomodamiento y el alargamiento de la barra juntos.
+        assertTrue(controller.undo())
+        assertEquals(initialBar.width, controller.page.find(barId)!!.bounds.width, 0.01f)
+    }
 }

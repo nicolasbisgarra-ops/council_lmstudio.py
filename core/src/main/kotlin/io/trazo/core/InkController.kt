@@ -185,15 +185,16 @@ class InkController(
     private var shapeX1 = 0f
     private var shapeY1 = 0f
 
-    // Halos de la última integral o raíz puesta ([Halos]).
+    // Halos de la última integral, raíz o fracción puesta ([Halos]).
     private var haloGroup: String? = null
     private var contactHalo: Halo? = null
     private val pendingLimit = ArrayList<String>()
     private var pendingKind: Halo.Kind? = null
     private var pendingAt = 0L
     private val placedLimits = HashMap<Halo.Kind, Float>()
+    private val placedFraction = HashMap<Halo.Kind, MutableList<String>>()
 
-    /** Halos visibles (zonas para escribir los extremos de la integral o el radicando). */
+    /** Halos visibles (zonas para escribir los extremos de la integral, el radicando o la fracción). */
     fun halos(): List<Halo> = haloGroup?.let { Halos.of(page.strokes, it) }.orEmpty()
 
     /** Momento (reloj de eventos) en que lo escrito en un halo de extremo se acomoda; null si no hay nada. */
@@ -212,6 +213,24 @@ class InkController(
         pendingLimit.clear(); pendingKind = null
         val group = haloGroup?.let { g -> page.strokes.filter { it.groupId == g } }.orEmpty()
         if (kind == null || strokes.isEmpty() || group.isEmpty()) return false
+        if (kind == Halo.Kind.NUMERATOR || kind == Halo.Kind.DENOMINATOR) {
+            val prev = placedFraction[kind].orEmpty().mapNotNull { page.find(it) }
+            val barBounds = group.bounds()
+            val placed = Halos.placeLimit(kind, barBounds, strokes, prev.takeIf { it.isNotEmpty() }?.bounds()?.right)
+            val all = if (prev.isEmpty()) placed else Halos.placeLimit(kind, barBounds, prev + placed)
+            history.perform(page, StrokeEdit(prev + strokes, all, StrokeEdit.Kind.TRANSFORM))
+            placedFraction.getOrPut(kind) { ArrayList() }.addAll(strokes.map { it.id })
+            val allBounds = all.bounds()
+            val bar = group.maxByOrNull { it.bounds.width }
+            if (bar != null && allBounds.width > bar.bounds.width) {
+                val pad = (0.08f * allBounds.height).coerceAtLeast(6f)
+                Halos.extendBar(bar, allBounds.right + pad, allBounds.left - pad)?.let { longer ->
+                    history.amendLast(page, StrokeEdit(listOf(bar), listOf(longer), StrokeEdit.Kind.TRANSFORM))
+                }
+            }
+            emit(InkEvent.PageChanged)
+            return true
+        }
         val moved = Halos.placeLimit(kind, group.bounds(), strokes, placedLimits[kind])
         history.perform(page, StrokeEdit(strokes, moved, StrokeEdit.Kind.TRANSFORM))
         placedLimits[kind] = moved.bounds().right
@@ -221,12 +240,15 @@ class InkController(
 
     private fun clearHalos() {
         haloGroup = null; contactHalo = null
-        pendingLimit.clear(); pendingKind = null; placedLimits.clear()
+        pendingLimit.clear(); pendingKind = null; placedLimits.clear(); placedFraction.clear()
     }
 
     private fun showHalosFor(output: List<InkStroke>) {
         val first = output.firstOrNull() ?: return
-        if (first.patternId != DefaultPatterns.INTEGRAL && first.patternId != DefaultPatterns.ROOT) return
+        if (first.patternId != DefaultPatterns.INTEGRAL &&
+            first.patternId != DefaultPatterns.ROOT &&
+            first.patternId != DefaultPatterns.FRACTION
+        ) return
         clearHalos()
         haloGroup = first.groupId
     }

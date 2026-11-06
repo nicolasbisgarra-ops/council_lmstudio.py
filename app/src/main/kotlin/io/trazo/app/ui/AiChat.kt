@@ -6,7 +6,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -91,8 +100,50 @@ import ru.noties.jlatexmath.JLatexMathDrawable
  * sin WebView ni red), solo acá: la hoja sigue siendo tinta.
  */
 @Composable
-internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
+internal fun AiChatPanel(
+    vm: EditorViewModel,
+    modifier: Modifier = Modifier,
+    /** Tamaño de la letra del chat (sp) y cómo cambiarlo. */
+    fontSp: Float = CHAT_SP_DEFAULT,
+    onFontSp: (Float) -> Unit = {},
+    /** Arrastre del asa del borde: cuántos dp se movió, y cuándo se soltó (para guardar el ancho). */
+    onResizeBy: (Float) -> Unit = {},
+    onResizeEnd: () -> Unit = {},
+) {
+    val density = LocalDensity.current.density
+    val resize by rememberUpdatedState(onResizeBy)
+    val resizeEnd by rememberUpdatedState(onResizeEnd)
+    CompositionLocalProvider(LocalChatSp provides fontSp) {
+        Box(modifier) {
+            AiChatContent(vm, onFontSp, Modifier.fillMaxSize())
+            // Asa para cambiar el ancho: una franja sobre el borde derecho del panel.
+            Box(
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp).pointerInput(density) {
+                    detectHorizontalDragGestures(onDragEnd = { resizeEnd() }, onDragCancel = { resizeEnd() }) { change, dx ->
+                        change.consume()
+                        resize(dx / density)
+                    }
+                },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.width(4.dp).height(40.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
+            }
+        }
+    }
+}
+
+/** Tamaño de letra del chat por omisión (el de bodyLarge) y sus límites. */
+internal const val CHAT_SP_DEFAULT = 16f
+internal const val CHAT_SP_MIN = 12f
+internal const val CHAT_SP_MAX = 24f
+
+/** Tamaño de letra vigente del chat, para no pasarlo por cada función. */
+private val LocalChatSp = compositionLocalOf { CHAT_SP_DEFAULT }
+
+@Composable
+private fun AiChatContent(vm: EditorViewModel, onFontSp: (Float) -> Unit, modifier: Modifier) {
     rememberLatex()
+    val chatSp = LocalChatSp.current
     val messages = vm.chatMessages
     val streaming = vm.chatStreaming
     val busy = vm.chatBusy
@@ -108,7 +159,13 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(AiStarsIcon, null, tint = Color.Unspecified, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Chat de revisión", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text("Chat de revisión", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { onFontSp((chatSp - 2f).coerceIn(CHAT_SP_MIN, CHAT_SP_MAX)) }, enabled = chatSp > CHAT_SP_MIN, modifier = Modifier.size(36.dp)) {
+                    Text("A−", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+                IconButton(onClick = { onFontSp((chatSp + 2f).coerceIn(CHAT_SP_MIN, CHAT_SP_MAX)) }, enabled = chatSp < CHAT_SP_MAX, modifier = Modifier.size(36.dp)) {
+                    Text("A+", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
                 IconButton(onClick = vm::restartChat, enabled = !busy) { Icon(Icons.Filled.Refresh, contentDescription = "Revisar de nuevo") }
                 IconButton(onClick = vm::closeChat) { Icon(Icons.Filled.Close, contentDescription = "Plegar el chat") }
             }
@@ -163,7 +220,8 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 ) { Icon(TrazoIcons.Image, contentDescription = "Adjuntar una imagen") }
                 OutlinedTextField(
                     value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f),
-                    placeholder = { Text("Preguntá algo…") }, maxLines = 4,
+                    placeholder = { Text("Preguntá algo…", fontSize = chatSp.sp) }, maxLines = 4,
+                    textStyle = LocalTextStyle.current.copy(fontSize = chatSp.sp),
                 )
                 IconButton(
                     onClick = { val q = draft; draft = ""; vm.sendChat(q) },
@@ -176,6 +234,7 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ChatMessage(vm: EditorViewModel, m: AiChatMessage, onShow: () -> Unit) {
+    val chatSp = LocalChatSp.current
     when {
         m.role == TutorRole.STUDENT -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             m.image?.let { ChatImageThumb(vm, it, 160.dp) }
@@ -185,12 +244,14 @@ private fun ChatMessage(vm: EditorViewModel, m: AiChatMessage, onShow: () -> Uni
                     .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
+                fontSize = chatSp.sp, lineHeight = (chatSp * 1.5f).sp,
             )
         }
         m.error -> Text(
             m.text,
             Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(12.dp)).padding(10.dp),
             color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium,
+            fontSize = (chatSp * 0.875f).sp,
         )
         else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (m.text.isNotBlank()) ChatRichText(m.text)
@@ -242,6 +303,7 @@ private fun VerdictCard(correct: Boolean, line: Int?, summary: String, onShow: (
 /** Prosa con fórmulas: las de su renglón se dibujan aparte (con desplazamiento lateral si no entran). */
 @Composable
 internal fun ChatRichText(text: String, color: Color = MaterialTheme.colorScheme.onSurface) {
+    val chatSp = LocalChatSp.current
     val parts = remember(text) { TexMath.split(text) }
     val groups = remember(parts) {
         val out = mutableListOf<List<TexPart>>()
@@ -260,7 +322,7 @@ internal fun ChatRichText(text: String, color: Color = MaterialTheme.colorScheme
             val single = g.singleOrNull()
             if (single is TexPart.Formula && single.display) {
                 Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
-                    LatexFormula(single.source, DISPLAY_SP, color)
+                    LatexFormula(single.source, DISPLAY_SP * chatSp / CHAT_SP_DEFAULT, color)
                 }
             } else {
                 val trimmed = trimGroup(g)
@@ -273,7 +335,8 @@ internal fun ChatRichText(text: String, color: Color = MaterialTheme.colorScheme
 @Composable
 private fun InlineParagraph(parts: List<TexPart>, color: Color) {
     val density = LocalDensity.current
-    val style = MaterialTheme.typography.bodyLarge
+    val chatSp = LocalChatSp.current
+    val style = MaterialTheme.typography.bodyLarge.copy(fontSize = chatSp.sp, lineHeight = (chatSp * 1.5f).sp)
     val fontPx = with(density) { style.fontSize.toPx() }
     val argb = color.toArgb()
     val drawables = remember(parts, fontPx, argb) {

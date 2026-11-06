@@ -123,6 +123,8 @@ fun EditorScreen(
     var pasteAt by remember { mutableStateOf<Pair<Offset, Offset>?>(null) }
     // El panel lateral de patrones se puede minimizar para dejarle todo el ancho a la hoja.
     var railOpen by rememberSaveable { mutableStateOf(true) }
+    // Ancho del chat mientras se arrastra el asa (dp); al soltar se guarda en las preferencias.
+    var chatDragDp by remember { mutableStateOf<Float?>(null) }
     val paper = paperColors(settings.paperTone)
     val accent = MaterialTheme.colorScheme.primary.toArgb()
 
@@ -322,6 +324,22 @@ fun EditorScreen(
                 val wide = maxWidth >= 840.dp
                 val chatFixed = maxWidth >= 720.dp
                 val chatWidth = if (maxWidth >= 1100.dp) 400.dp else 340.dp
+                // Ancho del chat: el guardado (o el de por omisión), entre 240 dp y 80 % (92 % en teléfono) de la pantalla.
+                val chatMaxDp = maxOf(240f, maxWidth.value * if (chatFixed) 0.8f else 0.92f)
+                val chatDefaultDp = if (chatFixed) chatWidth.value else maxWidth.value * 0.92f
+                val chatWidthNow = (chatDragDp ?: settings.chatWidthDp.takeIf { it > 0f } ?: chatDefaultDp).coerceIn(240f, chatMaxDp)
+                val chat: @Composable (Modifier) -> Unit = { m ->
+                    AiChatPanel(
+                        vm, m,
+                        fontSp = settings.chatFontSp,
+                        onFontSp = { sp -> store.update { it.copy(chatFontSp = sp) } },
+                        onResizeBy = { d -> chatDragDp = (chatWidthNow + d).coerceIn(240f, chatMaxDp) },
+                        onResizeEnd = {
+                            chatDragDp?.let { w -> store.update { it.copy(chatWidthDp = w) } }
+                            chatDragDp = null
+                        },
+                    )
+                }
                 val budget = TabletLayoutPolicy.decide(TabletLayoutPolicy.Input(
                     availableWidthDp = maxWidth.value.toInt(),
                     fontScale = LocalDensity.current.fontScale,
@@ -342,7 +360,7 @@ fun EditorScreen(
                     }
                     // Chat de revisión fijo a la izquierda de la hoja cuando entra; en teléfono va encima.
                     if (vm.chatOpen && chatFixed) {
-                        AiChatPanel(vm, Modifier.width(chatWidth).fillMaxHeight())
+                        chat(Modifier.width(chatWidthNow.dp).fillMaxHeight())
                     }
                     Box(Modifier.weight(1f).fillMaxHeight().barContainer(selectionMover).onSizeChanged { canvasSize = it.width to it.height; vm.viewSize = canvasSize }) {
                         AndroidView(
@@ -484,7 +502,7 @@ fun EditorScreen(
                     if (dock == BarDock.RIGHT) sideToolbar()
                 }
                 if (vm.chatOpen && !chatFixed) {
-                    AiChatPanel(vm, Modifier.align(Alignment.TopStart).fillMaxHeight().fillMaxWidth(0.92f))
+                    chat(Modifier.align(Alignment.TopStart).fillMaxHeight().width(chatWidthNow.dp))
                 }
                 if (!previewOpen && !budget.tabletWindow) {
                     PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true },

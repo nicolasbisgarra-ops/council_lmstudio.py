@@ -13,14 +13,14 @@ import kotlin.math.min
  * - Una apertura (o un cierre sin pareja) solo toma la altura de otro signo de agrupación: junto a
  *   un número, una x, un + o un − se centra en su línea, y junto a una integral en su medio, sin
  *   cambiar de tamaño.
- * - Los números y las letras nunca cambian de tamaño: se apoyan en el piso de la forma reconocida
- *   más cercana del renglón. Las integrales, raíces y sumatorias solo se centran en su línea.
+ * - Un número o una letra toma la escala (el alto sobre la línea) de la letra o el número más cercano
+ *   del renglón y se apoya en su piso; solo si está a menos de [MAX_GAP] altos, así no toma el de otra
+ *   cuenta del otro lado de la hoja. Un número prefiere otro número a su alcance. Las integrales,
+ *   raíces y sumatorias solo se centran en su línea.
  * - Los "contenedores" (paréntesis, integrales, raíz, fracción, sumatoria) no sirven de referencia
  *   para las demás formas: un número dentro de una matriz no se centra en el corchete.
  * - Los signos de operación (+, −, ×, ÷, =, <…) tampoco: no marcan la altura del renglón. Ellos se
  *   centran en la línea de las letras y números más cercanos, sin cambiar de tamaño.
- * - Las variables (x, y, letras griegas…) nunca cambian de tamaño: solo bajan o suben hasta el piso
- *   de la forma de al lado. Un número se apoya en otro número antes que en una letra.
  * - Lo escrito claramente más arriba o más abajo que la referencia (más de [OFFSET] de su alto: un
  *   exponente, un numerador, un denominador) queda donde se escribió. Una raya con algo justo encima
  *   (la barra de una fracción) tampoco se mueve.
@@ -104,12 +104,14 @@ object AutoAlign {
             val dy = ref.bounds.centerY - gesture.centerY
             return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
         }
+        val predicted = gesture.height * scale
+        fun near(r: Item) = horizontalGap(r.bounds, gesture) <= MAX_GAP * max(r.bounds.height, predicted)
+        // Un número prefiere otro número a su alcance; si no hay, toma la letra o el número más cercano.
         val refs = if (isContainer(pattern)) plain else plain.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
-            .let { all -> if (variable) all else all.filter { r -> lookup(r.patternId)?.let(::isVariable) != true }.ifEmpty { all } }
+            .let { all -> if (variable) all else all.filter { r -> near(r) && lookup(r.patternId)?.let(::isVariable) != true }.ifEmpty { all } }
         // Un signo sin letras ni números al lado se centra en otro signo; lo demás nunca toma su altura.
         val ref = (refs.takeIf { it.isNotEmpty() || !sign } ?: plain.filter { r -> lookup(r.patternId)?.let(::isSign) == true })
             .minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
-        val predicted = gesture.height * scale
         // Lejos de todo (otra cuenta en la misma altura de la hoja): queda donde se escribió.
         if (horizontalGap(ref.bounds, gesture) > MAX_GAP * max(ref.bounds.height, predicted)) return gesture
         if (ref in refs) {
@@ -123,19 +125,32 @@ object AutoAlign {
             }
         }
         val refPattern = lookup(ref.patternId)
-        // Números y letras se apoyan en el piso de la forma de al lado, sin cambiar de tamaño.
+        // Números y letras se apoyan en el piso de la forma de al lado y toman su escala.
         val byFloor = ref in refs && !sign && !isContainer(pattern)
         // Entre formas de distinto alto, el desvío se mide con la más alta de las dos.
         val reach = if (sign) ref.bounds.height else max(ref.bounds.height, predicted)
         if (ref in refs && abs(ref.bounds.centerY - gesture.centerY) > OFFSET * reach) return gesture
         if (byFloor) {
-            // La salida se dibuja centrada en el gesto y mide predicted de alto: su piso queda a floor(pattern) de su arriba.
-            val refFloor = ref.bounds.top + ref.bounds.height * (refPattern?.let(::floor) ?: 1f)
-            val dy = refFloor - (gesture.centerY - predicted / 2f + predicted * floor(pattern))
-            return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
+            // La salida se dibuja centrada en el anclaje y mide su alto × scale: su piso queda a floor(pattern) de su arriba.
+            val refFrac = refPattern?.let(::floor) ?: 1f
+            val refFloor = ref.bounds.top + ref.bounds.height * refFrac
+            val f = floor(pattern)
+            // Misma escala que la de al lado: igual cuerpo sobre la línea (las colas de g, y… no cuentan).
+            val h = if (refPattern != null && isGlyph(refPattern) && isGlyph(pattern)) ref.bounds.height * refFrac / f else predicted
+            val ah = h / scale
+            val aw = gesture.width * ah / gesture.height
+            val cy = refFloor - h * f + h / 2f
+            return Bounds(gesture.centerX - aw / 2f, cy - ah / 2f, gesture.centerX + aw / 2f, cy + ah / 2f)
         }
         val dy = ref.bounds.centerY - gesture.centerY
         return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
+    }
+
+    /** Letra o número (no signo, contenedor, coma, %, ! ni barra): lo que iguala su escala con el renglón. */
+    private fun isGlyph(p: InkPattern): Boolean {
+        if (p.stretch != null || isSign(p) || isContainer(p)) return false
+        val key = p.id.removePrefix(PresetPatterns.PREFIX)
+        return !(p.builtIn && (key in TALL_OPERATORS || key in BASELINE_MARKS))
     }
 
     /** Apertura que cierra [pattern] si es un cierre: la última sin pareja a la izquierda del gesto. */

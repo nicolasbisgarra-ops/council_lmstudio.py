@@ -93,6 +93,10 @@ data class TrazoSettings(
     /** Ajuste que se aplica solo al pegar o importar una imagen, según la hoja sea clara u oscura. */
     val imagePresetLight: ImagePreset = ImagePreset.DOCUMENT,
     val imagePresetDark: ImagePreset = ImagePreset.DARK,
+    /** Ancho del chat de revisión en dp; 0 = el de por omisión (según la pantalla). */
+    val chatWidthDp: Float = 0f,
+    /** Tamaño de la letra del chat en sp (12..24). */
+    val chatFontSp: Float = 16f,
 )
 
 /** Nombre visible de cada ajuste de imagen. */
@@ -150,6 +154,8 @@ class SettingsStore(context: Context) {
         selectionFree = prefs.getFloat("selectionFreeX", 0.7f) to prefs.getFloat("selectionFreeY", 0.6f),
         imagePresetLight = prefs.enum("imagePresetLight", ImagePreset.DOCUMENT),
         imagePresetDark = prefs.enum("imagePresetDark", ImagePreset.DARK),
+        chatWidthDp = prefs.getFloat("chatWidthDp", 0f).coerceAtLeast(0f),
+        chatFontSp = prefs.getFloat("chatFontSp", 16f).coerceIn(12f, 24f),
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
@@ -197,6 +203,8 @@ class SettingsStore(context: Context) {
             .putFloat("selectionFreeY", s.selectionFree.second)
             .putString("imagePresetLight", s.imagePresetLight.name)
             .putString("imagePresetDark", s.imagePresetDark.name)
+            .putFloat("chatWidthDp", s.chatWidthDp)
+            .putFloat("chatFontSp", s.chatFontSp.coerceIn(12f, 24f))
             .apply()
         _settings.value = s
     }
