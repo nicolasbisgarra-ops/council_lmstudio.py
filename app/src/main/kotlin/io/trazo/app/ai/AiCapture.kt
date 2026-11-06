@@ -44,6 +44,39 @@ object AiCapture {
             bmp.recycle()
         }
     }
+
+    /**
+     * Lo que ve el chat: la hoja entera arriba y, si el estudiante adjuntó una imagen, esa imagen abajo
+     * separada por una franja gris; todo en un solo PNG con el lado largo ≤ [longEdgePx]. null si no hay nada.
+     */
+    fun chatPng(page: Bitmap?, attached: Bitmap?, longEdgePx: Int): ByteArray? {
+        val parts = listOfNotNull(page, attached)
+        if (parts.isEmpty()) return null
+        val width = parts.maxOf { it.width }.coerceAtLeast(1)
+        val heights = parts.map { (it.height * width.toFloat() / it.width).coerceAtLeast(1f) }
+        val gap = if (parts.size > 1) width * 0.02f + 4f else 0f
+        val fullH = heights.sum() + gap
+        val scale = minOf(1f, longEdgePx / maxOf(width.toFloat(), fullH))
+        val bmp = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (fullH * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(bmp)
+            canvas.drawColor(Color.WHITE)
+            canvas.scale(scale, scale)
+            val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+            var y = 0f
+            parts.forEachIndexed { i, part ->
+                if (i > 0) {
+                    canvas.drawRect(0f, y, width.toFloat(), y + gap, Paint().apply { color = Color.LTGRAY })
+                    y += gap
+                }
+                canvas.drawBitmap(part, null, android.graphics.RectF(0f, y, width.toFloat(), y + heights[i]), paint)
+                y += heights[i]
+            }
+            return ByteArrayOutputStream().use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out); out.toByteArray() }
+        } finally {
+            bmp.recycle()
+        }
+    }
 }
 
 /** Avisa cuando vuelve la conexión, para mandar lo que quedó en cola (37). */

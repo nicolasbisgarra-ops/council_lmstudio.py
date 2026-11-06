@@ -1399,8 +1399,12 @@ class EditorViewModel(
         if (profile.provider != AiProvider.ON_DEVICE && !remoteOnline()) { chatProblem("Sin conexión: el chat necesita red para este modelo."); return }
         val page = pageForReview(pageId) ?: return
         val lines = MathNotes.reviewLabels(page.allInk, repo.patterns.value)
-        if (lines.isEmpty()) { chatProblem("No hay nada escrito para revisar."); return }
-        val q = question?.trim()?.takeIf { it.isNotEmpty() }
+        val attachment = chatAttachment
+        if (lines.isEmpty() && page.images.isEmpty() && attachment == null) {
+            chatProblem("No hay nada escrito para revisar. Escriba en la hoja, pegue el enunciado o adjunte una imagen.")
+            return
+        }
+        val q = question?.trim()?.takeIf { it.isNotEmpty() } ?: if (attachment != null) "Mire la imagen que adjunto." else null
         val previous = chatMessages.filterNot { it.error }
         if (previous.isNotEmpty() && q == null) return
         val permit = app.trazo.study.issueAid(ExamHelp.AI_REVIEW) ?: return
@@ -1413,17 +1417,17 @@ class EditorViewModel(
             TutorTurn(m.role, m.text + verdict)
         }
         val now = System.currentTimeMillis()
-        setChat(pageId, chatMessages + listOfNotNull(q?.let { AiChatMessage(TutorRole.STUDENT, it, now) }))
-        val lineIds = lines.flatMap { it.strokeIds }.toSet()
-        val captured = page.allInk.filter { it.id in lineIds }
+        setChat(pageId, chatMessages + listOfNotNull(q?.let { AiChatMessage(TutorRole.STUDENT, it, now, image = attachment) }))
+        chatAttachment = null
+        val paper = n.paper
         val id = ++chatId
         chatBusy = true
         chatStreaming = ""
         chatJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val png = if (history.isNotEmpty() || profile.provider == AiProvider.ON_DEVICE && profile.localTextOnly) null
-                    else AiCapture.png(captured, lines, profile.imageQuality.longEdgePx)
+                    val png = if (profile.provider == AiProvider.ON_DEVICE && profile.localTextOnly) null
+                    else chatImage(page, paper, attachment, profile.imageQuality.longEdgePx)
                     val key = ai.credential(profile, AiOAuth())
                     val buffer = StringBuilder()
                     tutor.ask(profile, key, lines.map { it.text }, png, history, q) { chunk ->
@@ -1448,6 +1452,47 @@ class EditorViewModel(
             }
             if (e != null) chatProblem("No se pudo consultar: ${(e as? AiException)?.message ?: e.message ?: e.javaClass.simpleName}")
             else if (!allowed) chatProblem("El Modo IA está bloqueado durante el examen.")
+        }
+    }
+
+    /** Imagen que el estudiante va a mandar con el próximo mensaje (nombre en la carpeta de imágenes). */
+    var chatAttachment by mutableStateOf<String?>(null)
+        private set
+    var chatAttaching by mutableStateOf(false)
+        private set
+
+    /** Adjunta una imagen de la galería al próximo mensaje del chat. */
+    fun attachChatImage(open: () -> java.io.InputStream) {
+        if (chatAttaching) return
+        chatAttaching = true
+        viewModelScope.launch {
+            val name = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bmp = io.trazo.app.data.ImageImport.decode(open, CHAT_IMAGE_SIDE) ?: error("No se pudo leer la imagen")
+                    try { storeImage(bmp) } finally { bmp.recycle() }
+                }
+            }
+            chatAttaching = false
+            name.onSuccess { chatAttachment = it }.onFailure { chatProblem(it.message ?: "No se pudo leer la imagen") }
+        }
+    }
+
+    fun clearChatAttachment() { chatAttachment = null }
+
+    /** Archivo de una imagen adjunta en el chat, para mostrarla en la burbuja. */
+    fun chatImageFile(name: String): java.io.File = java.io.File(repo.imagesDir, name)
+
+    /** La hoja entera (con sus imágenes) y, debajo, la imagen adjunta; un solo PNG para el modelo. */
+    private fun chatImage(page: Page, paper: Paper, attachment: String?, longEdgePx: Int): ByteArray? {
+        val sheet = if (page.allInk.isNotEmpty() || page.images.isNotEmpty()) {
+            runCatching { PageExporter.thumbnail(page, paper, longEdgePx.coerceIn(256, 2400)) }.getOrNull()
+        } else null
+        val extra = attachment?.let { io.trazo.app.data.ImageImport.decodeFile(chatImageFile(it).path) }
+        try {
+            return AiCapture.chatPng(sheet, extra, longEdgePx)
+        } finally {
+            sheet?.recycle()
+            extra?.recycle()
         }
     }
 
@@ -1622,5 +1667,6 @@ class EditorViewModel(
 private const val PAGE_SESSIONS = 8
 /** Lado de la copia para la vista previa del recorte. */
 private const val PREVIEW_SIDE = 900
+private const val CHAT_IMAGE_SIDE = 2048
 /** Etiqueta de lo que Trazo copia al portapapeles del sistema (no se vuelve a pegar como imagen). */
 private const val CLIP_LABEL = "Trazo"

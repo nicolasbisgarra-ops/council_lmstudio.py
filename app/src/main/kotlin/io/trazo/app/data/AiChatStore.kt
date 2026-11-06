@@ -16,6 +16,8 @@ data class AiChatMessage(
     val verdict: String? = null,
     val strokeIds: List<String> = emptyList(),
     val error: Boolean = false,
+    /** Imagen que adjuntó el estudiante (nombre en la carpeta de imágenes), o null. */
+    val image: String? = null,
 )
 
 /**
@@ -62,6 +64,7 @@ class AiChatStore(dir: File) {
         m.verdict?.let { put("verdict", it) }
         if (m.strokeIds.isNotEmpty()) put("strokes", JSONArray(m.strokeIds))
         if (m.error) put("error", true)
+        m.image?.let { put("image", it) }
     }
 
     private fun fromJson(o: JSONObject) = AiChatMessage(
@@ -73,6 +76,7 @@ class AiChatStore(dir: File) {
         verdict = if (o.has("verdict")) o.optString("verdict") else null,
         strokeIds = o.optJSONArray("strokes")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
         error = o.optBoolean("error", false),
+        image = if (o.has("image")) o.optString("image") else null,
     )
 
     private companion object {

@@ -35,7 +35,7 @@ class AiTutorTest {
         assertEquals("Paso 1", AiTutorPrompt.withoutVerdict("Paso 1\nERROR (renglón 1): mal"))
     }
 
-    @Test fun `la imagen va solo en el primer pedido y la conversacion viaja como transcripcion`() {
+    @Test fun `la imagen va en cada pedido que la trae y la conversacion viaja como transcripcion`() {
         val first = Fake("Paso\nCORRECTO: bien")
         AiTutor(AiClient(first)).ask(profile, "k", listOf("a", ""), byteArrayOf(1, 2, 3), emptyList(), null)
         val body1 = first.sent.single().body!!
@@ -47,7 +47,12 @@ class AiTutorTest {
         val text = AiTutor(AiClient(next)).ask(profile, "k", listOf("a"), byteArrayOf(1, 2, 3), history, "Explicá más")
         assertEquals("Claro", text)
         val body2 = next.sent.single().body!!
-        assertFalse(body2.contains("image_url"))
+        assertTrue(body2.contains("image"))
+        val bare = Fake("Ok")
+        AiTutor(AiClient(bare)).ask(profile, "k", emptyList(), null, history, "¿Y?")
+        val body3 = bare.sent.single().body!!
+        assertFalse(body3.contains("image_url"))
+        assertTrue(body3.contains("No hay renglones manuscritos"))
         assertTrue(body2.contains("[Tutor]"))
         assertTrue(body2.contains("Explicá más"))
     }

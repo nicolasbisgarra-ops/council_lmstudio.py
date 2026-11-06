@@ -1,6 +1,20 @@
 package io.trazo.app.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
+import io.trazo.app.data.ImageImport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -84,6 +98,7 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
     val busy = vm.chatBusy
     val list = rememberLazyListState()
     var draft by rememberSaveable { mutableStateOf("") }
+    val context = LocalContext.current
     val count = messages.size + (if (streaming != null) 1 else 0)
     LaunchedEffect(count, (streaming?.length ?: 0) / 120) {
         if (count > 0) list.animateScrollToItem(count - 1)
@@ -110,7 +125,7 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         )
                     }
                 }
-                items(messages) { m -> ChatMessage(m, onShow = { vm.showChatLine(m) }) }
+                items(messages) { m -> ChatMessage(vm, m, onShow = { vm.showChatLine(m) }) }
                 if (streaming != null) {
                     item {
                         if (streaming.isBlank()) {
@@ -121,20 +136,38 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            val canAsk = !busy && messages.any { !it.error }
+            val attachment = vm.chatAttachment
+            val canAsk = !busy && (messages.any { !it.error } || attachment != null)
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (q in AiTutor.QUICK) {
                     SuggestionChip(onClick = { vm.sendChat(q) }, label = { Text(q) }, enabled = canAsk)
                 }
             }
+            if (attachment != null || vm.chatAttaching) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (attachment != null) ChatImageThumb(vm, attachment, 72.dp)
+                    else Text("Cargando imagen…", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = vm::clearChatAttachment, enabled = attachment != null) {
+                        Icon(Icons.Filled.Close, contentDescription = "Quitar la imagen")
+                    }
+                }
+            }
+            val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+                if (uri != null) vm.attachChatImage { checkNotNull(context.contentResolver.openInputStream(uri)) { "No se pudo abrir la imagen" } }
+            }
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    enabled = !busy && !vm.chatAttaching,
+                ) { Icon(TrazoIcons.Image, contentDescription = "Adjuntar una imagen") }
                 OutlinedTextField(
                     value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f),
                     placeholder = { Text("Preguntá algo…") }, maxLines = 4,
                 )
                 IconButton(
                     onClick = { val q = draft; draft = ""; vm.sendChat(q) },
-                    enabled = canAsk && draft.isNotBlank(),
+                    enabled = canAsk && (draft.isNotBlank() || attachment != null),
                 ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Enviar") }
             }
         }
@@ -142,9 +175,10 @@ internal fun AiChatPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ChatMessage(m: AiChatMessage, onShow: () -> Unit) {
+private fun ChatMessage(vm: EditorViewModel, m: AiChatMessage, onShow: () -> Unit) {
     when {
-        m.role == TutorRole.STUDENT -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+        m.role == TutorRole.STUDENT -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            m.image?.let { ChatImageThumb(vm, it, 160.dp) }
             Text(
                 m.text,
                 Modifier.widthIn(max = 280.dp)
@@ -162,6 +196,32 @@ private fun ChatMessage(m: AiChatMessage, onShow: () -> Unit) {
             if (m.text.isNotBlank()) ChatRichText(m.text)
             m.correct?.let { ok -> VerdictCard(ok, m.line, m.verdict.orEmpty(), onShow.takeIf { m.strokeIds.isNotEmpty() }) }
         }
+    }
+}
+
+/** Miniatura de una imagen del chat (se decodifica achicada, fuera del hilo de la UI). */
+@Composable
+private fun ChatImageThumb(vm: EditorViewModel, name: String, side: Dp) {
+    val px = with(LocalDensity.current) { side.roundToPx() }
+    val bmp by produceState<ImageBitmap?>(null, name, px) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val src = ImageImport.decodeFile(vm.chatImageFile(name).path) ?: return@runCatching null
+                val small = ImageImport.scaledDown(src, px * 2)
+                if (small !== src) src.recycle()
+                small.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    val b = bmp
+    if (b == null) {
+        Box(Modifier.size(side).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)))
+    } else {
+        Image(
+            b, contentDescription = "Imagen adjunta",
+            modifier = Modifier.widthIn(max = side * 1.6f).heightIn(max = side).clip(RoundedCornerShape(8.dp)),
+            contentScale = ContentScale.Fit,
+        )
     }
 }
 

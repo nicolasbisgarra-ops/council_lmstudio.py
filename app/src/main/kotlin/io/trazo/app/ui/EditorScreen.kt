@@ -113,6 +113,7 @@ fun EditorScreen(
     // Each editor starts minimized; an explicit choice survives configuration restoration.
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
     var aiMenu by rememberSaveable { mutableStateOf(false) }
+    var graphOpen by rememberSaveable { mutableStateOf(false) }
     // Exportar con marcas de la IA: se pregunta solo a quien usa el Modo IA. true = PDF, false = PNG.
     var exportAsk by remember { mutableStateOf<Boolean?>(null) }
     var exportAi by rememberSaveable { mutableStateOf(false) }
@@ -279,6 +280,7 @@ fun EditorScreen(
             onPages = { pagesOpen = !pagesOpen },
             pagesOpen = pagesOpen,
             onAi = { aiMenu = true },
+            onGraph = { graphOpen = true },
             onPdf = {
                 if (vm.usesAi) exportAsk = true else { exportAi = false; pdfLauncher.launch("${notebook.name}.pdf") }
             },
@@ -564,6 +566,7 @@ fun EditorScreen(
     }
 
     vm.imageEdit?.let { session -> ImageCropDialog(vm, session, paper.dark) }
+    if (graphOpen) GraphDialog(vm, paper.dark) { graphOpen = false }
 
     vm.teaching?.takeIf { !vm.isDrawing }?.let { offer ->
         TeachSheet(

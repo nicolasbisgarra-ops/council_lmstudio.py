@@ -19,7 +19,7 @@ class AiTutor(private val client: AiClient = AiClient()) {
         profile: AiProfile, key: String?, lines: List<String>, png: ByteArray?, history: List<TutorTurn>, question: String?,
         onUsage: ((AiTokenUsage) -> Unit)? = null, onText: (String) -> Unit = {},
     ): String = client.stream(
-        profile, key, SYSTEM, AiTutorPrompt.userText(lines, history, question), png.takeIf { history.isEmpty() },
+        profile, key, SYSTEM, AiTutorPrompt.userText(lines, history, question), png,
         maxTokens = profile.maxTokens.coerceAtLeast(MIN_TOKENS), onUsage = onUsage, onText = onText,
     )
 
@@ -34,7 +34,7 @@ class AiTutor(private val client: AiClient = AiClient()) {
 
 object AiTutorPrompt {
     const val SYSTEM: String = """Usted es un tutor de matemática que revisa la resolución manuscrita de un estudiante y conversa con él en un chat.
-Datos: recibe la imagen de la hoja y, por renglón, etiquetas crudas (símbolos reconocidos y sus posiciones). Las etiquetas no son una expresión reconstruida ni un resultado del motor de Trazo: lea la escritura en la imagen y úselas solo para ubicarse. Si algo no se entiende, dígalo en vez de inventarlo.
+Datos: recibe una imagen con la hoja entera (incluidas las imágenes pegadas en ella, que pueden traer el enunciado) y, si el estudiante adjuntó una imagen en el chat, esa imagen debajo, separada por una franja gris. Además recibe, por renglón, etiquetas crudas (símbolos reconocidos y sus posiciones). Las etiquetas no son una expresión reconstruida ni un resultado del motor de Trazo: lea la escritura en la imagen y úselas solo para ubicarse. Si la hoja no tiene renglones manuscritos, trabaje con lo que se ve en las imágenes (por ejemplo, resuelva o explique el enunciado). Si algo no se entiende, dígalo en vez de inventarlo.
 En la primera respuesta:
 1. Rehaga la resolución paso a paso por el MISMO camino que eligió el estudiante (mismo método, mismo orden), corrigiendo lo que haga falta. Organícela con títulos «### 1. Nombre del paso» y, debajo de cada título, una o dos líneas breves de explicación y la cuenta de ese paso.
 2. Al final, en un renglón aparte y sin formato (sin #, sin negrita), exactamente una línea con el veredicto: «ERROR (renglón N): qué estuvo mal y por qué» para el PRIMER renglón con un error matemático, o «CORRECTO: comentario breve» si no hay errores. N es el número de renglón de la lista.
@@ -47,7 +47,7 @@ x^2 - 5x + 6 &= 0 \\[8pt]
 \Rightarrow\ x &= 2 \quad \text{o} \quad x = 3
 \end{aligned}
 $$
-Use un bloque $$\begin{aligned} … \end{aligned}$$ por paso, con & delante del = (o del ⇒) para alinear y \\[8pt] entre renglones; si un renglón sigue la cuenta anterior, empiécelo con &=. Encierre el resultado final de cada ejercicio en \boxed{…}. Puede usar listas con «* » para enumerar observaciones. Nada de tablas ni imágenes.
+Use un bloque $$\begin{aligned} … \end{aligned}$$ por paso, con & delante del = (o del ⇒) para alinear y \\[8pt] entre renglones; si un renglón sigue la cuenta anterior, empiécelo con &=. Encierre el resultado final de cada ejercicio en \boxed{…}. Puede usar listas con «* » para enumerar observaciones. No dibuje tablas ni imágenes en la respuesta.
 Escriba en español claro y cercano, sin rodeos."""
 
     /** Hasta cuántos turnos previos y cuánto de cada uno viajan en la transcripción. */
@@ -57,6 +57,7 @@ Escriba en español claro y cercano, sin rodeos."""
     fun userText(lines: List<String>, history: List<TutorTurn>, question: String?): String = buildString {
         appendLine("Renglones de la hoja (etiquetas crudas con posiciones, numerados desde 1):")
         lines.forEachIndexed { i, l -> appendLine("${i + 1}: ${l.ifBlank { "?" }}") }
+        if (lines.isEmpty()) appendLine("(No hay renglones manuscritos: use la imagen.)")
         appendLine()
         val recent = history.takeLast(MAX_TURNS)
         if (recent.isEmpty()) {

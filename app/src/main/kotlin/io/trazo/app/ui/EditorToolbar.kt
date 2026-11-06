@@ -114,6 +114,8 @@ class EditorActions(
     val onAi: () -> Unit = {},
     val onPractice: () -> Unit = {},
     val onExam: () -> Unit = {},
+    /** Abre el modo gráfica. */
+    val onGraph: () -> Unit = {},
 )
 
 /**
@@ -611,6 +613,7 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions, buttonSize: 
             item("Seleccionar todo", TrazoIcons.SelectAll, action = vm::selectAll)()
             item("Borrar toda la página", TrazoIcons.Eraser, !vm.pageIsEmpty, actions.onClearPage)()
             item("Ajustar a la página", TrazoIcons.Fit, action = vm::fitToPage)()
+            item("Modo gráfica", null, action = actions.onGraph)()
             HorizontalDivider()
             item("Exportar cuaderno como PDF…", TrazoIcons.Export, action = actions.onPdf)()
             item("Exportar página como PNG…", TrazoIcons.Export, action = actions.onPng)()
