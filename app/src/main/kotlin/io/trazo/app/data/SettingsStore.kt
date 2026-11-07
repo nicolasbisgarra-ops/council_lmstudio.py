@@ -9,6 +9,7 @@ import io.trazo.core.MathNotes
 import io.trazo.core.ImagePreset
 import io.trazo.core.Paper
 import io.trazo.core.ShapeKind
+import io.trazo.core.settings.SymbolColors
 import io.trazo.core.settings.ToolPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -97,6 +98,8 @@ data class TrazoSettings(
     val chatWidthDp: Float = 0f,
     /** Tamaño de la letra del chat en sp (12..24). */
     val chatFontSp: Float = 16f,
+    /** Color fijo por símbolo/operador (id de patrón → ARGB); sin entrada = el color de la pluma. */
+    val symbolColors: Map<String, Int> = SymbolColors.defaults,
 )
 
 /** Nombre visible de cada ajuste de imagen. */
@@ -156,6 +159,7 @@ class SettingsStore(context: Context) {
         imagePresetDark = prefs.enum("imagePresetDark", ImagePreset.DARK),
         chatWidthDp = prefs.getFloat("chatWidthDp", 0f).coerceAtLeast(0f),
         chatFontSp = prefs.getFloat("chatFontSp", 16f).coerceIn(12f, 24f),
+        symbolColors = SymbolColors.read(runCatching { prefs.getString("symbolColors", null) }.getOrNull()),
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
@@ -205,6 +209,7 @@ class SettingsStore(context: Context) {
             .putString("imagePresetDark", s.imagePresetDark.name)
             .putFloat("chatWidthDp", s.chatWidthDp)
             .putFloat("chatFontSp", s.chatFontSp.coerceIn(12f, 24f))
+            .putString("symbolColors", SymbolColors.serialize(s.symbolColors))
             .apply()
         _settings.value = s
     }

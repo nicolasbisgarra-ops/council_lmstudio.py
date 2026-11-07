@@ -87,6 +87,8 @@ private sealed interface PrefColor {
     data class Swap(val slot: Int) : PrefColor
     /** El color de los resultados que completa la hoja al escribir «=». */
     data object MathResult : PrefColor
+    /** Color fijo de un símbolo/operador (id de patrón). */
+    data class Symbol(val patternId: String) : PrefColor
 }
 
 /**
@@ -206,12 +208,14 @@ fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
                 is PrefColor.Quick -> s.quickColors.getOrElse(target.slot) { s.penColor }
                 is PrefColor.Swap -> s.swapColors.getOrElse(target.slot) { s.penColor }
                 PrefColor.MathResult -> s.mathResultColor
+                is PrefColor.Symbol -> s.symbolColors[target.patternId] ?: s.penColor
             },
             title = when (target) {
                 PrefColor.Accent -> "Color de acento"
                 is PrefColor.Quick -> "Color rápido"
                 is PrefColor.Swap -> "Color del doble clic ${target.slot + 1}"
                 PrefColor.MathResult -> "Color de lo autocompletado"
+                is PrefColor.Symbol -> "Color del símbolo"
             },
             onDismiss = { picking = null },
             onPick = { c ->
@@ -221,6 +225,7 @@ fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
                     is PrefColor.Quick -> update { st -> st.copy(quickColors = st.quickColors.mapIndexed { i, q -> if (i == target.slot) c else q }) }
                     is PrefColor.Swap -> update { st -> st.copy(swapColors = st.swapColors.mapIndexed { i, q -> if (i == target.slot) c else q }) }
                     PrefColor.MathResult -> update { it.copy(mathResultColor = c) }
+                    is PrefColor.Symbol -> update { st -> st.copy(symbolColors = st.symbolColors + (target.patternId to c)) }
                 }
             },
             suggestions = if (target == PrefColor.Accent) AccentPresets.map { it.accent } else PenPalette,
@@ -252,6 +257,7 @@ private fun PreferenceSection.icon(): ImageVector = when (this) {
     PreferenceSection.TOOLS -> TrazoIcons.Eraser
     PreferenceSection.RECOGNITION -> TrazoIcons.Wand
     PreferenceSection.MATH -> TrazoIcons.Calculate
+    PreferenceSection.SYMBOLS -> TrazoIcons.Palette
     PreferenceSection.GENERAL -> Icons.Filled.Settings
     PreferenceSection.AI -> AiStarsIcon
     PreferenceSection.SYNC -> Icons.Filled.Refresh
@@ -379,6 +385,7 @@ private fun SettingsPage(
             }
             Hint("Lo autocompletado no se guarda como tinta: se recalcula al cambiar la cuenta. «Calcular» con el lazo sí lo escribe en la hoja.")
         }
+        PreferenceSection.SYMBOLS -> SymbolColorsPage(s, update) { pick(PrefColor.Symbol(it)) }
         PreferenceSection.AI -> AiSettingsPage()
         PreferenceSection.SYNC -> SyncSettingsPage()
         PreferenceSection.GENERAL -> PrefCard("General") {

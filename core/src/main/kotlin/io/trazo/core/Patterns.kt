@@ -177,6 +177,8 @@ object InkReplacement {
      * @param style estilo con que se escribió el gesto: los trazos de salida con el color por defecto
      *  adoptan su color, su grosor (proporcional) y su punta; los que se enseñaron con otro color lo
      *  conservan. Un estilo de resaltador no se adopta.
+     * @param presetColor color fijo del símbolo (ver `SymbolColors`): si no es null, todos los trazos de salida
+     *  lo toman sin importar la pluma (el grosor y la punta siguen adoptándose de [style]); null = sin cambios.
      * @param elastic false = escala uniforme aunque haya zona elástica (inserción desde la biblioteca).
      * @return trazos nuevos (ids nuevos, mismo [InkStroke.groupId], [InkStroke.patternId] = patrón).
      */
@@ -188,6 +190,7 @@ object InkReplacement {
         groupId: String = ids.next(),
         style: InkStyle? = null,
         elastic: Boolean = true,
+        presetColor: Int? = null,
     ): List<InkStroke> {
         val src = pattern.outputInk.bounds()
         val eps = 0.5f
@@ -222,7 +225,7 @@ object InkReplacement {
             pattern.outputInk.map { it.transformed(t, scaleWidth = false) }
         }
         return placed.map { stroke ->
-            stroke.adopting(style).copy(
+            stroke.adopting(style).let { if (presetColor != null) it.copy(color = presetColor) else it }.copy(
                 id = ids.next(),
                 startTime = startTime,
                 groupId = groupId,

@@ -210,6 +210,7 @@ class EditorViewModel(
         controller.handleRadiusPx = 24f * density
         controller.recognitionEnabled = s.gesturesEnabled
         controller.autoAlign = s.autoAlign
+        controller.symbolColors = s.symbolColors
         controller.mathEnabled = s.mathNotes && app.trazo.study.isAllowed(StudyFeature.CALCULATOR)
         controller.mathColor = s.mathResultColor
         controller.shape = s.shape

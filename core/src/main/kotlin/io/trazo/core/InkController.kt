@@ -66,6 +66,8 @@ class InkController(
     var width: Float = DEFAULT_INK_WIDTH
     /** Al convertir, alinear la salida con las formas reconocidas del mismo renglón ([AutoAlign]). */
     var autoAlign: Boolean = true
+    /** Color fijo por patrón (id → ARGB) para la salida de los símbolos; sin entrada = color de la pluma. */
+    var symbolColors: Map<String, Int> = emptyMap()
 
     /** Cuentas en la hoja: el resultado aparece solo después de un «=» final de renglón ([MathNotes]). */
     var mathEnabled: Boolean = true
@@ -257,9 +259,12 @@ class InkController(
     private fun outputFor(pattern: InkPattern, anchor: Bounds, gesture: List<InkStroke>, start: Long, style: InkStyle?): List<InkStroke> {
         if (pattern.id == DefaultPatterns.ROOT) {
             val dy = anchor.centerY - gesture.bounds().centerY
-            RootFit.fit(pattern, gesture, ids, start, style, dy)?.let { return it }
+            RootFit.fit(pattern, gesture, ids, start, style, dy)?.let { out ->
+                val c = symbolColors[pattern.id] ?: return out
+                return out.map { it.copy(color = c) }
+            }
         }
-        return InkReplacement.place(pattern, anchor, ids, start, style = style)
+        return InkReplacement.place(pattern, anchor, ids, start, style = style, presetColor = symbolColors[pattern.id])
     }
 
     /** Trazo en curso (tinta húmeda) para dibujar sin esperar al reconocimiento. */
@@ -650,7 +655,7 @@ class InkController(
         val h = (if (src.height > 0.5f) height else height * 0.1f) / pattern.outputScale.coerceAtLeast(0.01f)
         val w = if (src.height > 0.5f) h * aspect else height * 2f / pattern.outputScale.coerceAtLeast(0.01f)
         val anchor = Bounds(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
-        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style, elastic = false)
+        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style, elastic = false, presetColor = symbolColors[pattern.id])
         history.perform(page, StrokeEdit(emptyList(), output, StrokeEdit.Kind.INSERT))
         refreshCalcs(output)
         showHalosFor(output)
