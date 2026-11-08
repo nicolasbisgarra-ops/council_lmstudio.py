@@ -90,6 +90,7 @@ import io.trazo.core.InkStroke
 import io.trazo.core.OutputSizing
 import io.trazo.core.Paper
 import io.trazo.core.bounds
+import io.trazo.core.settings.SymbolColors
 import io.trazo.core.PatternCategory
 
 /**
@@ -144,6 +145,15 @@ fun PatternLibraryScreen(onBack: () -> Unit, onEdit: (String?) -> Unit) {
                                 text = { Text("Exportar patrones…") },
                                 leadingIcon = { Icon(TrazoIcons.Export, null) },
                                 onClick = { menu = false; exportLauncher.launch("patrones.trazo-patrones.json") },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Restaurar colores de símbolos") },
+                                leadingIcon = { Icon(TrazoIcons.Palette, null) },
+                                onClick = {
+                                    menu = false
+                                    context.trazo.settings.update { it.copy(symbolColors = it.symbolColors + SymbolColors.defaults) }
+                                    Toast.makeText(context, "Colores de la suma, la resta y la integral restaurados", Toast.LENGTH_SHORT).show()
+                                },
                             )
                             DropdownMenuItem(
                                 text = { Text("Restaurar signos de partida") },
@@ -450,6 +460,31 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                         "No encontré una barra horizontal a la derecha de la salida.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
+            SectionLabel("Color del símbolo")
+            Column(Modifier.widthIn(max = 520.dp)) {
+                var pickingColor by remember { mutableStateOf(false) }
+                SwitchRow(
+                    "Color fijo", vm.fixedColor != null, { on -> vm.fixedColor = if (on) settings.penColor else null },
+                    subtitle = "Al reconocerse se escribe siempre con este color, sin importar la pluma. " +
+                        "Apagado, usa el color de la pluma.",
+                )
+                vm.fixedColor?.let { c ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ColorDot(c, selected = false, onClick = { pickingColor = true }, size = 32.dp, description = "Cambiar el color del símbolo")
+                        Spacer(Modifier.width(12.dp))
+                        TextButton(onClick = { pickingColor = true }) { Text("Cambiar color") }
+                    }
+                }
+                if (pickingColor) {
+                    ColorPickerDialog(
+                        initial = vm.fixedColor ?: settings.penColor,
+                        title = "Color del símbolo",
+                        onDismiss = { pickingColor = false },
+                        onPick = { vm.fixedColor = it; pickingColor = false },
                     )
                 }
             }

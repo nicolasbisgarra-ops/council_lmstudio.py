@@ -30,10 +30,6 @@ internal enum class PreferenceSection(val title: String, val summary: String, va
         "Cuentas", "Resultados al escribir = y su color",
         listOf("Resolver las cuentas (math notes)", "Color de lo autocompletado"),
     ),
-    SYMBOLS(
-        "Colores de símbolos", "Color fijo de la suma, la resta, la integral…",
-        listOf("Colores de símbolos", "Color de la suma", "Color de la resta", "Color de la integral", "Restaurar valores"),
-    ),
     GENERAL(
         "General", "Vibración, dedo y gestos",
         listOf("Vibrar al reemplazar un gesto (vibración)", "Escribir también con el dedo", "Gestos con pausa del lápiz"),
@@ -80,7 +76,6 @@ internal fun TrazoSettings.resetSection(section: PreferenceSection): TrazoSettin
             autoAlign = defaults.autoAlign,
         )
         PreferenceSection.MATH -> copy(mathNotes = defaults.mathNotes, mathResultColor = defaults.mathResultColor)
-        PreferenceSection.SYMBOLS -> copy(symbolColors = defaults.symbolColors)
         PreferenceSection.GENERAL -> copy(
             haptics = defaults.haptics, fingerDraws = defaults.fingerDraws, gesturesEnabled = defaults.gesturesEnabled,
         )

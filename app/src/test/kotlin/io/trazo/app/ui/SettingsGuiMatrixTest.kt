@@ -71,7 +71,6 @@ class SettingsGuiMatrixTest {
             PreferenceSection.TOOLS to "Modo de la goma",
             PreferenceSection.RECOGNITION to "Auto-alinear lo reconocido",
             PreferenceSection.MATH to "Cuentas en la hoja",
-            PreferenceSection.SYMBOLS to "Agregar símbolo",
             PreferenceSection.GENERAL to "Vibrar al reemplazar un gesto",
             PreferenceSection.AI to "Registro de envíos",
             PreferenceSection.SYNC to "Vincular un dispositivo",

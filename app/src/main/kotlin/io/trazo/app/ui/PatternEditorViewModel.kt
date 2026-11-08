@@ -49,6 +49,7 @@ class PatternEditorViewModel(
     seedGesture: List<InkStroke>? = null,
 ) : AndroidViewModel(app) {
     private val repo = app.trazo.repository
+    private val settings = app.trazo.settings
     private val original = patternId?.let { id -> repo.patterns.value.firstOrNull { it.id == id } }
 
     var name by mutableStateOf(original?.name ?: "")
@@ -69,6 +70,8 @@ class PatternEditorViewModel(
     /** Piso elegido a mano ([InkPattern.floor]); si no, el automático. */
     var customFloor by mutableStateOf(original?.floor != null)
     var floor by mutableFloatStateOf(original?.floor ?: (original?.let { AutoAlign.floor(it) } ?: 1f))
+    /** Color fijo con que se escribe al reconocerse ([io.trazo.app.data.TrazoSettings.symbolColors]); null = el de la pluma. */
+    var fixedColor by mutableStateOf(patternId?.let { settings.settings.value.symbolColors[it] })
     var revision by mutableIntStateOf(0)
         private set
     var testResult by mutableStateOf<String?>(null)
@@ -163,7 +166,12 @@ class PatternEditorViewModel(
 
     fun save(): Boolean {
         val d = draft() ?: return false
-        repo.upsertPattern(if (original == null) d.copy(id = IdGenerator.RANDOM.next()) else d)
+        val saved = if (original == null) d.copy(id = IdGenerator.RANDOM.next()) else d
+        repo.upsertPattern(saved)
+        val color = fixedColor
+        settings.update { st ->
+            st.copy(symbolColors = if (color == null) st.symbolColors - saved.id else st.symbolColors + (saved.id to color))
+        }
         return true
     }
 
