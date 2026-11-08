@@ -80,6 +80,10 @@ class InkCanvasView @JvmOverloads constructor(
             invalidateContent()
         }
 
+    /** Línea guía del piso (y en coordenadas del lienzo) que se dibuja punteada; null = ninguna. */
+    var floorGuide: Float? = null
+        set(value) { if (field != value) { field = value; invalidate() } }
+
     var paper: Paper = Paper.LINES
         set(value) { if (field != value) { field = value; invalidateContent() } }
 
@@ -361,9 +365,15 @@ class InkCanvasView @JvmOverloads constructor(
     /** Vuelve a encajar la hoja al ancho de la vista (botón "Ajustar"). */
     fun fitToPage() = fitIfNeeded(force = true)
 
+    /** En [Mode.PAD]: permite acercar con dos dedos (o [zoomStep]) y moverse por el lienzo. */
+    var padZoomable = false
+    /** El lienzo PAD se acercó: no se vuelve a encajar solo hasta [fitToPage]. */
+    private var padZoomed = false
+
     private fun fitIfNeeded(force: Boolean) {
         if (width == 0 || height == 0) return
-        if (force || !viewport.isSet || mode == Mode.PAD) {
+        if (force) padZoomed = false
+        if (force || !viewport.isSet || (mode == Mode.PAD && !padZoomed)) {
             val s = if (mode == Mode.PAD) fitScale() else fitPageScale()
             viewport.scale = s
             viewport.tx = (width - pageWidth * s) / 2f
@@ -396,9 +406,11 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun zoomBy(factor: Float, fx: Float, fy: Float) {
-        if (mode == Mode.PAD) return
+        if (mode == Mode.PAD && !padZoomable) return
         val fit = fitScale()
-        val newScale = (viewport.scale * factor).coerceIn(minNotebookScale(), fit * 8f)
+        val newScale = if (mode == Mode.PAD) (viewport.scale * factor).coerceIn(fit, fit * 6f)
+        else (viewport.scale * factor).coerceIn(minNotebookScale(), fit * 8f)
+        if (mode == Mode.PAD) padZoomed = true
         val f = newScale / viewport.scale
         viewport.tx = fx - (fx - viewport.tx) * f
         viewport.ty = fy - (fy - viewport.ty) * f
@@ -408,7 +420,8 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun panBy(dx: Float, dy: Float) {
-        if (mode == Mode.PAD) return
+        if (mode == Mode.PAD && !padZoomable) return
+        if (mode == Mode.PAD) padZoomed = true
         viewport.tx += dx
         viewport.ty += dy
         clampPan()
@@ -608,6 +621,16 @@ class InkCanvasView @JvmOverloads constructor(
                 } else if (tool == MotionEvent.TOOL_TYPE_FINGER && !palmBlocked && drawingPointerId == INVALID) {
                     navigating = true
                     navigate(event)
+                } else if (mode == Mode.PAD && padZoomable && tool == MotionEvent.TOOL_TYPE_FINGER &&
+                    drawingPointerId != INVALID && drawingKind == PointerKind.FINGER && event.pointerCount == 2
+                ) {
+                    // Segundo dedo en el lienzo chico: el trazo recién empezado se descarta y se pasa a zoom.
+                    cancelLassoHold()
+                    c.cancel()
+                    drawingPointerId = INVALID
+                    removeCallbacks(ticker)
+                    navigating = true
+                    navigate(event)
                 }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -669,10 +692,12 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun navigate(event: MotionEvent) {
-        if (mode == Mode.PAD) return
+        if (mode == Mode.PAD && !padZoomable) return
         scaleDetector.onTouchEvent(event)
         val action = event.actionMasked
-        when (action) {
+        if (mode == Mode.PAD) {
+            // Lienzo chico: solo zoom y desplazamiento, sin los toques de la hoja.
+        } else when (action) {
             MotionEvent.ACTION_DOWN -> {
                 tapStartTime = event.eventTime; tapMaxPointers = 1; tapTravel = 0f; tapScaled = false
                 holdTapUsed = false; lastThirdTap = 0L; lastSecondTap = 0L
@@ -805,6 +830,10 @@ class InkCanvasView @JvmOverloads constructor(
             canvas.drawCircle(b.right, b.bottom, 9f * density / pxPerUnit, handlePaint)
         }
         // Forma dinámica elegida: marco punteado y un tirador por medida editable.
+        floorGuide?.let { y ->
+            lassoPaint.strokeWidth = 2f * density / pxPerUnit
+            canvas.drawLine(-pageWidth, y, pageWidth * 2f, y, lassoPaint)
+        }
         c.selectedShape?.let { s ->
             val b = s.bounds
             lassoPaint.strokeWidth = 1.5f * density / pxPerUnit

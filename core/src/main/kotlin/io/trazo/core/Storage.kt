@@ -167,6 +167,7 @@ object PatternLibrary {
         minScore = minScore,
         holdMillis = holdMillis,
         stretch = stretch,
+        floor = floor,
         mathMeaning = patternMeaning(this),
     )
 
@@ -213,6 +214,7 @@ object PatternLibrary {
         val minScore: Float,
         val holdMillis: Long?,
         val stretch: Stretch?,
+        val floor: Float?,
         val mathMeaning: String?,
     )
 

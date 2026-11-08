@@ -96,6 +96,18 @@ class AutoAlignTest {
         assertEquals(180f, alignUser(letter("Mi letra", unknown = "a"), g, item("5", 100f, 100f, 140f, 180f)).bottom, 0.5f)
     }
 
+    @Test fun `el piso elegido por el usuario manda sobre el automatico`() {
+        // «lim» con «x→k» debajo: el usuario pone el piso a mitad de la salida.
+        val lim = letter("lim").copy(floor = 0.5f)
+        assertEquals(0.5f, AutoAlign.floor(lim), 1e-6f)
+        val g = Bounds(160f, 130f, 200f, 210f)
+        val out = alignUser(lim, g, item("5", 100f, 100f, 140f, 180f))
+        assertEquals(refFloor("5", 100f, 180f), out.top + out.height * 0.5f, 0.5f)
+        // Un valor fuera de rango se acota.
+        assertEquals(AutoAlign.MIN_USER_FLOOR, AutoAlign.floor(lim.copy(floor = -1f)), 1e-6f)
+        assertEquals(1f, AutoAlign.floor(lim.copy(floor = 3f)), 1e-6f)
+    }
+
     @Test fun `la cola de la y baja del piso`() {
         val g = Bounds(160f, 130f, 190f, 190f)
         val out = alignUser(letter("y"), g, item("5", 100f, 100f, 140f, 180f))

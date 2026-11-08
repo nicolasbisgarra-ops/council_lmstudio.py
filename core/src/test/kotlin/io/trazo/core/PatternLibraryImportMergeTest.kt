@@ -77,6 +77,16 @@ class PatternLibraryImportMergeTest {
     }
 
     @Test
+    fun `a different user floor is a different pattern`() {
+        val original = pattern("original", "lim").copy(unknown = "")
+        val withFloor = original.copy(id = "with-floor", floor = 0.5f)
+        val merged = PatternLibrary.mergeWithRemapping(listOf(original), listOf(withFloor, original.copy(id = "same")), IdGenerator.sequential("copy-"))
+        assertEquals(listOf("original", "with-floor"), merged.patterns.map { it.id })
+        assertEquals("original", merged.idRemap["same"])
+        assertEquals(withFloor, TrazoFormat.decodePatterns(TrazoFormat.encodePatterns(listOf(withFloor))).single())
+    }
+
+    @Test
     fun `same name or output geometry alone does not make patterns duplicates`() {
         val original = pattern("original", "Símbolo")
         val changedGesture = pattern(

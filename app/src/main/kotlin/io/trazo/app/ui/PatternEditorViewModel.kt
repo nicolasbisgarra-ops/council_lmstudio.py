@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import io.trazo.app.trazo
+import io.trazo.core.AutoAlign
 import io.trazo.core.GestureExamples
 import io.trazo.core.History
 import io.trazo.core.IdGenerator
@@ -19,7 +20,9 @@ import io.trazo.core.InkStroke
 import io.trazo.core.OutputSizing
 import io.trazo.core.PageState
 import io.trazo.core.PatternUpgrades
+import io.trazo.core.ShapeKind
 import io.trazo.core.Stretch
+import io.trazo.core.Tool
 
 /** Lienzo pequeño editable (gesto, salida o prueba). */
 class Pad(strokes: List<InkStroke> = emptyList(), patterns: () -> List<InkPattern> = { emptyList() }, recognize: Boolean = false) {
@@ -63,6 +66,9 @@ class PatternEditorViewModel(
     var unknownLetter by mutableStateOf(
         original?.unknown?.takeIf { it.isNotBlank() } ?: original?.name?.trim()?.takeIf { it.length == 1 && it[0].isLetter() } ?: "x",
     )
+    /** Piso elegido a mano ([InkPattern.floor]); si no, el automático. */
+    var customFloor by mutableStateOf(original?.floor != null)
+    var floor by mutableFloatStateOf(original?.floor ?: (original?.let { AutoAlign.floor(it) } ?: 1f))
     var revision by mutableIntStateOf(0)
         private set
     var testResult by mutableStateOf<String?>(null)
@@ -74,6 +80,15 @@ class PatternEditorViewModel(
     }
     var currentExample by mutableIntStateOf(0)
     val output = Pad(original?.outputInk ?: emptyList())
+    /** Herramienta con que se dibuja la salida. */
+    var outputTool by mutableStateOf(OutputTool.PEN)
+        private set
+
+    fun selectOutputTool(t: OutputTool) {
+        outputTool = t
+        output.controller.tool = t.tool
+        t.shape?.let { output.controller.shape = it }
+    }
     val testPad = Pad(patterns = { listOfNotNull(draft()) }, recognize = true)
 
     init {
@@ -123,6 +138,7 @@ class PatternEditorViewModel(
             builtIn = original?.builtIn ?: false,
             category = category,
             stretch = stretchFor(out),
+            floor = if (customFloor) floor else null,
             unknown = when (mathUse) {
                 MathUse.AUTO -> null
                 MathUse.NONE -> ""
@@ -167,4 +183,17 @@ enum class MathUse(val label: String) {
             else -> UNKNOWN
         }
     }
+}
+
+/** Herramientas del lienzo de salida del editor. */
+enum class OutputTool(val label: String, val tool: Tool, val shape: ShapeKind? = null) {
+    PEN("Pluma", Tool.PEN),
+    LINE("Línea", Tool.SHAPE, ShapeKind.LINE),
+    ARROW("Flecha", Tool.SHAPE, ShapeKind.ARROW),
+    RECTANGLE("Rectángulo", Tool.SHAPE, ShapeKind.RECTANGLE),
+    ELLIPSE("Elipse", Tool.SHAPE, ShapeKind.ELLIPSE),
+    TRIANGLE("Triángulo", Tool.SHAPE, ShapeKind.TRIANGLE),
+    ERASER("Goma", Tool.ERASER),
+    LASSO("Lazo", Tool.LASSO),
+    PAN("Mover", Tool.PAN),
 }

@@ -144,7 +144,7 @@ object AutoAlign {
         }
         val refPattern = lookup(ref.patternId)
         // Números y letras se apoyan en el piso de la forma de al lado y toman su escala.
-        val byFloor = ref in refs && !sign && !isContainer(pattern)
+        val byFloor = ref in refs && (pattern.floor != null || (!sign && !isContainer(pattern)))
         // Entre formas de distinto alto, el desvío se mide con la más alta de las dos.
         val reach = if (sign) ref.bounds.height else max(ref.bounds.height, predicted)
         if (ref in refs && abs(ref.bounds.centerY - gesture.centerY) > OFFSET * reach) return gesture
@@ -327,6 +327,7 @@ object AutoAlign {
      * abajo, salvo las minúsculas con cola (g, j, p, q, y…), que bajan [DESCENDER] de su alto.
      */
     fun floor(p: InkPattern): Float {
+        p.floor?.let { return it.coerceIn(MIN_USER_FLOOR, 1f) }
         if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) {
             val src = p.outputInk.bounds()
             // Si el usuario la redibujó, ya no está en el marco de la biblioteca.
@@ -339,6 +340,8 @@ object AutoAlign {
 
     /** Parte del alto de una minúscula con cola que queda debajo de la línea. */
     const val DESCENDER = 0.35f
+    /** Piso más alto que puede elegir el usuario (fracción desde arriba). */
+    const val MIN_USER_FLOOR = 0.05f
     private const val DESCENDERS = "gjpqyβγζημξρφχψ"
 
     /** Un nombre de signo centrado («Más», «+», «igual»…), sin importar tildes ni mayúsculas. */

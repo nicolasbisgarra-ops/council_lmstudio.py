@@ -108,6 +108,8 @@ data class InkPattern(
      * una letra = incógnita con esa letra (por ejemplo «x»), sin importar el nombre.
      */
     val unknown: String? = null,
+    /** Piso (línea de escritura) de la salida, en fracción de su alto desde arriba; null = automático ([AutoAlign.floor]). */
+    val floor: Float? = null,
 ) {
     init {
         require(gestureExamples.isNotEmpty() && gestureExamples.all { it.isNotEmpty() }) { "Pattern needs a gesture" }

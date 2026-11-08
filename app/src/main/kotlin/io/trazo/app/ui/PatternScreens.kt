@@ -84,10 +84,12 @@ import io.trazo.app.data.PaperTone
 import io.trazo.app.ink.InkCanvasView
 import io.trazo.app.ink.PaperColors
 import io.trazo.app.trazo
+import io.trazo.core.AutoAlign
 import io.trazo.core.InkPattern
 import io.trazo.core.InkStroke
 import io.trazo.core.OutputSizing
 import io.trazo.core.Paper
+import io.trazo.core.bounds
 import io.trazo.core.PatternCategory
 
 /**
@@ -334,7 +336,8 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
     vm.revision // recomponer al dibujar
 
     @Composable
-    fun pad(p: Pad, recognize: Boolean = false) = InkPad(p, settings.holdMillis, density, paper, accent, recognize)
+    fun pad(p: Pad, recognize: Boolean = false, floorGuide: Float? = null) =
+        InkPad(p, settings.holdMillis, density, paper, accent, recognize, floorGuide)
 
     Scaffold(
         topBar = {
@@ -378,8 +381,14 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                 }
                 val outputPad: @Composable (Modifier) -> Unit = { m ->
                     PadCard("Cómo quiero que quede (tu tinta)", m) {
-                        Spacer(Modifier.height(48.dp))
-                        pad(vm.output)
+                        ChoiceRow(OutputTool.entries, vm.outputTool, { it.label }, vm::selectOutputTool)
+                        val ink = vm.output.strokes
+                        val guide = if (ink.isEmpty()) null else {
+                            val b = ink.bounds()
+                            val f = vm.draft()?.let { AutoAlign.floor(it) } ?: if (vm.customFloor) vm.floor else 1f
+                            b.top + f * b.height
+                        }
+                        pad(vm.output, floorGuide = guide)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             ToolButton(TrazoIcons.Undo, "Deshacer", onClick = { vm.output.controller.undo() })
                             TextButton(onClick = { vm.output.clear() }) { Text("Borrar todo") }
@@ -420,6 +429,24 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                         "No encontré una barra horizontal a la derecha de la salida.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
+            SectionLabel("Piso (línea de escritura)")
+            Column(Modifier.widthIn(max = 520.dp)) {
+                SwitchRow(
+                    "Elegir el piso a mano", vm.customFloor, { on ->
+                        if (on) vm.floor = vm.draft()?.let { AutoAlign.floor(it) } ?: vm.floor
+                        vm.customFloor = on
+                    },
+                    subtitle = "La línea punteada de la salida marca dónde se apoya sobre el renglón. " +
+                        "Por ejemplo, en «lim» el piso va bajo «lim» y el «x→k» queda colgando abajo.",
+                )
+                if (vm.customFloor) {
+                    LabeledSlider(
+                        "Altura del piso", "${"%.0f".format(vm.floor * 100)} % desde arriba", vm.floor,
+                        AutoAlign.MIN_USER_FLOOR..1f, onChange = { vm.floor = it },
                     )
                 }
             }
@@ -470,28 +497,47 @@ private fun PadCard(title: String, modifier: Modifier = Modifier, content: @Comp
 }
 
 @Composable
-private fun InkPad(pad: Pad, holdMillis: Long, density: Float, paper: PaperColors, accent: Int, recognize: Boolean = false) {
+private fun InkPad(
+    pad: Pad,
+    holdMillis: Long,
+    density: Float,
+    paper: PaperColors,
+    accent: Int,
+    recognize: Boolean = false,
+    floorGuide: Float? = null,
+) {
     pad.controller.holdMillis = holdMillis
     pad.controller.tremorRadiusPx = 6f * density
     pad.controller.minInkLengthPx = 12f * density
     pad.controller.recognitionEnabled = recognize
-    AndroidView(
-        factory = { ctx ->
-            InkCanvasView(ctx).apply {
-                mode = InkCanvasView.Mode.PAD
-                pageWidth = PAD_SIZE
-                pageHeight = PAD_SIZE
-                this.paper = Paper.GRID
-                controller = pad.controller
-            }
-        },
-        update = {
-            it.controller = pad.controller
-            it.paperColors = paper
-            it.accentColor = accent
-        },
-        modifier = Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(10.dp)),
-    )
+    var view by remember { mutableStateOf<InkCanvasView?>(null) }
+    Box(Modifier.fillMaxWidth().height(340.dp).clip(RoundedCornerShape(10.dp))) {
+        AndroidView(
+            factory = { ctx ->
+                InkCanvasView(ctx).apply {
+                    mode = InkCanvasView.Mode.PAD
+                    padZoomable = true
+                    pageWidth = PAD_SIZE
+                    pageHeight = PAD_SIZE
+                    this.paper = Paper.GRID
+                    controller = pad.controller
+                }.also { view = it }
+            },
+            update = {
+                it.controller = pad.controller
+                it.paperColors = paper
+                it.accentColor = accent
+                it.floorGuide = floorGuide
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+        // Zoom: con dos dedos o con estos botones.
+        Row(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
+            ToolButton(TrazoIcons.ZoomIn, "Acercar", onClick = { view?.zoomStep(1.25f) }, size = 34.dp)
+            ToolButton(TrazoIcons.ZoomOut, "Alejar", onClick = { view?.zoomStep(0.8f) }, size = 34.dp)
+            ToolButton(TrazoIcons.Fit, "Ajustar", onClick = { view?.fitToPage() }, size = 34.dp)
+        }
+    }
 }
 
 private const val PAD_SIZE = 400f
