@@ -336,8 +336,8 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
     vm.revision // recomponer al dibujar
 
     @Composable
-    fun pad(p: Pad, recognize: Boolean = false, floorGuide: Float? = null) =
-        InkPad(p, settings.holdMillis, density, paper, accent, recognize, floorGuide)
+    fun pad(p: Pad, recognize: Boolean = false, floorGuide: Float? = null, onFloorDrag: ((Float) -> Unit)? = null) =
+        InkPad(p, settings.holdMillis, density, paper, accent, recognize, floorGuide, onFloorDrag)
 
     Scaffold(
         topBar = {
@@ -383,15 +383,36 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                     PadCard("Cómo quiero que quede (tu tinta)", m) {
                         ChoiceRow(OutputTool.entries, vm.outputTool, { it.label }, vm::selectOutputTool)
                         val ink = vm.output.strokes
-                        val guide = if (ink.isEmpty()) null else {
-                            val b = ink.bounds()
-                            val f = vm.draft()?.let { AutoAlign.floor(it) } ?: if (vm.customFloor) vm.floor else 1f
-                            b.top + f * b.height
+                        val b = if (ink.isEmpty()) null else ink.bounds()
+                        val guide = b?.let {
+                            val f = vm.draft()?.let { d -> AutoAlign.floor(d) } ?: if (vm.customFloor) vm.floor else 1f
+                            it.top + f * it.height
                         }
-                        pad(vm.output, floorGuide = guide)
+                        pad(vm.output, floorGuide = guide, onFloorDrag = b?.takeIf { it.height > 1f }?.let { box ->
+                            { y: Float ->
+                                // Arrastrar el tirador pasa a piso manual.
+                                vm.floor = ((y - box.top) / box.height).coerceIn(AutoAlign.MIN_USER_FLOOR, 1f)
+                                vm.customFloor = true
+                            }
+                        })
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             ToolButton(TrazoIcons.Undo, "Deshacer", onClick = { vm.output.controller.undo() })
                             TextButton(onClick = { vm.output.clear() }) { Text("Borrar todo") }
+                        }
+                        SwitchRow(
+                            "Piso a mano", vm.customFloor, { on ->
+                                if (on) vm.floor = vm.draft()?.let { AutoAlign.floor(it) } ?: vm.floor
+                                vm.customFloor = on
+                            },
+                            subtitle = "La línea punteada es el piso (dónde se apoya en el renglón). " +
+                                "Arrastrá el círculo de la derecha para moverla. En «lim», ponela bajo «lim» " +
+                                "y el «x→k» queda colgando abajo.",
+                        )
+                        if (vm.customFloor) {
+                            LabeledSlider(
+                                "Altura del piso", "${"%.0f".format(vm.floor * 100)} % desde arriba", vm.floor,
+                                AutoAlign.MIN_USER_FLOOR..1f, onChange = { vm.floor = it },
+                            )
                         }
                     }
                 }
@@ -429,24 +450,6 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
                         "No encontré una barra horizontal a la derecha de la salida.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-
-            SectionLabel("Piso (línea de escritura)")
-            Column(Modifier.widthIn(max = 520.dp)) {
-                SwitchRow(
-                    "Elegir el piso a mano", vm.customFloor, { on ->
-                        if (on) vm.floor = vm.draft()?.let { AutoAlign.floor(it) } ?: vm.floor
-                        vm.customFloor = on
-                    },
-                    subtitle = "La línea punteada de la salida marca dónde se apoya sobre el renglón. " +
-                        "Por ejemplo, en «lim» el piso va bajo «lim» y el «x→k» queda colgando abajo.",
-                )
-                if (vm.customFloor) {
-                    LabeledSlider(
-                        "Altura del piso", "${"%.0f".format(vm.floor * 100)} % desde arriba", vm.floor,
-                        AutoAlign.MIN_USER_FLOOR..1f, onChange = { vm.floor = it },
                     )
                 }
             }
@@ -505,6 +508,7 @@ private fun InkPad(
     accent: Int,
     recognize: Boolean = false,
     floorGuide: Float? = null,
+    onFloorDrag: ((Float) -> Unit)? = null,
 ) {
     pad.controller.holdMillis = holdMillis
     pad.controller.tremorRadiusPx = 6f * density
@@ -528,6 +532,7 @@ private fun InkPad(
                 it.paperColors = paper
                 it.accentColor = accent
                 it.floorGuide = floorGuide
+                it.onFloorDrag = onFloorDrag
             },
             modifier = Modifier.fillMaxSize(),
         )

@@ -28,6 +28,7 @@ import io.trazo.core.Notebook
 import io.trazo.core.Paper
 import io.trazo.core.PointerKind
 import io.trazo.core.Tool
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -83,6 +84,20 @@ class InkCanvasView @JvmOverloads constructor(
     /** Línea guía del piso (y en coordenadas del lienzo) que se dibuja punteada; null = ninguna. */
     var floorGuide: Float? = null
         set(value) { if (field != value) { field = value; invalidate() } }
+
+    /**
+     * Si no es null, la línea del piso tiene un tirador a la derecha que se arrastra con el dedo
+     * o el lápiz; recibe la nueva y en coordenadas del lienzo.
+     */
+    var onFloorDrag: ((Float) -> Unit)? = null
+    private var draggingFloor = false
+
+    private fun onFloorGrip(x: Float, y: Float): Boolean {
+        val g = floorGuide ?: return false
+        if (onFloorDrag == null || mode != Mode.PAD) return false
+        val gy = documentToScreen(0f, g).second
+        return x > width - FLOOR_GRIP_DP * 1.6f * density && abs(y - gy) < FLOOR_GRIP_DP * density
+    }
 
     var paper: Paper = Paper.LINES
         set(value) { if (field != value) { field = value; invalidateContent() } }
@@ -571,6 +586,20 @@ class InkCanvasView @JvmOverloads constructor(
         }
         val index = event.actionIndex
         if (hoverEraser) { hoverEraser = false; invalidate() }
+        if (action == MotionEvent.ACTION_DOWN && onFloorGrip(event.x, event.y)) {
+            cancelContact(); navigating = false
+            draggingFloor = true
+            parent?.requestDisallowInterceptTouchEvent(true)
+            return true
+        }
+        if (draggingFloor) {
+            when (action) {
+                MotionEvent.ACTION_MOVE -> onFloorDrag?.invoke(screenToDocument(event.x, event.y).second)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> draggingFloor = false
+            }
+            invalidate()
+            return true
+        }
         if (isStylus(event.getToolType(index)) &&
             (spenButton || (event.buttonState and STYLUS_BUTTONS) != 0)
         ) {
@@ -864,8 +893,24 @@ class InkCanvasView @JvmOverloads constructor(
             canvas.drawArc(arcRect, 0f, 360f, false, holdTrackPaint)
             canvas.drawArc(arcRect, -90f, 360f * progress, false, holdPaint)
         }
+        drawFloorGrip(canvas)
         drawWorkspaceBoundary(canvas)
     }
+
+    /** Tirador del piso: un círculo con dos rayitas en el borde derecho, sobre la línea punteada. */
+    private fun drawFloorGrip(canvas: Canvas) {
+        val g = floorGuide ?: return
+        if (onFloorDrag == null || mode != Mode.PAD) return
+        val y = documentToScreen(0f, g).second
+        val r = 13f * density
+        val x = width - r - 6f * density
+        handlePaint.color = accentColor
+        canvas.drawCircle(x, y, if (draggingFloor) r * 1.2f else r, handlePaint)
+        floorGripPaint.strokeWidth = 2f * density
+        canvas.drawLine(x - r * 0.45f, y - r * 0.25f, x + r * 0.45f, y - r * 0.25f, floorGripPaint)
+        canvas.drawLine(x - r * 0.45f, y + r * 0.25f, x + r * 0.45f, y + r * 0.25f, floorGripPaint)
+    }
+    private val floorGripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; strokeCap = Paint.Cap.ROUND }
 
     /** A visible frame marks the finite 3×3 area while leaving the central paper unchanged. */
     private fun drawWorkspaceBoundary(canvas: Canvas) {
@@ -1014,6 +1059,7 @@ class InkCanvasView @JvmOverloads constructor(
         /** Cuánto se deja quieto el lazo para que aparezca «Pegar». */
         private const val LASSO_HOLD_MS = 550L
         /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
+        private const val FLOOR_GRIP_DP = 24f
         private const val SPEN_ACTION_DOWN = 211
         private const val SPEN_ACTION_UP = 212
         private const val SPEN_ACTION_MOVE = 213
