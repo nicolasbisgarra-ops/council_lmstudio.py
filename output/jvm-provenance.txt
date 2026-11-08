@@ -1,8 +1,8 @@
-source_sha=44b45780fb631d48322eba87b52a616b345a19ad
-run_id=42491896446
+source_sha=b93fda94afb957fef986906124a878162a4f1b62
+run_id=42522520033
 run_attempt=1
-tests_started_at=2026-11-08T14:52:14Z
-tests_finished_at=2026-11-08T14:55:54Z
-task :core:test
+tests_started_at=2026-11-08T20:55:20Z
+tests_finished_at=2026-11-08T20:59:06Z
 task :ai:test
+task :core:test
 task :app:testDebugUnitTest
