@@ -109,7 +109,8 @@ class GuiTourTest {
             find(By.text("Oscuro")).click()
             shot("10-oscuro")
             device.pressBack()
-            find(By.text("Modo IA"))
+            // De vuelta en la lista de secciones (Modo IA queda abajo, fuera de pantalla en teléfono).
+            find(By.text("Colores de símbolos"))
             device.pressBack()
             find(By.desc("Más opciones"))
             shot("11-oscuro-editor")
