@@ -108,6 +108,21 @@ class AutoAlignTest {
         assertEquals(1f, AutoAlign.floor(lim.copy(floor = 3f)), 1e-6f)
     }
 
+    @Test fun `el piso a mano se respeta aunque no haya nada al lado`() {
+        // «lim» escrito solo: lo escrito es lo de arriba del piso, la flecha queda debajo de la línea.
+        val lim = letter("lim").copy(floor = 0.5f, outputScale = 1.2f)
+        val g = Bounds(160f, 130f, 220f, 170f)
+        for (items in listOf(emptyList(), listOf(item("5", 900f, 100f, 940f, 180f)))) {
+            val out = AutoAlign.anchor(lim, g, items) { presets[it] }
+            val h = out.height * lim.outputScale
+            assertEquals(g.bottom, out.centerY - h / 2f + h * 0.5f, 0.5f)
+            assertEquals(g.height * lim.outputScale, h * 0.5f, 0.5f)
+            assertEquals(g.centerX, out.centerX, 0.5f)
+        }
+        // Sin piso a mano no cambia nada.
+        assertSame(g, AutoAlign.anchor(letter("lim"), g, emptyList()) { presets[it] })
+    }
+
     @Test fun `la cola de la y baja del piso`() {
         val g = Bounds(160f, 130f, 190f, 190f)
         val out = alignUser(letter("y"), g, item("5", 100f, 100f, 140f, 180f))

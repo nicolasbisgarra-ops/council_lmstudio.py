@@ -100,8 +100,30 @@ object AutoAlign {
     /**
      * Como el otro [anchor], con los trazos escritos a mano de la página ([bridges]): un cierre los usa
      * para encadenar su expresión hasta la apertura, pero nunca como referencia.
+     *
+     * Si el patrón tiene piso elegido a mano y no hay con qué alinear, lo escrito es la parte de arriba
+     * del piso: la salida apoya su piso en el borde de abajo del trazo (el "lim" de "lim→" queda en la
+     * línea y la flecha debajo), en vez de achicarse entera dentro del trazo.
      */
     fun anchor(
+        pattern: InkPattern,
+        gesture: Bounds,
+        items: List<Item>,
+        bridges: List<Bounds>,
+        lookup: (String) -> InkPattern?,
+    ): Bounds {
+        val out = rowAnchor(pattern, gesture, items, bridges, lookup)
+        if (out !== gesture || pattern.floor == null || pattern.stretch != null || gesture.height <= 0.5f) return out
+        val scale = pattern.outputScale.coerceAtLeast(0.01f)
+        val f = floor(pattern)
+        val h = gesture.height * scale / f
+        val ah = h / scale
+        val aw = gesture.width * ah / gesture.height
+        val cy = gesture.bottom - h * f + h / 2f
+        return Bounds(gesture.centerX - aw / 2f, cy - ah / 2f, gesture.centerX + aw / 2f, cy + ah / 2f)
+    }
+
+    private fun rowAnchor(
         pattern: InkPattern,
         gesture: Bounds,
         items: List<Item>,
