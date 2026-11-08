@@ -156,6 +156,9 @@ fun EditorTopBar(
             // Mantener los grupos completos deja el rail inferior desplazable sin cortar acciones.
             val drawGroup: @Composable () -> Unit = {
                 ToolsGroup(vm, settings, update, actions, panel) { panel = it }
+            }
+            // Grupo aparte: en teléfono baja de renglón entero y no empuja «Insertar patrón» fuera del borde.
+            val modeGroup: @Composable () -> Unit = {
                 ToolButton(
                     TrazoIcons.Wand, if (settings.gesturesEnabled) "Gestos activados" else "Gestos desactivados",
                     onClick = { update { it.copy(gesturesEnabled = !it.gesturesEnabled) } },
@@ -177,7 +180,7 @@ fun EditorTopBar(
                     PanelMenu(panel == BarPanel.PAPER, { panel = null }) { PaperPanel(vm, settings, update) }
                 }
             }
-            val groups = listOf(drawGroup, colorGroup, viewGroup)
+            val groups = listOf(drawGroup, modeGroup, colorGroup, viewGroup)
             if (compact) {
                 Column {
                     Row(Modifier.fillMaxWidth().heightIn(min = if (tablet) 56.dp else 52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
