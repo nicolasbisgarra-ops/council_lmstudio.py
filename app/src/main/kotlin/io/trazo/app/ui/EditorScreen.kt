@@ -345,7 +345,7 @@ fun EditorScreen(
                     fontScale = LocalDensity.current.fontScale,
                     sideToolbarWidthDp = if (dock == BarDock.LEFT || dock == BarDock.RIGHT) ToolbarPreferences.SIDE_WIDTH_DP else 0,
                     pagesRequested = true,
-                    pagesPanelWidthDp = if (pagesOpen) TabletLayoutPolicy.DEFAULT_PAGES_PANEL_DP else 40,
+                    pagesPanelWidthDp = if (pagesOpen) TabletLayoutPolicy.DEFAULT_PAGES_PANEL_DP else 0,
                     patternRailRequested = wide,
                     patternRailWidthDp = if (railOpen) 232 else 40,
                 ))
@@ -355,8 +355,6 @@ fun EditorScreen(
                     if (dock == BarDock.LEFT) sideToolbar()
                     if (fixedPages) {
                         PagesPanel(vm, paper, onDelete = { deletePageAt = it }, onMinimize = { pagesOpen = false })
-                    } else if (!previewOpen && budget.tabletWindow) {
-                        PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true })
                     }
                     // Chat de revisión fijo a la izquierda de la hoja cuando entra; en teléfono va encima.
                     if (vm.chatOpen && chatFixed) {
@@ -503,11 +501,6 @@ fun EditorScreen(
                 }
                 if (vm.chatOpen && !chatFixed) {
                     chat(Modifier.align(Alignment.TopStart).fillMaxHeight().width(chatWidthNow.dp))
-                }
-                if (!previewOpen && !budget.tabletWindow) {
-                    PagesPreviewTab(vm.pageIndex, vm.pageCount, onOpen = { pagesOpen = true },
-                        modifier = Modifier.align(Alignment.TopStart)
-                            .padding(start = if (dock == BarDock.LEFT) ToolbarPreferences.SIDE_WIDTH_DP.dp else 0.dp))
                 }
                 if (previewOpen && !fixedPages) {
                     PagesPanel(vm, paper, onDelete = { deletePageAt = it },

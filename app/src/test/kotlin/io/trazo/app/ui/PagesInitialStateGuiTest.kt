@@ -2,6 +2,7 @@ package io.trazo.app.ui
 
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -67,10 +68,11 @@ class PagesInitialStateGuiTest {
         compose.waitUntil(timeoutMillis = 5_000) { compose.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(name).performClick()
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithContentDescription("1 / 2", substring = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithContentDescription("Páginas", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
 
-        compose.onNodeWithContentDescription("Mostrar vista previa de páginas", substring = true).performClick()
+        // Sin tira plegada: el panel se abre solo desde el botón «Páginas» de la barra.
+        compose.onAllNodesWithContentDescription("Páginas", substring = true).onFirst().performClick()
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithContentDescription("Página 2").fetchSemanticsNodes().isNotEmpty()
         }
@@ -84,21 +86,19 @@ class PagesInitialStateGuiTest {
         val name = "Pages GUI ${System.currentTimeMillis()}"
         createNotebook(name)
 
-        // The editor loads its notebook on IO. The tab includes the loaded page count.
+        // Closed by default, with no collapsed strip: only the toolbar «Páginas» button opens it.
         compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithContentDescription("1 / 1", substring = true)
+            compose.onAllNodesWithContentDescription("Páginas", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        val previewTab = compose.onNodeWithContentDescription(
-            "Mostrar vista previa de páginas",
-            substring = true,
-        )
-        previewTab.assertExists()
+        compose.onNodeWithContentDescription("Mostrar vista previa de páginas", substring = true).assertDoesNotExist()
         compose.onNodeWithContentDescription("Opciones de la página 1").assertDoesNotExist()
 
-        previewTab.performClick()
+        compose.onAllNodesWithContentDescription("Páginas", substring = true).onFirst().performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithContentDescription("Opciones de la página 1").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithContentDescription("Minimizar vista previa de páginas").assertExists()
-        compose.onNodeWithContentDescription("Opciones de la página 1").assertExists()
 
         // Recreate the real activity to cover rememberSaveable through Android saved state.
         compose.activityRule.scenario.recreate()
@@ -108,9 +108,8 @@ class PagesInitialStateGuiTest {
 
         compose.onNodeWithContentDescription("Minimizar vista previa de páginas").performClick()
         compose.onNodeWithContentDescription("Minimizar vista previa de páginas").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Mostrar vista previa de páginas", substring = true).assertExists()
-        assertTrue(compose.onAllNodesWithContentDescription("1 / 1", substring = true)
-            .fetchSemanticsNodes().isNotEmpty())
+        compose.onNodeWithContentDescription("Mostrar vista previa de páginas", substring = true).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Opciones de la página 1").assertDoesNotExist()
     }
 
     private fun createNotebook(name: String) {

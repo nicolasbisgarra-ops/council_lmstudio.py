@@ -180,23 +180,3 @@ private fun PageItem(
         }
     }
 }
-
-/** Collapsed preview: a small, labelled target that leaves the document readable. */
-@Composable
-fun PagesPreviewTab(pageIndex: Int, pageCount: Int, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp),
-        modifier = modifier.width(40.dp)
-            .clickable(role = Role.Button, onClickLabel = "Mostrar vista previa de páginas", onClick = onOpen)
-            .semantics { contentDescription = "Mostrar vista previa de páginas. ${positionLabel(pageIndex, pageCount)}" },
-    ) {
-        Column(Modifier.padding(vertical = 12.dp, horizontal = 2.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(TrazoIcons.Pages, contentDescription = null, modifier = Modifier.size(24.dp))
-            Text("${pageIndex + 1}/$pageCount", style = MaterialTheme.typography.labelSmall,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}

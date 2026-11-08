@@ -72,8 +72,8 @@ class GuiUserFlowsTest {
 
         compose.onNodeWithContentDescription("Páginas").performClick()
         compose.onNodeWithContentDescription("Minimizar vista previa de páginas").assertExists().performClick()
-        compose.onNode(hasContentDescription("Mostrar vista previa de páginas", substring = true))
-            .assertExists().performClick()
+        compose.onNode(hasContentDescription("Mostrar vista previa de páginas", substring = true)).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Páginas").performClick()
         compose.onNodeWithContentDescription("Minimizar vista previa de páginas").assertExists()
 
         compose.onNodeWithContentDescription("Nueva página").performClick()
