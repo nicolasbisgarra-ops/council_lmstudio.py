@@ -166,6 +166,7 @@ fun EditorTopBar(
                     onClick = { update { it.copy(autoAlign = !it.autoAlign) } },
                     selected = settings.autoAlign,
                 )
+                RowsWheel(settings.rows, onChange = { n -> update { it.copy(rows = n) } })
                 ToolButton(TrazoIcons.Patterns, "Insertar patrón", onClick = actions.onInsert)
             }
             val colorGroup: @Composable () -> Unit = { ColorStrip(vm, settings, actions) }
@@ -768,6 +769,7 @@ fun CompactToolbar(
                 selected = settings.autoAlign,
             )
         }
+        add { RowsWheel(settings.rows, onChange = { n -> update { it.copy(rows = n) } }) }
         add { ToolButton(TrazoIcons.Patterns, "Insertar patrón", onClick = actions.onInsert) }
         add {
             RainbowDot(

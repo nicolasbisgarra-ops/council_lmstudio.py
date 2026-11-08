@@ -66,6 +66,10 @@ class InkController(
     var width: Float = DEFAULT_INK_WIDTH
     /** Al convertir, alinear la salida con las formas reconocidas del mismo renglón ([AutoAlign]). */
     var autoAlign: Boolean = true
+    /** Renglones que ocupan las formas que salen del renglón (1–3); 0 = como siempre ([PaperRows]). */
+    var rows: Int = 0
+    /** Papel de la página, para medir los renglones (se lee en cada conversión). */
+    var paperOf: () -> Paper = { Paper.LINES }
     /** Color fijo por patrón (id → ARGB) para la salida de los símbolos; sin entrada = color de la pluma. */
     var symbolColors: Map<String, Int> = emptyMap()
 
@@ -1000,6 +1004,7 @@ class InkController(
 
     /** Rectángulo de la salida: el del gesto, o alineado con el renglón si [autoAlign] ([AutoAlign]). */
     private fun alignedAnchor(pattern: InkPattern, gesture: Bounds, exclude: Set<String>): Bounds {
+        PaperRows.snap(pattern, gesture, paperOf(), rows)?.let { return it }
         if (!autoAlign) return gesture
         val byId = patterns().associateBy { it.id }
         return AutoAlign.anchor(pattern, gesture, AutoAlign.items(page.strokes, exclude), AutoAlign.bridges(page.strokes, exclude)) { byId[it] }

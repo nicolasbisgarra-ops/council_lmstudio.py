@@ -160,6 +160,7 @@ class EditorViewModel(
     val controller = InkController(patterns = { repo.patterns.value }, ids = IdGenerator.RANDOM).apply {
         val offset = System.currentTimeMillis() - android.os.SystemClock.uptimeMillis()
         strokeClock = { it + offset }
+        paperOf = { this@EditorViewModel.paper }
         addListener { e ->
             when (e) {
                 InkEvent.PageChanged -> {
@@ -210,6 +211,7 @@ class EditorViewModel(
         controller.handleRadiusPx = 24f * density
         controller.recognitionEnabled = s.gesturesEnabled
         controller.autoAlign = s.autoAlign
+        controller.rows = s.rows
         controller.symbolColors = s.symbolColors
         controller.mathEnabled = s.mathNotes && app.trazo.study.isAllowed(StudyFeature.CALCULATOR)
         controller.mathColor = s.mathResultColor

@@ -135,6 +135,64 @@ fun ToolButton(
     }
 }
 
+/**
+ * Rueda de renglones (0 = automático, 1–3): arrastrar hacia abajo suma renglones, hacia arriba resta;
+ * un toque pasa al siguiente (… 3 → automático).
+ */
+@Composable
+fun RowsWheel(rows: Int, onChange: (Int) -> Unit, modifier: Modifier = Modifier, size: Dp = 40.dp) {
+    val scheme = MaterialTheme.colorScheme
+    val selected = rows > 0
+    val bg = if (selected) scheme.primary else Color.Transparent
+    val fg = if (selected) scheme.onPrimary else scheme.onSurface
+    val description = if (selected) "Renglones: $rows (arrastrá para cambiar)" else "Renglones: automático (arrastrá para cambiar)"
+    val stepPx = with(LocalDensity.current) { 20.dp.toPx() }
+    var current by remember { mutableStateOf(rows) }
+    current = rows
+    var acc by remember { mutableFloatStateOf(0f) }
+    var hovered by remember { mutableStateOf(false) }
+    var showHint by remember { mutableStateOf(false) }
+    LaunchedEffect(hovered) {
+        showHint = false
+        if (hovered) { delay(HINT_DELAY_MS); showHint = true }
+    }
+    Box(
+        modifier
+            .size(size)
+            .hoverTracking { hovered = it }
+            .clip(CircleShape)
+            .background(bg)
+            .pointerInput(Unit) {
+                detectTapGestures { onChange((current + 1) % (MAX_WHEEL_ROWS + 1)) }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(onDragStart = { acc = 0f }) { change, drag ->
+                    change.consume()
+                    acc += drag.y
+                    while (acc >= stepPx) {
+                        acc -= stepPx
+                        if (current < MAX_WHEEL_ROWS) { current++; onChange(current) }
+                    }
+                    while (acc <= -stepPx) {
+                        acc += stepPx
+                        if (current > 0) { current--; onChange(current) }
+                    }
+                }
+            }
+            .semantics {
+                contentDescription = description
+                role = Role.Button
+                this.selected = selected
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(if (selected) "${rows}≡" else "A≡", color = fg, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+        if (showHint) HoverHint(description)
+    }
+}
+
+private const val MAX_WHEEL_ROWS = io.trazo.core.PaperRows.MAX_ROWS
+
 /** Espera con el lápiz (o el mouse) quieto sobre un botón antes de mostrar qué hace. */
 private const val HINT_DELAY_MS = 450L
 

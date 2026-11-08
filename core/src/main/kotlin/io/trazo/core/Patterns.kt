@@ -118,6 +118,11 @@ data class InkPattern(
      * null = automático ([PatternCore]); vacío o inválido = automático.
      */
     val core: List<Int>? = null,
+    /**
+     * Puede salir del renglón: con renglones activos ([PaperRows]) ocupa los renglones elegidos (paréntesis,
+     * corchetes, ∫, Σ, √, fracciones…). null = de fábrica ([PaperRows.exceedsRow]).
+     */
+    val exceedsRow: Boolean? = null,
 ) {
     init {
         require(gestureExamples.isNotEmpty() && gestureExamples.all { it.isNotEmpty() }) { "Pattern needs a gesture" }

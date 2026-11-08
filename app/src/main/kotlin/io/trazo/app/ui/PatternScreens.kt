@@ -442,7 +442,11 @@ fun PatternEditorScreen(patternId: String?, seedGesture: List<InkStroke>? = null
             SectionLabel("Tamaño de la salida")
             ChoiceRow(SizingOptions.map { it.first }, vm.sizing, { s -> SizingOptions.first { it.first == s }.second }, { vm.sizing = it })
             Column(Modifier.widthIn(max = 520.dp)) {
-                LabeledSlider("Escala", "%.2f×".format(vm.outputScale), vm.outputScale, 0.4f..2.5f, onChange = { vm.outputScale = it })
+                SwitchRow(
+                    "Puede salir del renglón", vm.exceedsRow, { vm.exceedsRowOverride = it },
+                    subtitle = "Como potencias, paréntesis, corchetes, ∫ Σ √ o fracciones: ocupa 1, 2 o 3 renglones " +
+                        "según la rueda de la barra.",
+                )
                 LabeledSlider(
                     "Confianza mínima", "${"%.0f".format(vm.minScore * 100)} %", vm.minScore, 0.6f..0.97f,
                     onChange = { vm.minScore = it },

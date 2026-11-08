@@ -19,6 +19,7 @@ import io.trazo.core.InkPattern
 import io.trazo.core.InkStroke
 import io.trazo.core.OutputSizing
 import io.trazo.core.PageState
+import io.trazo.core.PaperRows
 import io.trazo.core.PatternUpgrades
 import io.trazo.core.ShapeKind
 import io.trazo.core.Stretch
@@ -69,6 +70,10 @@ class PatternEditorViewModel(
     )
     /** Piso elegido a mano ([InkPattern.floor]); si no, el automático. */
     var customFloor by mutableStateOf(original?.floor != null)
+    /** Puede salir del renglón (potencias, paréntesis, ∫…): ocupa los renglones elegidos en la barra. */
+    var exceedsRowOverride by mutableStateOf(original?.exceedsRow)
+    /** Lo que muestra el interruptor: lo marcado a mano o, si no, lo automático para este dibujo. */
+    val exceedsRow: Boolean get() = exceedsRowOverride ?: draft()?.let { PaperRows.exceedsRow(it) } ?: false
     var floor by mutableFloatStateOf(original?.floor ?: (original?.let { AutoAlign.floor(it) } ?: 1f))
     /** Color fijo con que se escribe al reconocerse ([io.trazo.app.data.TrazoSettings.symbolColors]); null = el de la pluma. */
     var fixedColor by mutableStateOf(patternId?.let { settings.settings.value.symbolColors[it] })
@@ -128,7 +133,7 @@ class PatternEditorViewModel(
         val examples = gestureExamples.map { it.strokes.toList() }.filter { it.isNotEmpty() }
         val out = output.strokes.toList()
         if (examples.isEmpty() || out.isEmpty()) return null
-        return InkPattern(
+        val base = InkPattern(
             id = original?.id ?: "draft",
             name = name.ifBlank { PatternUpgrades.UNNAMED },
             gestureExamples = examples,
@@ -148,6 +153,8 @@ class PatternEditorViewModel(
                 MathUse.UNKNOWN -> unknownLetter.trim().firstOrNull { it.isLetter() }?.toString()
             },
         )
+        // Igual que el de fábrica = sin marca, así sigue al automático.
+        return base.copy(exceedsRow = exceedsRowOverride?.takeIf { it != PaperRows.exceedsRow(base) })
     }
 
     /** Zona elástica que se guardaría con [out]: la del patrón si la salida no cambió, si no la detectada. */

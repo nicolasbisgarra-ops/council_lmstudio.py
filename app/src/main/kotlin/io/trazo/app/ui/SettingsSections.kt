@@ -73,7 +73,7 @@ internal fun TrazoSettings.resetSection(section: PreferenceSection): TrazoSettin
         PreferenceSection.RECOGNITION -> copy(
             holdMillis = defaults.holdMillis, tremorRadiusDp = defaults.tremorRadiusDp,
             learnFromCorrections = defaults.learnFromCorrections, showHoldIndicator = defaults.showHoldIndicator,
-            autoAlign = defaults.autoAlign,
+            autoAlign = defaults.autoAlign, rows = defaults.rows,
         )
         PreferenceSection.MATH -> copy(mathNotes = defaults.mathNotes, mathResultColor = defaults.mathResultColor)
         PreferenceSection.GENERAL -> copy(

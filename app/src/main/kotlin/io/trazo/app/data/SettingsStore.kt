@@ -8,6 +8,7 @@ import io.trazo.core.DEFAULT_INK_COLOR
 import io.trazo.core.MathNotes
 import io.trazo.core.ImagePreset
 import io.trazo.core.Paper
+import io.trazo.core.PaperRows
 import io.trazo.core.ShapeKind
 import io.trazo.core.settings.SymbolColors
 import io.trazo.core.settings.ToolPreferences
@@ -72,6 +73,8 @@ data class TrazoSettings(
     val highlighterOpacity: Int = 40,
     /** Alinear lo reconocido con las formas del mismo renglón (y los cierres con su apertura). */
     val autoAlign: Boolean = true,
+    /** Renglones que ocupan potencias, paréntesis, corchetes, ∫…: 1–3; 0 = automático. */
+    val rows: Int = 0,
     /** Cuentas en la hoja: el resultado aparece solo después de un «=» al final del renglón. */
     val mathNotes: Boolean = true,
     /** Color de lo autocompletado (resultados de las cuentas). */
@@ -138,6 +141,7 @@ class SettingsStore(context: Context) {
         highlighterWidth = prefs.getFloat("highlighterWidth", 14f),
         highlighterOpacity = prefs.getInt("highlighterOpacity", 40).coerceIn(10, 90),
         autoAlign = prefs.getBoolean("autoAlign", true),
+        rows = prefs.getInt("rows", 0).coerceIn(0, PaperRows.MAX_ROWS),
         mathNotes = prefs.getBoolean("mathNotes", true),
         mathResultColor = prefs.getInt("mathResultColor", MathNotes.DEFAULT_RESULT_COLOR),
         shape = prefs.enum("shape", ShapeKind.LINE),
@@ -188,6 +192,7 @@ class SettingsStore(context: Context) {
             .putFloat("highlighterWidth", s.highlighterWidth)
             .putInt("highlighterOpacity", s.highlighterOpacity)
             .putBoolean("autoAlign", s.autoAlign)
+            .putInt("rows", s.rows)
             .putBoolean("mathNotes", s.mathNotes)
             .putInt("mathResultColor", s.mathResultColor)
             .putString("shape", s.shape.name)

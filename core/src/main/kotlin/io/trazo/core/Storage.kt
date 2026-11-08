@@ -169,6 +169,7 @@ object PatternLibrary {
         stretch = stretch,
         floor = floor,
         core = core,
+        exceedsRow = exceedsRow,
         mathMeaning = patternMeaning(this),
     )
 
@@ -217,6 +218,7 @@ object PatternLibrary {
         val stretch: Stretch?,
         val floor: Float?,
         val core: List<Int>?,
+        val exceedsRow: Boolean?,
         val mathMeaning: String?,
     )
 
