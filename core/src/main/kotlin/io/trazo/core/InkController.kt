@@ -1002,7 +1002,7 @@ class InkController(
     private fun alignedAnchor(pattern: InkPattern, gesture: Bounds, exclude: Set<String>): Bounds {
         if (!autoAlign) return gesture
         val byId = patterns().associateBy { it.id }
-        return AutoAlign.anchor(pattern, gesture, AutoAlign.items(page.strokes, exclude)) { byId[it] }
+        return AutoAlign.anchor(pattern, gesture, AutoAlign.items(page.strokes, exclude), AutoAlign.bridges(page.strokes, exclude)) { byId[it] }
     }
 
     private fun recognize(pats: List<InkPattern>): Recognition {

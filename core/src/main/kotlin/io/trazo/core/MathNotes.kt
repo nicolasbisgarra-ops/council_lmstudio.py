@@ -63,7 +63,7 @@ object MathNotes {
     /** Distancia máxima, en altos de signo, del numerador o el denominador a su barra. */
     private const val STACK_GAP = 0.8f
     /** Rayas que, con algo justo encima y justo debajo, son la barra de una fracción apilada. */
-    private val BAR_LABELS = setOf("Menos", "Fracción", "Barra de fracción", "Barra", "Dividido")
+    internal val BAR_LABELS = setOf("Menos", "Fracción", "Barra de fracción", "Barra", "Dividido")
     /** Las que, sin nada encima y debajo, son una división en línea («/»). */
     private val SLASH_LABELS = setOf("Fracción", "Barra de fracción", "Barra")
 
