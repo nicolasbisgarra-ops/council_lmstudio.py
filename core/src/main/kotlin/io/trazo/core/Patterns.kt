@@ -1,6 +1,8 @@
 package io.trazo.core
 
 import kotlinx.serialization.Serializable
+import kotlin.math.abs
+import kotlin.math.ln
 
 /** Cómo se dimensiona la tinta de salida respecto del gesto que la invocó. */
 @Serializable
@@ -110,6 +112,12 @@ data class InkPattern(
     val unknown: String? = null,
     /** Piso (línea de escritura) de la salida, en fracción de su alto desde arriba; null = automático ([AutoAlign.floor]). */
     val floor: Float? = null,
+    /**
+     * Núcleo de la salida: índices de los trazos de [outputInk] que se escalan al alto del gesto y se ponen
+     * donde se escribió; el resto (la flecha y la variable de un lim…) acompaña en proporción.
+     * null = automático ([PatternCore]); vacío o inválido = automático.
+     */
+    val core: List<Int>? = null,
 ) {
     init {
         require(gestureExamples.isNotEmpty() && gestureExamples.all { it.isNotEmpty() }) { "Pattern needs a gesture" }
@@ -170,6 +178,58 @@ object GestureExamples {
     }
 }
 
+/**
+ * Núcleo de la salida de un patrón ([InkPattern.core]): la parte que corresponde a lo que se escribió.
+ * Automático: la salida se parte en franjas horizontales (trazos cuyo alto se solapa); si la franja más alta
+ * se destaca claramente y su proporción se parece más a la del gesto que la de la salida entera, es el
+ * núcleo («lim» sobre «x→a»). Si no, el núcleo es toda la salida (i, =, :, fracciones…).
+ */
+object PatternCore {
+    /** Índices de los trazos del núcleo (siempre al menos uno). */
+    fun indices(p: InkPattern): List<Int> {
+        val all = p.outputInk.indices.toList()
+        p.core?.filter { it in all }?.distinct()?.sorted()?.takeIf { it.isNotEmpty() }?.let { return it }
+        // Los símbolos de fábrica traen el núcleo marcado; sin marca son enteros.
+        if (p.builtIn || p.stretch != null || p.outputInk.size < 2) return all
+        val whole = p.outputInk.bounds()
+        if (whole.height <= 0.5f || whole.width <= 0.5f) return all
+        val bands = bands(p.outputInk).sortedByDescending { it.second.height }
+        if (bands.size < 2) return all
+        val (top, topBounds) = bands[0]
+        if (topBounds.height < 0.2f * whole.height || topBounds.height < BAND_LEAD * bands[1].second.height) return all
+        val gesture = p.gestureExamples.map { it.bounds() }.filter { it.height > 0.5f && it.width > 0.5f }
+        if (gesture.isEmpty()) return all
+        val target = gesture.map { ln((it.width / it.height).toDouble()) }.average()
+        fun dist(b: Bounds) = abs(ln((b.width.coerceAtLeast(0.5f) / b.height).toDouble()) - target)
+        return if (dist(topBounds) + MARGIN < dist(whole)) top else all
+    }
+
+    fun bounds(p: InkPattern): Bounds = indices(p).map { p.outputInk[it].bounds }.reduce(Bounds::union)
+
+    /** true si el núcleo es solo una parte de la salida. */
+    fun isPartial(p: InkPattern): Boolean = indices(p).size < p.outputInk.size
+
+    /** Franjas horizontales: grupos de trazos cuyo intervalo vertical se solapa. */
+    private fun bands(ink: List<InkStroke>): List<Pair<List<Int>, Bounds>> {
+        val order = ink.indices.sortedBy { ink[it].bounds.top }
+        val out = mutableListOf<Pair<MutableList<Int>, Bounds>>()
+        for (i in order) {
+            val b = ink[i].bounds
+            val last = out.lastOrNull()
+            if (last != null && b.top <= last.second.bottom) {
+                last.first += i
+                out[out.lastIndex] = last.first to last.second.union(b)
+            } else {
+                out += mutableListOf(i) to b
+            }
+        }
+        return out.map { (idx, b) -> idx.sorted() to b }
+    }
+
+    private const val BAND_LEAD = 1.2f
+    private const val MARGIN = 0.15
+}
+
 /** Inserta la salida de un patrón como copia profunda transformada de sus trazos. */
 object InkReplacement {
     /**
@@ -195,11 +255,14 @@ object InkReplacement {
         presetColor: Int? = null,
     ): List<InkStroke> {
         val src = pattern.outputInk.bounds()
+        // Sin zona elástica, lo que se mide y se centra en el gesto es el núcleo (la salida entera si no tiene).
+        val core = PatternCore.bounds(pattern)
         val eps = 0.5f
         val zone = pattern.stretch?.takeIf { elastic }?.sanitized()
             ?.takeIf { (if (it.axis == Axis.HORIZONTAL) src.width else src.height) > eps }
-        val scaleH = if (src.height > eps) anchor.height / src.height else Float.NaN
-        val scaleW = if (src.width > eps) anchor.width / src.width else Float.NaN
+        val ref = if (zone == null) core else src
+        val scaleH = if (ref.height > eps) anchor.height / ref.height else Float.NaN
+        val scaleW = if (ref.width > eps) anchor.width / ref.width else Float.NaN
         val s = when (pattern.sizing) {
             OutputSizing.MATCH_HEIGHT -> scaleH.orElse(scaleW)
             OutputSizing.MATCH_WIDTH -> scaleW.orElse(scaleH)
@@ -213,15 +276,15 @@ object InkReplacement {
                 raw.isNaN() || raw <= 0f -> 1f
                 // Un gesto casi plano (p. ej. una línea) no debe encoger la salida hasta desaparecer.
                 // Con zona elástica no hace falta: el largo lo pone la zona, no la escala.
-                zone == null && pattern.sizing != OutputSizing.FIXED && raw * src.maxSide < 0.25f * anchor.maxSide ->
-                    anchor.maxSide / src.maxSide.coerceAtLeast(eps)
+                zone == null && pattern.sizing != OutputSizing.FIXED && raw * ref.maxSide < 0.25f * anchor.maxSide ->
+                    anchor.maxSide / ref.maxSide.coerceAtLeast(eps)
                 else -> raw
             }
         } * pattern.outputScale
         val placed = if (zone != null) {
             stretched(pattern.outputInk, src, anchor, s, zone)
         } else {
-            val t = Affine.translate(-src.centerX, -src.centerY)
+            val t = Affine.translate(-core.centerX, -core.centerY)
                 .then(Affine(a = s, d = s))
                 .then(Affine.translate(anchor.centerX, anchor.centerY))
             pattern.outputInk.map { it.transformed(t, scaleWidth = false) }

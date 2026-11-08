@@ -112,6 +112,8 @@ object AutoAlign {
         bridges: List<Bounds>,
         lookup: (String) -> InkPattern?,
     ): Bounds {
+        // Con núcleo, lo escrito ya es el núcleo: la salida lo reemplaza en el mismo lugar y tamaño.
+        if (PatternCore.isPartial(pattern)) return gesture
         val out = rowAnchor(pattern, gesture, items, bridges, lookup)
         if (out !== gesture || pattern.floor == null || pattern.stretch != null || gesture.height <= 0.5f) return out
         val scale = pattern.outputScale.coerceAtLeast(0.01f)

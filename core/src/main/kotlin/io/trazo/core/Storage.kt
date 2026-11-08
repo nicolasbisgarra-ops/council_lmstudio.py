@@ -168,6 +168,7 @@ object PatternLibrary {
         holdMillis = holdMillis,
         stretch = stretch,
         floor = floor,
+        core = core,
         mathMeaning = patternMeaning(this),
     )
 
@@ -215,6 +216,7 @@ object PatternLibrary {
         val holdMillis: Long?,
         val stretch: Stretch?,
         val floor: Float?,
+        val core: List<Int>?,
         val mathMeaning: String?,
     )
 
