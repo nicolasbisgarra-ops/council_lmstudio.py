@@ -49,6 +49,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -166,6 +167,11 @@ private fun AiChatContent(vm: EditorViewModel, onFontSp: (Float) -> Unit, modifi
                 IconButton(onClick = { onFontSp((chatSp + 2f).coerceIn(CHAT_SP_MIN, CHAT_SP_MAX)) }, enabled = chatSp < CHAT_SP_MAX, modifier = Modifier.size(36.dp)) {
                     Text("A+", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 }
+                var showShare by remember { mutableStateOf(false) }
+                IconButton(onClick = { if (vm.webShare == null) vm.startWebShare(); showShare = true }) {
+                    Icon(Icons.Filled.Share, contentDescription = "Ver en otro dispositivo")
+                }
+                if (showShare) WebShareDialog(vm) { showShare = false }
                 IconButton(onClick = vm::restartChat, enabled = !busy) { Icon(Icons.Filled.Refresh, contentDescription = "Revisar de nuevo") }
                 IconButton(onClick = vm::closeChat) { Icon(Icons.Filled.Close, contentDescription = "Plegar el chat") }
             }

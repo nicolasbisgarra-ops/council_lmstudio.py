@@ -292,7 +292,7 @@ internal fun SyncSettingsPage() {
 
 /** QR negro sobre blanco aunque el tema sea oscuro, para que cualquier cámara lo lea. */
 @Composable
-private fun QrImage(m: BitMatrix) {
+internal fun QrImage(m: BitMatrix) {
     Canvas(Modifier.size(220.dp).background(Color.White).padding(4.dp)) {
         val cell = minOf(size.width / m.width, size.height / m.height)
         for (y in 0 until m.height) for (x in 0 until m.width) {

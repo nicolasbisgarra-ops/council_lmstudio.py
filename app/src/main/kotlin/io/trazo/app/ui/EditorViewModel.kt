@@ -87,6 +87,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import io.trazo.app.sync.localAddresses
+import io.trazo.core.share.ReviewWebServer
+import io.trazo.core.share.SharedMessage
+import io.trazo.core.share.SharedNote
+import io.trazo.core.share.SharedReview
+import java.io.ByteArrayOutputStream
 
 /** Herramienta de la barra. El resaltador es la pluma con su propia punta, color y grosor. */
 enum class EditorTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, PAN }
@@ -1373,6 +1381,80 @@ class EditorViewModel(
 
     fun toggleChat() { if (chatOpen) closeChat() else openChat() }
 
+    // ---------------------------------------------------------------- ver la revisión en otro dispositivo
+
+    /** Las direcciones para abrir la revisión desde otro dispositivo y cuándo se apaga. */
+    data class WebShareState(val urls: List<String>, val expiresAt: Long)
+
+    /** Lo que se está compartiendo por la red de casa; null si no se comparte. */
+    var webShare by mutableStateOf<WebShareState?>(null)
+        private set
+    private var webServer: ReviewWebServer? = null
+    private var webGen = 0
+
+    /** Arranca (o reinicia con un código nuevo) la página web de solo lectura con la revisión de la hoja actual. */
+    fun startWebShare() {
+        stopWebShare()
+        val gen = webGen
+        viewModelScope.launch {
+            val started = withContext(Dispatchers.IO) {
+                runCatching {
+                    val server = ReviewWebServer(review = ::sharedReview, pagePng = ::sharedPng)
+                    val port = server.start()
+                    server to localAddresses().map { ReviewWebServer.url(it, port, server.token) }
+                }.getOrNull()
+            } ?: return@launch
+            if (gen != webGen) {
+                Thread({ started.first.stop() }, "trazo-web-stop").start()
+                return@launch
+            }
+            webServer = started.first
+            webShare = WebShareState(started.second, started.first.expiresAt())
+        }
+    }
+
+    fun stopWebShare() {
+        webGen++
+        val s = webServer
+        webServer = null
+        webShare = null
+        if (s != null) Thread({ s.stop() }, "trazo-web-stop").start()
+    }
+
+    /** Lee el estado en el hilo principal desde el hilo del servidor web. */
+    private fun <T> onMain(block: () -> T): T = runBlocking { withTimeout(3000) { withContext(Dispatchers.Main) { block() } } }
+
+    /** La hoja en edición tal como se ve ahora, sin guardarla; null si todavía no cargó. */
+    private fun currentPage(): Page? {
+        val id = notebook?.slots?.getOrNull(pageIndex)?.id ?: return null
+        return if (attachedPageId == id) controller.page.toPage(id) else null
+    }
+
+    private fun sharedReview(): SharedReview = onMain {
+        val page = currentPage()
+        val title = listOfNotNull(notebook?.name?.takeIf { it.isNotBlank() }, "hoja ${pageIndex + 1}").joinToString(" · ")
+        val msgs = if (page != null && chatPage == page.id) chatMessages else emptyList()
+        SharedReview(
+            title = title,
+            messages = msgs.map {
+                SharedMessage(it.role == TutorRole.STUDENT, it.text, it.line, it.correct, it.verdict, it.error)
+            },
+            notes = page?.ai?.notes.orEmpty().map { SharedNote(it.line, it.kind, it.short, it.detail, it.fix) },
+            updatedAt = page?.hashCode()?.toLong()?.and(0xffffffffL) ?: 0L,
+        )
+    }
+
+    private fun sharedPng(): ByteArray? {
+        val (page, paper, results) = onMain {
+            val p = currentPage()
+            val n = notebook
+            if (p == null || n == null) null else Triple(p, n.paper, mathResults(p))
+        } ?: return null
+        val out = ByteArrayOutputStream()
+        PageExporter.writePng(page, paper, out, scale = 1.5f, results = results, includeAi = true)
+        return out.toByteArray()
+    }
+
     private fun loadChat(pageId: String) {
         if (chatPage == pageId) return
         cancelChat()
@@ -1606,6 +1688,7 @@ class EditorViewModel(
     }
 
     override fun onCleared() {
+        stopWebShare()
         reviewGate.close()
         discussionId++
         discussionJob?.cancel()
