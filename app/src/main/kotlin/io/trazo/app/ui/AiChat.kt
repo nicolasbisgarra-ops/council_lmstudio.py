@@ -254,7 +254,10 @@ private fun ChatMessage(vm: EditorViewModel, m: AiChatMessage, onShow: () -> Uni
             fontSize = (chatSp * 0.875f).sp,
         )
         else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (m.text.isNotBlank()) ChatRichText(m.text)
+            if (m.text.isNotBlank()) {
+                ChatRichText(m.text)
+                TextButton(onClick = { vm.writeTutorAnswer(m.text) }) { Text("Escribir en la hoja") }
+            }
             m.correct?.let { ok -> VerdictCard(ok, m.line, m.verdict.orEmpty(), onShow.takeIf { m.strokeIds.isNotEmpty() }) }
         }
     }

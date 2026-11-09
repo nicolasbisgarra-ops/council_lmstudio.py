@@ -1146,6 +1146,23 @@ object MathNotes {
         return out
     }
 
+    /**
+     * Renglones de texto [lines] escritos a mano debajo de toda la tinta de la hoja, alineados con su borde
+     * izquierdo y con la altura del último renglón escrito (o [emptyLeft]/[emptyTop] si la hoja está vacía).
+     */
+    fun handwriteBelow(
+        strokes: List<InkStroke>, patterns: List<InkPattern>, lines: List<String>,
+        ids: IdGenerator = IdGenerator.RANDOM, color: Int? = null, emptyLeft: Float = 80f, emptyTop: Float = 80f,
+        width: Float = 900f,
+    ): List<InkStroke> {
+        if (lines.none { it.isNotBlank() }) return emptyList()
+        val ink = strokes.filter { it.brush != Brush.HIGHLIGHTER }
+        val all = ink.takeIf { it.isNotEmpty() }?.bounds()
+        val strip = if (all == null) Bounds(emptyLeft, emptyTop - 48f, emptyLeft + width, emptyTop)
+        else Bounds(all.left, all.bottom - 1f, maxOf(all.right, all.left + width), all.bottom)
+        return handwrite(ink, patterns, Explanation(strip, lines), ids, color)
+    }
+
     /** [text] partido por palabras para que ningún renglón pase de [maxWidth]. */
     private fun wrap(text: String, h: Float, maxWidth: Float): List<String> {
         if (text.isEmpty()) return listOf("")

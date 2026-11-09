@@ -75,6 +75,7 @@ import io.trazo.core.Paper
 import io.trazo.core.ParametricInk
 import io.trazo.core.ParametricShape
 import io.trazo.core.Tool
+import io.trazo.core.TutorText
 import io.trazo.core.bounds
 import io.trazo.core.moveItem
 import io.trazo.core.withGestureExample
@@ -1263,6 +1264,12 @@ class EditorViewModel(
         val ink = MathNotes.handwrite(controller.page.strokes, repo.patterns.value, e)
         mathExplanation = null
         controller.addInk(ink)
+    }
+
+    /** Copia la respuesta del tutor del chat en la hoja, debajo de lo último escrito, con la letra del usuario. */
+    fun writeTutorAnswer(text: String) {
+        val ink = MathNotes.handwriteBelow(controller.page.strokes, repo.patterns.value, TutorText.plain(text))
+        if (ink.isNotEmpty()) controller.addInk(ink)
     }
 
     /** La marca pasa a ser tinta común de la hoja (se puede mover, borrar o deshacer). */
