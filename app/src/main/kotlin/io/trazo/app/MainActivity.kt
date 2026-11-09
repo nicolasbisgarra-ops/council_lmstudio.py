@@ -50,6 +50,7 @@ sealed interface Screen {
     /** @param section página de preferencias a abrir (nombre de [io.trazo.app.ui.PreferenceSection]); null = la lista. */
     data class Settings(val section: String? = null) : Screen
     data class Study(val notebookId: String, val exam: Boolean) : Screen
+    data class Errors(val notebookId: String) : Screen
 }
 
 /** Entrada de la pila: cada pantalla tiene su propio almacén de ViewModels, que se limpia al salir. */
@@ -179,6 +180,7 @@ private fun ScreenContent(screen: Screen, nav: NavViewModel) {
             onAiSettings = { nav.push(Screen.Settings("AI")) },
             onPractice = { nav.push(Screen.Study(screen.notebookId, false)) },
             onExam = { nav.push(Screen.Study(screen.notebookId, true)) },
+            onErrors = { nav.push(Screen.Errors(screen.notebookId)) },
         )
         Screen.Patterns -> PatternLibraryScreen(
             onBack = nav::pop,
@@ -187,5 +189,16 @@ private fun ScreenContent(screen: Screen, nav: NavViewModel) {
         is Screen.PatternEdit -> PatternEditorScreen(patternId = screen.patternId, seedGesture = screen.seedGesture, onDone = nav::pop)
         is Screen.Settings -> SettingsScreen(onBack = nav::pop, initialSection = screen.section)
         is Screen.Study -> io.trazo.app.ui.StudyDestination(screen.notebookId, screen.exam, nav::pop)
+        is Screen.Errors -> io.trazo.app.ui.ErrorSheetScreen(
+            notebookId = screen.notebookId,
+            onBack = nav::pop,
+            // Cierra la hoja de errores y el editor de abajo, y vuelve a abrir el cuaderno en esa hoja.
+            onOpenPage = { page ->
+                nav.pop()
+                if ((nav.stack.lastOrNull()?.screen as? Screen.Editor)?.notebookId == screen.notebookId) nav.pop()
+                nav.push(Screen.Editor(screen.notebookId, page))
+            },
+            onPractice = { nav.pop(); nav.push(Screen.Study(screen.notebookId, false)) },
+        )
     }
 }

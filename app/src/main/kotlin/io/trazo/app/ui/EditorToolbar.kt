@@ -114,6 +114,7 @@ class EditorActions(
     val onAi: () -> Unit = {},
     val onPractice: () -> Unit = {},
     val onExam: () -> Unit = {},
+    val onErrors: () -> Unit = {},
     /** Abre el modo gráfica. */
     val onGraph: () -> Unit = {},
 )
@@ -625,6 +626,7 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions, buttonSize: 
             item("Biblioteca de patrones", TrazoIcons.Patterns, action = actions.onPatterns)()
             item("Preferencias", Icons.Filled.Settings, action = actions.onSettings)()
             HorizontalDivider()
+            item("Hoja de errores", null, action = actions.onErrors)()
             item("Practicar errores frecuentes", null, action = actions.onPractice)()
             item("Modo examen", null, action = actions.onExam)()
         }

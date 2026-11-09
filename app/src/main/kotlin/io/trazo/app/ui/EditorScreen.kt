@@ -94,6 +94,7 @@ fun EditorScreen(
     onAiSettings: () -> Unit = onSettings,
     onPractice: () -> Unit = {},
     onExam: () -> Unit = {},
+    onErrors: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -295,6 +296,7 @@ fun EditorScreen(
             onSettings = onSettings,
             onPractice = { vm.saveNow(); onPractice() },
             onExam = { vm.saveNow(); onExam() },
+            onErrors = { vm.saveNow(); onErrors() },
         )
         val sideToolbar: @Composable () -> Unit = {
             CompactToolbar(
