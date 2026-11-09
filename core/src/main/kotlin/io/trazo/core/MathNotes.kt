@@ -15,6 +15,7 @@ import io.trazo.core.math.Rational
 import io.trazo.core.math.Root
 import io.trazo.core.math.sameAs
 import io.trazo.core.math.Statement
+import io.trazo.core.math.StepByStep
 import io.trazo.core.math.SymbolicValue
 import io.trazo.core.math.TupleValue
 import io.trazo.core.math.VariableGraph
@@ -480,6 +481,8 @@ object MathNotes {
             LineResult.Empty -> return null
         }
         val steps = mutableListOf(main)
+        // El razonamiento detallado (fracciones, derivadas), si el motor sabe explicarlo.
+        if (result is LineResult.Value) StepByStep.expression(text.removeSuffix("="))?.let { steps += it }
         val value = (result as? LineResult.Value)?.value
         if (value != null && value.display().let { it.contains('/') || it.contains('π') }) {
             decimal(value)?.let { steps += "≈ " + (if (it.negative) "−" else "") + it.numerator }
@@ -618,7 +621,15 @@ object MathNotes {
             }
         }
         if (values.any { it is TupleValue || it is QuotientValue }) return Outcome.Failed("Solo resuelvo ecuaciones con números y letras (sin pares ni divisiones con resto).")
-        return if (values.size == 1) single(equations[0], values[0], complex) else system(equations, values)
+        val outcome = if (values.size == 1) single(equations[0], values[0], complex) else system(equations, values)
+        return if (outcome is Outcome.Solved) withDetail(outcome, equations, context, complex) else outcome
+    }
+
+    /** Agrega a la solución el paso a paso (pasaje de términos, fórmula resolvente, sustitución…), si lo hay. */
+    private fun withDetail(o: Outcome.Solved, equations: List<String>, context: List<String>, complex: Boolean): Outcome.Solved {
+        val detail = if (equations.size == 1) StepByStep.equation(equations[0], context, complex) else StepByStep.system(equations, context)
+        if (detail.isNullOrEmpty()) return o
+        return Outcome.Solved(o.pieces, listOf(o.steps.first()) + detail.map(::readable) + o.steps.drop(1))
     }
 
     private fun lettersOf(v: MathValue): Set<String> =

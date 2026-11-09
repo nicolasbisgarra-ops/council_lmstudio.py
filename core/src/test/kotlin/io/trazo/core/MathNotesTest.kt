@@ -160,6 +160,8 @@ class MathNotesTest {
         assertEquals(20f, out.filter { it.patternId == "preset-barra" }.bounds().centerY, 4f)
         val e = MathNotes.explain(page, patterns, out.bounds().centerX, out.bounds().centerY)!!
         assertEquals("1/2 + 1/3 = 5/6", e.steps[0])
+        // Paso a paso: el común denominador.
+        assertTrue(e.steps.toString(), e.steps.any { "3/6 + 2/6" in it && "mcm(2, 3) = 6" in it })
     }
 
     @Test fun `un menos con algo arriba y abajo es una barra de fraccion`() {
