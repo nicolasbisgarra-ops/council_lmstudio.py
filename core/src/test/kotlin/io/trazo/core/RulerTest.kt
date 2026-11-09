@@ -72,4 +72,10 @@ class RulerTest {
     }
 
     private fun abs(f: Float) = kotlin.math.abs(f)
+
+    @Test fun `degrees never show 180 or minus zero`() {
+        assertEquals("0.0", ruler.copy(angle = PI.toFloat()).degrees.toString())
+        assertEquals("0.0", ruler.copy(angle = -0f).degrees.toString())
+        assertEquals("0.0", ruler.copy(angle = (179.8 * PI / 180).toFloat()).degrees.toString())
+    }
 }

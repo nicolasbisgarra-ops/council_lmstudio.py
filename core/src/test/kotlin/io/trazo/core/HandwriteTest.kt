@@ -81,6 +81,14 @@ class HandwriteTest {
         assertTrue(h <= maxOf(long.bounds.width, 80f * 18f) + 1f)
     }
 
+    @Test fun `una cuenta larga sin espacios también se parte`() {
+        val long = MathNotes.Explanation(page.bounds(), listOf(List(60) { "12" }.joinToString("+")))
+        val out = write(e = long)
+        assertTrue(out.map { it.groupId }.distinct().size > 1)
+        val w = out.groupBy { it.groupId }.values.maxOf { it.bounds().width }
+        assertTrue(w <= maxOf(long.bounds.width, 80f * 18f) + 1f)
+    }
+
     @Test fun `el mismo texto se escribe igual`() {
         assertEquals(write(), write())
     }

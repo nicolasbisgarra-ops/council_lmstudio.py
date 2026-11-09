@@ -101,15 +101,34 @@ class InkCanvasView @JvmOverloads constructor(
     private val rulerLast = HashMap<Int, Pair<Float, Float>>()
 
     private fun rulerPointers(event: MotionEvent, skip: Int = -1): Map<Int, Pair<Float, Float>> =
-        (0 until event.pointerCount).filter { it != skip }.take(2)
+        (0 until event.pointerCount)
+            .filter { it != skip && event.getToolType(it) == MotionEvent.TOOL_TYPE_FINGER }.take(2)
             .associate { event.getPointerId(it) to screenToDocument(event.getX(it), event.getY(it)) }
+
+    private fun releaseRuler(c: InkController, r: Ruler) {
+        draggingRuler = false
+        rulerLast.clear()
+        val settled = r.settled()
+        c.ruler = settled
+        onRulerMoved?.invoke(settled)
+    }
 
     /** Dedos sobre la regla: uno la mueve, dos la mueven y la giran. Devuelve true si se ocupó del evento. */
     private fun handleRuler(c: InkController, event: MotionEvent, action: Int): Boolean {
         val r = c.ruler ?: run { draggingRuler = false; return false }
         val index = event.actionIndex
+        // Un DOWN nuevo con la regla aún «agarrada» (se perdió el UP): se suelta y se vuelve a evaluar.
+        if (draggingRuler && action == MotionEvent.ACTION_DOWN) releaseRuler(c, r)
+        if (draggingRuler && action == MotionEvent.ACTION_POINTER_DOWN && isStylus(event.getToolType(index))) {
+            // Un dedo sostiene la regla y el lápiz baja: la regla queda quieta y el lápiz dibuja contra ella.
+            releaseRuler(c, r)
+            invalidate()
+            return false
+        }
         if (!draggingRuler) {
             if (action != MotionEvent.ACTION_DOWN || event.getToolType(index) != MotionEvent.TOOL_TYPE_FINGER) return false
+            // La palma (lápiz cerca o contacto ancho) no agarra la regla.
+            if (event.eventTime < stylusNearUntil || event.getTouchMajor(index) > palmTouchMajorPx) return false
             val (x, y) = screenToDocument(event.getX(index), event.getY(index))
             if (!r.contains(x, y, RULER_SLOP_DP * density / pxPerUnit)) return false
             cancelContact(); navigating = false
@@ -135,13 +154,7 @@ class InkCanvasView @JvmOverloads constructor(
                 } else r
                 rulerLast.clear(); rulerLast.putAll(now)
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                draggingRuler = false
-                rulerLast.clear()
-                val settled = r.settled()
-                c.ruler = settled
-                onRulerMoved?.invoke(settled)
-            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> releaseRuler(c, r)
         }
         invalidate()
         return true

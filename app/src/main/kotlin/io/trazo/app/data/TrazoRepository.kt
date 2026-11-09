@@ -359,7 +359,8 @@ class TrazoRepository(root: File) {
         write(fileFor(n.id), TrazoFormat.encodeNotebook(n))
     }
 
-    fun renameNotebook(id: String, name: String) {
+    /** Bajo el candado: si la sincronización guarda el cuaderno en el medio, no se pisa con la versión vieja. */
+    fun renameNotebook(id: String, name: String) = synchronized(lock) {
         loadNotebook(id)?.let { saveNotebook(it.copy(name = name, updatedAt = System.currentTimeMillis())) }
     }
 
@@ -371,16 +372,22 @@ class TrazoRepository(root: File) {
      * Cuaderno nuevo con una hoja por página del PDF (hasta [PdfImport.MAX_PAGES]): cada página se dibuja
      * sobre blanco a [PDF_RENDER_WIDTH] px de ancho y queda como fondo fijo, para escribir encima.
      */
-    fun importPdf(fd: ParcelFileDescriptor, name: String, folderId: String? = null, onProgress: (Int, Int) -> Unit = { _, _ -> }): Notebook {
-        val rendered = PdfRenderer(fd).use { pdf ->
+    fun importPdf(fd: ParcelFileDescriptor, name: String, folderId: String? = null, onProgress: (Int, Int) -> Unit = { _, _ -> }): PdfResult {
+        // Si el PDF está dañado o tiene contraseña, el constructor falla y el descriptor hay que cerrarlo acá.
+        val renderer = try { PdfRenderer(fd) } catch (t: Throwable) { fd.close(); throw t }
+        var total = 0
+        val rendered = renderer.use { pdf ->
+            total = pdf.pageCount
             val count = minOf(pdf.pageCount, PdfImport.MAX_PAGES)
             require(count > 0) { "El PDF no tiene hojas" }
             (0 until count).map { i ->
                 onProgress(i, count)
                 pdf.openPage(i).use { page ->
-                    val w = PDF_RENDER_WIDTH
-                    // Hojas muy largas: se limita el alto para no quedarse sin memoria.
-                    val h = (w.toLong() * page.height / page.width.coerceAtLeast(1)).toInt().coerceIn(1, PDF_RENDER_WIDTH * 3)
+                    // Mismo factor en los dos lados; las hojas muy largas se achican enteras (sin aplastarlas)
+                    // para no pasar de 3 anchos de alto y no quedarse sin memoria.
+                    val s = minOf(PDF_RENDER_WIDTH.toFloat() / page.width.coerceAtLeast(1), PDF_RENDER_WIDTH * 3f / page.height.coerceAtLeast(1))
+                    val w = (page.width * s).toInt().coerceAtLeast(1)
+                    val h = (page.height * s).toInt().coerceAtLeast(1)
                     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     try {
                         bmp.eraseColor(Color.WHITE)
@@ -393,9 +400,13 @@ class TrazoRepository(root: File) {
                 }
             }
         }
-        return PdfImport.notebook(name, rendered).copy(folderId = folderId?.takeIf { folders()[it] != null })
+        val notebook = PdfImport.notebook(name, rendered).copy(folderId = folderId?.takeIf { folders()[it] != null })
             .also { saveNotebook(it) }
+        return PdfResult(notebook, rendered.size, total)
     }
+
+    /** El cuaderno importado y cuántas hojas entraron de cuántas tenía el PDF. */
+    data class PdfResult(val notebook: Notebook, val imported: Int, val total: Int)
 
     fun deleteNotebook(id: String) = synchronized(lock) {
         val cover = loadLazy(id)?.coverImage

@@ -229,7 +229,9 @@ internal object StepByStep {
         is Node.Op -> {
             val p = if (t.op == '+' || t.op == '-') 1 else 2
             val l = wrapNode(t.l, t.l is Node.Op && precedence(t.l) < p)
+            // «3 ÷ 1/2» se lee como (3 ÷ 1)/2: una fracción después de ÷ o · va entre paréntesis.
             val r = wrapNode(t.r, negative(t.r) ||
+                ((t.op == '/' || t.op == '*') && t.r is Node.Frac && t.r.d != BigInteger.ONE) ||
                 (t.r is Node.Op && (precedence(t.r) < p || (precedence(t.r) == p && (t.op == '-' || t.op == '/')))))
             when (t.op) {
                 '+' -> "$l + $r"
@@ -553,7 +555,8 @@ internal object StepByStep {
                 val uPart = when (ak) {
                     Rational.ONE -> "($expr)"
                     -Rational.ONE -> "−($expr)"
-                    else -> "${num(ak)}($expr)"
+                    // «1/2(3 − y)» se lee como 1/(2(3 − y)): la fracción va entre paréntesis.
+                    else -> if (ak.den != BigInteger.ONE) "(${num(ak)})·($expr)" else "${num(ak)}($expr)"
                 }
                 val wPart = if (bk.isZero) "" else (if (bk.signum > 0) " + " else " − ") + mono(bk, w)
                 out += "Se reemplaza en (${other + 1}): $uPart$wPart = ${num(ck)}"

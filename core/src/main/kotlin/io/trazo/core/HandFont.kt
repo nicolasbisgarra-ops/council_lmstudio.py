@@ -326,7 +326,8 @@ internal object HandFont {
                     out += InkStroke(ids.next(), points, style.color, style.width, groupId = group, brush = brush)
                 }
             }
-            cx += advance(u, k, s)
+            // El avance no lleva la escala al azar: así [width] mide lo mismo que ocupa la escritura.
+            cx += advance(u, k, 1f)
         }
         return out to cx
     }

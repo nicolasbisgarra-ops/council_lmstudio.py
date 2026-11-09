@@ -11,7 +11,10 @@ object HandIn {
 
     /** Índices de las hojas que van en la entrega; si todas están vacías va la primera (un PDF necesita una hoja). */
     fun pagesToInclude(count: Int, pageAt: (Int) -> Page, results: (Page) -> List<InkStroke> = { emptyList() }): List<Int> =
-        (0 until count).filter { i -> pageAt(i).let { !isBlank(it, results(it)) } }.ifEmpty { listOf(0) }
+        (0 until count).filter { i ->
+            // Los resultados salen de la tinta: solo se calculan si la hoja no tiene nada más (son caros).
+            pageAt(i).let { p -> !isBlank(p) || results(p).isNotEmpty() }
+        }.ifEmpty { listOf(0) }
 
     fun pagesToInclude(pages: List<Page>, results: (Page) -> List<InkStroke> = { emptyList() }): List<Int> =
         pagesToInclude(pages.size, pages::get, results)

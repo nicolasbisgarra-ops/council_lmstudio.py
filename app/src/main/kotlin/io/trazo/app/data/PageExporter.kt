@@ -142,18 +142,22 @@ object PageExporter {
     /** Imagen de unos trazos sueltos (lo copiado con el lazo), sobre blanco y con un margen. */
     fun writeStrokesPng(strokes: List<InkStroke>, out: OutputStream, maxSide: Int = 1600) {
         val b = strokes.bounds()
-        val margin = 16f
+        // Los límites son del eje del trazo: se suma medio grosor para que el borde no quede cortado.
+        val margin = 16f + (strokes.maxOfOrNull { it.width } ?: 0f) / 2f
         val w = b.width + margin * 2
         val h = b.height + margin * 2
         val scale = (maxSide / maxOf(w, h)).coerceAtMost(3f)
         val bmp = Bitmap.createBitmap((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        canvas.drawColor(Color.WHITE)
-        canvas.scale(scale, scale)
-        canvas.translate(margin - b.left, margin - b.top)
-        StrokePainter.drawAll(canvas, strokes)
-        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-        bmp.recycle()
+        try {
+            val canvas = Canvas(bmp)
+            canvas.drawColor(Color.WHITE)
+            canvas.scale(scale, scale)
+            canvas.translate(margin - b.left, margin - b.top)
+            StrokePainter.drawAll(canvas, strokes)
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        } finally {
+            bmp.recycle()
+        }
     }
 
     /**

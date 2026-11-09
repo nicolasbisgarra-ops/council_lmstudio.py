@@ -44,7 +44,7 @@ fun ErrorSheetScreen(notebookId: String, onBack: () -> Unit, onOpenPage: (Int) -
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             when {
                 s == null -> Text("Juntando las marcas…")
-                s.isEmpty -> Text("Todavía no hay errores marcados en este cuaderno. Revisá una hoja con el Modo IA y vuelve acá.")
+                s.isEmpty -> Text("Todavía no hay errores marcados en este cuaderno. Revisá una hoja con el Modo IA y volvé acá.")
                 else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     item {
                         Text("${s.total} errores marcados", style = MaterialTheme.typography.titleMedium)

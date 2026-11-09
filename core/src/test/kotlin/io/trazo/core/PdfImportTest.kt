@@ -35,6 +35,7 @@ class PdfImportTest {
     @Test fun `name comes from the file name`() {
         assertEquals("Apunte parcial 2", PdfImport.nameFor("docs/Apunte_parcial_2.pdf"))
         assertEquals("PDF", PdfImport.nameFor(null))
+        assertEquals("Apuntes", PdfImport.nameFor("Apuntes.Pdf"))
     }
 
     @Test fun `locked background cannot be selected moved or cleared`() {

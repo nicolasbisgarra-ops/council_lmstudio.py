@@ -1151,7 +1151,7 @@ object MathNotes {
         if (text.isEmpty()) return listOf("")
         val out = mutableListOf<String>()
         var line = ""
-        for (word in text.split(' ').filter { it.isNotEmpty() }) {
+        for (word in text.split(' ').filter { it.isNotEmpty() }.flatMap { split(it, h, maxWidth) }) {
             val next = if (line.isEmpty()) word else "$line $word"
             if (line.isNotEmpty() && HandFont.width(next, h) > maxWidth) {
                 out += line
@@ -1159,6 +1159,23 @@ object MathNotes {
             } else line = next
         }
         out += line
+        return out
+    }
+
+    /** Una «palabra» más ancha que [maxWidth] se corta en pedazos, de preferencia después de un operador. */
+    private fun split(word: String, h: Float, maxWidth: Float): List<String> {
+        if (HandFont.width(word, h) <= maxWidth) return listOf(word)
+        val out = mutableListOf<String>()
+        var rest = word
+        while (rest.isNotEmpty() && HandFont.width(rest, h) > maxWidth) {
+            var n = 1
+            while (n < rest.length && HandFont.width(rest.substring(0, n + 1), h) <= maxWidth) n++
+            val op = (n - 1 downTo 1).firstOrNull { rest[it - 1] in "+−-·×÷=)" }
+            val cut = op ?: n
+            out += rest.substring(0, cut)
+            rest = rest.substring(cut)
+        }
+        if (rest.isNotEmpty()) out += rest
         return out
     }
 
@@ -1187,7 +1204,10 @@ object MathNotes {
         /** La letra como la escribió el usuario en este renglón; si no está, su patrón ([n]: cuántas van). */
         private fun letter(l: String, row: List<Glyph>, n: Int = 0): InkPattern? {
             val inRow = row.mapNotNull { g ->
-                byId[g.strokes.first().patternId]?.takeIf { it.outputInk.isNotEmpty() && letterOf(it) == l }
+                byId[g.strokes.first().patternId]?.takeIf {
+                    // Solo los propios: los de la biblioteca se escriben con la letra a mano genérica.
+                    it.enabled && it.outputInk.isNotEmpty() && !it.id.startsWith(PresetPatterns.PREFIX) && letterOf(it) == l
+                }
             }
             val all = (inRow + variants[l].orEmpty()).distinctBy { it.id }
             return all.getOrNull(n % maxOf(1, all.size)) ?: letters[l]

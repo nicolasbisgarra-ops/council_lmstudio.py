@@ -46,5 +46,5 @@ object PdfImport {
 
     /** Nombre del cuaderno a partir del nombre del archivo: sin «.pdf» ni guiones bajos. */
     fun nameFor(fileName: String?): String =
-        fileName.orEmpty().substringAfterLast('/').removeSuffix(".pdf").removeSuffix(".PDF").replace('_', ' ').trim().ifEmpty { "PDF" }
+        fileName.orEmpty().substringAfterLast('/').let { if (it.endsWith(".pdf", ignoreCase = true)) it.dropLast(4) else it }.replace('_', ' ').trim().ifEmpty { "PDF" }
 }

@@ -193,12 +193,22 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
         if (uri == null) return@rememberLauncherForActivityResult
         val folder = filter.takeIf { it != FILTER_ALL && it != FILTER_NONE }
         Toast.makeText(context, "Importando PDF…", Toast.LENGTH_SHORT).show()
-        io("PDF importado: escribí encima", "No se pudo abrir el PDF") {
-            val fileName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-            val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("No se pudo abrir el archivo")
-            // PdfRenderer cierra el descriptor al terminar.
-            repo.importPdf(fd, PdfImport.nameFor(fileName), folder)
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val fileName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                    val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("No se pudo abrir el archivo")
+                    // PdfRenderer cierra el descriptor al terminar (y importPdf, si no lo pudo abrir).
+                    repo.importPdf(fd, PdfImport.nameFor(fileName), folder)
+                }
+            }
+            result.onSuccess { r ->
+                refresh()
+                val msg = if (r.imported < r.total) "Se importaron ${r.imported} de ${r.total} hojas (el máximo): escribí encima"
+                else "PDF importado: escribí encima"
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }.onFailure { Toast.makeText(context, "No se pudo abrir el PDF: ${it.message}", Toast.LENGTH_LONG).show() }
         }
     }
 
@@ -373,7 +383,7 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
                           try {
                               repo.deleteFolder(f.id)
                           } catch (e: FolderNotEmptyException) {
-                              error("La carpeta tiene ${e.count} ${if (e.count == 1) "cuaderno o subcarpeta" else "cuadernos o subcarpetas"}. Movelos o elimínalos primero.")
+                              error("La carpeta tiene ${e.count} ${if (e.count == 1) "cuaderno o subcarpeta" else "cuadernos o subcarpetas"}. Movelos o eliminalos primero.")
                           }
                       }
                   },
@@ -455,13 +465,16 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
             creating = false
             // Un cuaderno nuevo queda en la carpeta que se está mirando.
             val folderId = filter.takeIf { it != FILTER_ALL && it != FILTER_NONE }
-            if (name != null) onOpen(repo.createNotebook(name, paper, folderId).id, null)
+            if (name != null) scope.launch {
+                val id = withContext(Dispatchers.IO) { runCatching { repo.createNotebook(name, paper, folderId).id } }
+                id.onSuccess { onOpen(it, null) }.onFailure { Toast.makeText(context, "No se pudo crear: ${it.message}", Toast.LENGTH_LONG).show() }
+            }
         }
     }
     renaming?.let { nb ->
         NameDialog("Renombrar", nb.name) { name ->
             renaming = null
-            if (name != null) { repo.renameNotebook(nb.id, name); refresh() }
+            if (name != null) io("Cuaderno renombrado", "No se pudo renombrar") { repo.renameNotebook(nb.id, name) }
         }
     }
     if (addingFolder) {
@@ -590,7 +603,7 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
             onDismissRequest = { deleting = null },
             title = { Text("¿Eliminar «${nb.name}»?") },
             text = { Text("Se borran sus páginas y trazos de este dispositivo.") },
-            confirmButton = { TextButton(onClick = { repo.deleteNotebook(nb.id); deleting = null; refresh() }) { Text("Eliminar") } },
+            confirmButton = { TextButton(onClick = { deleting = null; io("Cuaderno eliminado", "No se pudo eliminar") { repo.deleteNotebook(nb.id) } }) { Text("Eliminar") } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancelar") } },
         )
     }

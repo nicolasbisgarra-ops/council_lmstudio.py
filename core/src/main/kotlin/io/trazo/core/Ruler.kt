@@ -98,7 +98,9 @@ data class Ruler(
     val degrees: Float get() {
         var d = (angle * 180.0 / PI).toFloat() % 180f
         if (d < 0f) d += 180f
-        return d
+        // Sin «-0°» ni «180°»: lo que redondea a 180 es 0 (la misma recta).
+        if (d >= 179.5f) d = 0f
+        return d + 0f
     }
 
     fun moved(dx: Float, dy: Float) = copy(cx = cx + dx, cy = cy + dy)

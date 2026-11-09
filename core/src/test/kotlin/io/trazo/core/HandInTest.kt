@@ -24,4 +24,10 @@ class HandInTest {
         assertEquals("Análisis", HandIn.footer("Análisis", 1, 1))
         assertEquals("3 / 4", HandIn.footer("  ", 3, 4))
     }
+
+    @Test fun `results are only computed for pages without ink`() {
+        val asked = mutableListOf<String>()
+        HandIn.pagesToInclude(listOf(Page("a", strokes = listOf(stroke)), Page("b"))) { asked += it.id; emptyList() }
+        assertEquals(listOf("b"), asked)
+    }
 }

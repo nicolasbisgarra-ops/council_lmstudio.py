@@ -16,7 +16,8 @@ class StepByStepTest {
     }
 
     @Test fun `dividing is multiplying by the inverse and results are simplified`() {
-        StepByStep.expression("(1/2)/(3/4)").has("1/2·4/3", "inversa", "= 2/3")
+        StepByStep.expression("(1/2)/(3/4)").has("1/2·(4/3)", "inversa", "= 2/3")
+        StepByStep.expression("3/(1/2)").has("3 ÷ (1/2)")
         StepByStep.expression("(2/3)^2").has("(2/3)² = 4/9")
     }
 
@@ -52,5 +53,9 @@ class StepByStepTest {
     @Test fun `systems by substitution or elimination`() {
         StepByStep.system(listOf("x+y=5", "x-y=1")).has("sustitución", "x = 5 − y", "y = 2", "x = 3 ; y = 2")
         StepByStep.system(listOf("2x+3y=12", "3x+2y=13")).has("reducción", "6x + 9y = 36", "5y = 10", "x = 3 ; y = 2")
+    }
+
+    @Test fun `a fraction before a parenthesis gets its own parentheses`() {
+        StepByStep.system(listOf("x+y=5", "x/2+y=3")).has("(1/2)·(5 − y)")
     }
 }
