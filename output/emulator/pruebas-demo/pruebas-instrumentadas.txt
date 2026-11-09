@@ -5,7 +5,7 @@ io.trazo.app.ParametricExportInstrumentedTest:...
 io.trazo.app.PageHistoryInstrumentedTest:..
 io.trazo.app.AiChatInstrumentedTest:.
 
-Time: 134.249
+Time: 106.316
 
 OK (23 tests)
 
