@@ -84,6 +84,8 @@ private class CanvasRef { var view: InkCanvasView? = null }
 @Composable
 fun EditorScreen(
     notebookId: String,
+    /** Hoja a abrir; null = la última abierta. */
+    startPage: Int? = null,
     onBack: () -> Unit,
     onPatterns: () -> Unit,
     onSettings: () -> Unit,
@@ -95,7 +97,7 @@ fun EditorScreen(
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
-    val vm: EditorViewModel = viewModel(key = "editor-$notebookId") { EditorViewModel(app, notebookId) }
+    val vm: EditorViewModel = viewModel(key = "editor-$notebookId") { EditorViewModel(app, notebookId, startPage = startPage) }
     val store = app.trazo.settings
     val settings by store.settings.collectAsState()
     val patterns by app.trazo.repository.patterns.collectAsState()

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -90,6 +91,7 @@ import io.trazo.core.Folder
 import io.trazo.core.FolderCatalog
 import io.trazo.core.FolderNotEmptyException
 import io.trazo.core.Notebook
+import io.trazo.core.NoteSearch
 import io.trazo.core.NotebookOrder
 import io.trazo.core.Paper
 import java.io.File
@@ -112,7 +114,7 @@ private val FOLDER_COLORS = listOf(
 )
 
 @Composable
-fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSettings: () -> Unit) {
+fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     val repo = context.trazo.repository
     val settings by context.trazo.settings.settings.collectAsState()
@@ -205,6 +207,22 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
             NotebookSort.MANUAL -> NotebookOrder.sorted(filtered, order, { it.id }, { it.updatedAt })
         }
     }
+
+    // Índice de lo escrito a mano: se arma una vez al abrir la búsqueda (y si cambian los cuadernos).
+    var contentIndex by remember { mutableStateOf<List<NoteSearch.Entry>?>(null) }
+    LaunchedEffect(searching, items) {
+        if (!searching) return@LaunchedEffect
+        val patterns = repo.patterns.value
+        contentIndex = withContext(Dispatchers.IO) {
+            items.flatMap { nb ->
+                val book = runCatching { repo.loadLazy(nb.id) }.getOrNull() ?: return@flatMap emptyList()
+                (0 until book.pageCount).flatMap { i ->
+                    runCatching { NoteSearch.index(nb.id, nb.name, i, book.page(i), patterns) }.getOrDefault(emptyList())
+                }
+            }
+        }
+    }
+    val hits = remember(contentIndex, query) { contentIndex?.let { NoteSearch.search(it, query, limit = 50) }.orEmpty() }
 
     var orderDirty by remember { mutableStateOf(false) }
     val manualList = rememberLazyListState()
@@ -333,10 +351,16 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
                       }
                   },
               )
+              if (searching && query.isNotBlank()) {
+                  NoteHits(
+                      hits, indexing = contentIndex == null, fill = shown.isEmpty(),
+                      onOpen = { e -> onOpen(e.notebookId, e.pageIndex) },
+                  )
+              }
               if (shown.isEmpty()) {
-                  Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                  if (!(searching && query.isNotBlank() && (hits.isNotEmpty() || contentIndex == null))) Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                       Text(
-                          if (query.isNotBlank()) "Ningún cuaderno se llama así." else "No hay cuadernos en esta carpeta.",
+                          if (query.isNotBlank()) "No aparece en nombres ni en apuntes." else "No hay cuadernos en esta carpeta.",
                           color = MaterialTheme.colorScheme.onSurfaceVariant,
                       )
                   }
@@ -358,7 +382,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
                             }
                             NotebookCard(
                                 nb, colors, compact = true,
-                                onOpen = { onOpen(nb.id) },
+                                onOpen = { onOpen(nb.id, null) },
                                 onRename = { renaming = nb },
                                 onExport = { exportId = nb.id; exportLauncher.launch("${nb.name}.trazo") },
                                 onDelete = { deleting = nb },
@@ -384,7 +408,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
                     items(shown, key = { it.id }) { nb ->
                         NotebookCard(
                             nb, colors,
-                            onOpen = { onOpen(nb.id) },
+                            onOpen = { onOpen(nb.id, null) },
                             onRename = { renaming = nb },
                             onExport = { exportId = nb.id; exportLauncher.launch("${nb.name}.trazo") },
                             onDelete = { deleting = nb },
@@ -404,7 +428,7 @@ fun NotebookListScreen(onOpen: (String) -> Unit, onPatterns: () -> Unit, onSetti
             creating = false
             // Un cuaderno nuevo queda en la carpeta que se está mirando.
             val folderId = filter.takeIf { it != FILTER_ALL && it != FILTER_NONE }
-            if (name != null) onOpen(repo.createNotebook(name, paper, folderId).id)
+            if (name != null) onOpen(repo.createNotebook(name, paper, folderId).id, null)
         }
     }
     renaming?.let { nb ->
@@ -708,4 +732,33 @@ fun NameDialog(title: String, initial: String, onResult: (String?) -> Unit) {
         confirmButton = { TextButton(onClick = { onResult(text.trim()) }, enabled = text.isNotBlank()) { Text("Aceptar") } },
         dismissButton = { TextButton(onClick = { onResult(null) }) { Text("Cancelar") } },
     )
+}
+
+/** Renglones escritos a mano que contienen la búsqueda; tocar uno abre esa hoja. */
+@Composable
+private fun NoteHits(hits: List<NoteSearch.Entry>, indexing: Boolean, fill: Boolean, onOpen: (NoteSearch.Entry) -> Unit) {
+    if (!indexing && hits.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(
+            if (indexing) "Leyendo los apuntes…" else "En los apuntes (${hits.size})",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        if (hits.isNotEmpty()) LazyColumn(
+            if (fill) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().heightIn(max = 220.dp),
+        ) {
+            items(hits.size) { i ->
+                val e = hits[i]
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onOpen(e) }.padding(vertical = 8.dp, horizontal = 4.dp)) {
+                    Text(e.text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${e.notebookName} · hoja ${e.pageIndex + 1}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        HorizontalDivider(Modifier.padding(top = 4.dp))
+    }
 }

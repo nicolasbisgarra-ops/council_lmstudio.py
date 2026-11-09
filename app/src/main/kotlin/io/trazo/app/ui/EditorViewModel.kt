@@ -102,6 +102,8 @@ class EditorViewModel(
     val notebookId: String,
     private val aiReviewCall: AiReviewCall? = null,
     private val remoteOnlineOverride: (() -> Boolean)? = null,
+    /** Hoja con que se abre (un resultado de búsqueda); null = la última abierta. */
+    private val startPage: Int? = null,
 ) : AndroidViewModel(app) {
     private val repo = app.trazo.repository.also { it.markOpen(notebookId) }
     private val settings = app.trazo.settings
@@ -1653,7 +1655,7 @@ class EditorViewModel(
                     pageLoadError = loaded.third.first?.message ?: loaded.third.first?.javaClass?.simpleName ?: "No se pudo abrir el cuaderno."
                 } else {
                     // Decode the selected page before attaching or allowing a save to replace its raw slot.
-                    attachPage(n.openPage, hardReset = true)
+                    attachPage(startPage?.takeIf { it in n.slots.indices } ?: n.openPage, hardReset = true)
                 }
                 if (reviewQueueProblem != null) aiProgress = AiProgress(false, message = "La cola durable no está disponible: $reviewQueueProblem", error = true)
             } catch (e: Exception) {

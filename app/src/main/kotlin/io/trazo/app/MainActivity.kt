@@ -42,7 +42,8 @@ import io.trazo.core.InkStroke
 
 sealed interface Screen {
     data object Notebooks : Screen
-    data class Editor(val notebookId: String) : Screen
+    /** @param page hoja a abrir (un resultado de búsqueda); null = la última abierta. */
+    data class Editor(val notebookId: String, val page: Int? = null) : Screen
     data object Patterns : Screen
     /** @param seedGesture gesto de la hoja para empezar un patrón nuevo ("enseñar este gesto"). */
     data class PatternEdit(val patternId: String?, val seedGesture: List<InkStroke>? = null) : Screen
@@ -164,12 +165,13 @@ private fun TrazoRoot(nav: NavViewModel, banner: String?) {
 private fun ScreenContent(screen: Screen, nav: NavViewModel) {
     when (screen) {
         Screen.Notebooks -> NotebookListScreen(
-            onOpen = { nav.push(Screen.Editor(it)) },
+            onOpen = { id, page -> nav.push(Screen.Editor(id, page)) },
             onPatterns = { nav.push(Screen.Patterns) },
             onSettings = { nav.push(Screen.Settings()) },
         )
         is Screen.Editor -> EditorScreen(
             notebookId = screen.notebookId,
+            startPage = screen.page,
             onBack = nav::pop,
             onPatterns = { nav.push(Screen.Patterns) },
             onSettings = { nav.push(Screen.Settings()) },
