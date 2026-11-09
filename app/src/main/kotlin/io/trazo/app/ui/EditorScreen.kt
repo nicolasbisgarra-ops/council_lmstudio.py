@@ -448,7 +448,7 @@ fun EditorScreen(
                             ShapeInspector(vm, shape, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                         }
                         vm.mathExplanation?.let { e ->
-                            MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null })
+                            MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null }, onWrite = { vm.writeExplanation(e) })
                         }
                         AiOverlay(vm, Modifier.align(Alignment.TopEnd))
                         vm.aiNote?.takeIf { vm.aiVisible }?.let { note -> AiNoteBubble(vm, note) }

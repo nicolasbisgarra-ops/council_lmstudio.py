@@ -1114,6 +1114,54 @@ object MathNotes {
         return if (bottom.isEmpty()) top else listOf(Piece.Frac(top, bottom))
     }
 
+    /**
+     * La explicación [explanation] escrita a mano debajo de su cuenta: con la altura, el color y la inclinación
+     * de la letra del usuario, y sus propias cifras y letras donde tenga patrones dibujados por él. Cada renglón
+     * es un grupo; ningún trazo queda marcado como patrón, así no se vuelve a reconocer como cuenta.
+     */
+    fun handwrite(
+        strokes: List<InkStroke>, patterns: List<InkPattern>, explanation: Explanation,
+        ids: IdGenerator = IdGenerator.RANDOM, color: Int? = null,
+    ): List<InkStroke> {
+        val e = explanation.bounds
+        fun touches(b: Bounds) = b.left <= e.right && b.right >= e.left && b.top <= e.bottom && b.bottom >= e.top
+        val byId = patterns.associateBy { it.id }
+        val row = lines(strokes, byId).flatMap { it.glyphs }.filter { touches(it.bounds) }.ifEmpty {
+            strokes.filter { it.calc != null && touches(it.bounds) }.groupBy { it.groupId ?: it.id }.values
+                .map { Glyph("", it.bounds(), it) }
+        }
+        val writer = Writer(patterns, ids)
+        val h = (if (row.isNotEmpty()) writer.rowHeight(row) else e.height).coerceIn(24f, 80f)
+        val base = row.firstOrNull()?.strokes?.firstOrNull()?.style ?: InkStyle()
+        val style = if (color != null) base.copy(color = color) else base
+        val slant = HandFont.slant(strokes, byId)
+        val maxWidth = maxOf(e.width, h * 18f)
+        val lines = explanation.steps.flatMap { it.split('\n') }.flatMap { wrap(it.trim(), h, maxWidth) }
+        val out = mutableListOf<InkStroke>()
+        var baseline = e.bottom + h * 1.15f + h / 2f
+        for ((i, text) in lines.withIndex()) {
+            if (text.isNotEmpty()) out += writer.handwrite(text, e.left, baseline, h, style, slant, text.hashCode() + i, row, ids.next())
+            baseline += h * 1.6f
+        }
+        return out
+    }
+
+    /** [text] partido por palabras para que ningún renglón pase de [maxWidth]. */
+    private fun wrap(text: String, h: Float, maxWidth: Float): List<String> {
+        if (text.isEmpty()) return listOf("")
+        val out = mutableListOf<String>()
+        var line = ""
+        for (word in text.split(' ').filter { it.isNotEmpty() }) {
+            val next = if (line.isEmpty()) word else "$line $word"
+            if (line.isNotEmpty() && HandFont.width(next, h) > maxWidth) {
+                out += line
+                line = word
+            } else line = next
+        }
+        out += line
+        return out
+    }
+
     /** Dibuja con los patrones: los del usuario si tiene uno con ese nombre, si no los de la biblioteca. */
     private class Writer(patterns: List<InkPattern>, private val ids: IdGenerator) {
         private val user = patterns.filter { it.enabled && !PresetPatterns.isSign(it) }.associateBy { it.name.trim() }
@@ -1369,6 +1417,47 @@ object MathNotes {
                 )
             }
             return Glyph(p.name.trim(), strokes.bounds(), strokes)
+        }
+
+        fun rowHeight(row: List<Glyph>): Float = height(row)
+
+        /**
+         * [text] a mano desde [left] sobre [baseline]: las cifras y letras que el usuario dibujó como patrón
+         * salen con su tinta; el resto, con [HandFont].
+         */
+        fun handwrite(text: String, left: Float, baseline: Float, h: Float, style: InkStyle, slant: Float, seed: Int, row: List<Glyph>, group: String): List<InkStroke> {
+            val out = mutableListOf<InkStroke>()
+            var x = left
+            val run = StringBuilder()
+            var n = 0
+            fun flush() {
+                if (run.isEmpty()) return
+                val (s, end) = HandFont.write(run.toString(), x, baseline, h, style, slant, seed + 31 * n++, ids, group)
+                out += s
+                x = end
+                run.clear()
+            }
+            fun own(p: InkPattern?) = p?.takeIf { it.outputInk.isNotEmpty() && !it.id.startsWith(PresetPatterns.PREFIX) }
+            for (c in text) {
+                val mine = when {
+                    c in '0'..'9' -> own(user[c.toString()])?.let { glyph(it, x, baseline - h / 2f, h, style, group) }
+                    c in 'a'..'z' -> own(letter(c.toString(), row))?.let { p ->
+                        val floor = AutoAlign.floor(p)
+                        val size = h * 0.8f / floor
+                        glyph(p, x, baseline - size * floor + size / 2f, size, style, group)
+                    }
+                    else -> null
+                }
+                if (mine == null) {
+                    run.append(c)
+                    continue
+                }
+                flush()
+                out += mine.strokes.map { it.copy(patternId = null) }
+                x = mine.bounds.right + h * 0.15f
+            }
+            flush()
+            return out
         }
 
         /** Lo que no es parte de una fracción apilada, y las barras de las fracciones. */

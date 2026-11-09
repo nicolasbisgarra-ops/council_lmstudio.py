@@ -1258,6 +1258,13 @@ class EditorViewModel(
         aiNote = null
     }
 
+    /** Escribe la explicación del resultado debajo de la cuenta, con una letra parecida a la del usuario. */
+    fun writeExplanation(e: MathNotes.Explanation) {
+        val ink = MathNotes.handwrite(controller.page.strokes, repo.patterns.value, e)
+        mathExplanation = null
+        controller.addInk(ink)
+    }
+
     /** La marca pasa a ser tinta común de la hoja (se puede mover, borrar o deshacer). */
     fun aiNoteToInk(note: AiNote) {
         val all = controller.page.ai?.notes.orEmpty()

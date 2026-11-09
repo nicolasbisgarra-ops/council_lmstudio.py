@@ -26,7 +26,7 @@ import kotlinx.coroutines.delay
  * es una fracción y de dónde sale cada variable. Se cierra sola, al editar la hoja o con «Cerrar».
  */
 @Composable
-fun MathBubble(e: MathNotes.Explanation, viewport: Viewport, onDismiss: () -> Unit) {
+fun MathBubble(e: MathNotes.Explanation, viewport: Viewport, onDismiss: () -> Unit, onWrite: () -> Unit = {}) {
     LaunchedEffect(e) { delay(BUBBLE_MS); onDismiss() }
     val clipboard = LocalClipboardManager.current
     val scale = viewport.scale.takeIf { it > 0f } ?: 1f
@@ -65,6 +65,7 @@ fun MathBubble(e: MathNotes.Explanation, viewport: Viewport, onDismiss: () -> Un
                 TextButton(onClick = { clipboard.setText(AnnotatedString(e.steps.first())); onDismiss() }) {
                     Text("Copiar", color = MaterialTheme.colorScheme.inversePrimary)
                 }
+                TextButton(onClick = onWrite) { Text("Escribir en la hoja", color = MaterialTheme.colorScheme.inversePrimary) }
                 TextButton(onClick = onDismiss) { Text("Cerrar", color = MaterialTheme.colorScheme.inversePrimary) }
             }
         }
