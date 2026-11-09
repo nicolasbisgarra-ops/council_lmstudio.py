@@ -3,6 +3,7 @@ package io.trazo.app.data
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import io.trazo.app.ai.AiMarkPainter
 import io.trazo.app.image.ImagePainter
@@ -12,6 +13,7 @@ import io.trazo.app.ink.StrokePainter
 import io.trazo.core.AiNotes
 import io.trazo.core.Bounds
 import io.trazo.core.Brush
+import io.trazo.core.HandIn
 import io.trazo.core.InkStroke
 import io.trazo.core.LazyNotebook
 import io.trazo.core.Notebook
@@ -35,12 +37,23 @@ object PageExporter {
     private const val MAX_RASTER_DIMENSION = 8_192
 
     /** @param results tinta de los resultados de las cuentas de cada página (derivada, no está en la página). */
-    fun writePdf(notebook: Notebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }, includeAi: Boolean = false) =
-        writePdf(notebook.pages.size, notebook.pages::get, notebook.paper, out, results, includeAi)
+    /** @param clean PDF para entregar ([HandIn]): hoja blanca, sin marcas IA ni hojas vacías, con pie. */
+    fun writePdf(
+        notebook: Notebook,
+        out: OutputStream,
+        results: (Page) -> List<InkStroke> = { emptyList() },
+        includeAi: Boolean = false,
+        clean: Boolean = false,
+    ) = writePdf(notebook.pages.size, notebook.pages::get, notebook.paper, out, results, includeAi, clean, notebook.name)
 
     /** Decodifica las páginas de a una mientras escribe: un cuaderno largo no se carga entero. */
-    fun writePdf(notebook: LazyNotebook, out: OutputStream, results: (Page) -> List<InkStroke> = { emptyList() }, includeAi: Boolean = false) =
-        writePdf(notebook.pageCount, notebook::page, notebook.paper, out, results, includeAi)
+    fun writePdf(
+        notebook: LazyNotebook,
+        out: OutputStream,
+        results: (Page) -> List<InkStroke> = { emptyList() },
+        includeAi: Boolean = false,
+        clean: Boolean = false,
+    ) = writePdf(notebook.pageCount, notebook::page, notebook.paper, out, results, includeAi, clean, notebook.name)
 
     private fun writePdf(
         count: Int,
@@ -49,20 +62,25 @@ object PageExporter {
         out: OutputStream,
         results: (Page) -> List<InkStroke>,
         includeAi: Boolean,
+        clean: Boolean,
+        name: String,
     ) {
+        val withAi = includeAi && !clean
+        val indices = if (clean) HandIn.pagesToInclude(count, pageAt, results) else (0 until count).toList()
         val doc = PdfDocument()
         try {
-            for (i in 0 until count) {
+            indices.forEachIndexed { n, i ->
                 val page = pageAt(i)
                 val mathResults = results(page)
-                val bounds = exportBounds(page, mathResults, includeAi)
+                val bounds = exportBounds(page, mathResults, withAi)
                 // La hoja mantiene su tamaño lógico A4. Cuando hay tinta fuera del papel, el
                 // medio PDF crece para representarla completa sin escalar ni recortar la hoja.
                 val scale = PDF_WIDTH.toDouble() / Notebook.PAGE_WIDTH
                 val width = checkedDimension(ceil(bounds.width.toDouble() * scale), "PDF width")
                 val height = checkedDimension(ceil(bounds.height.toDouble() * scale), "PDF height")
-                val pdfPage = doc.startPage(PdfDocument.PageInfo.Builder(width, height, i + 1).create())
-                drawPage(pdfPage.canvas, page, paper, bounds, scale.toFloat(), mathResults, includeAi)
+                val pdfPage = doc.startPage(PdfDocument.PageInfo.Builder(width, height, n + 1).create())
+                drawPage(pdfPage.canvas, page, if (clean) Paper.PLAIN else paper, bounds, scale.toFloat(), mathResults, withAi)
+                if (clean) drawFooter(pdfPage.canvas, HandIn.footer(name, n + 1, indices.size), width.toFloat(), height.toFloat())
                 doc.finishPage(pdfPage)
             }
             doc.writeTo(out)
@@ -236,6 +254,17 @@ object PageExporter {
     }
 
     private fun Bounds.isFinite() = left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite()
+
+    /** Pie gris centrado al borde inferior, en puntos PDF (fuera de la escala de la hoja). */
+    private fun drawFooter(canvas: Canvas, text: String, width: Float, height: Float) {
+        if (text.isEmpty()) return
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.GRAY
+            textSize = 9f
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(text, width / 2f, height - 14f, paint)
+    }
 
     /** Con [includeAi], las marcas del Modo IA van encima, como se ven en la hoja (46). */
     private fun drawPage(

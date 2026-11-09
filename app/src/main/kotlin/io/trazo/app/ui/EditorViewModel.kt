@@ -751,7 +751,7 @@ class EditorViewModel(
      * Exporta fuera del hilo principal: PDF vectorial de todo el cuaderno o PNG de la página actual
      * (para compartir; el formato editable es `.trazo`). [onDone] recibe el error, o null si salió bien.
      */
-    fun exportTo(resolver: ContentResolver, uri: Uri, pdf: Boolean, includeAi: Boolean, onDone: (Throwable?) -> Unit) {
+    fun exportTo(resolver: ContentResolver, uri: Uri, pdf: Boolean, includeAi: Boolean, clean: Boolean = false, onDone: (Throwable?) -> Unit) {
         val n = syncNotebook() ?: return
         val page = n.page(pageIndex)
         viewModelScope.launch {
@@ -759,7 +759,7 @@ class EditorViewModel(
                 runCatching {
                     val out = resolver.openOutputStream(uri) ?: error("No se pudo abrir el archivo")
                     out.use {
-                        if (pdf) PageExporter.writePdf(n, it, ::mathResults, includeAi)
+                        if (pdf) PageExporter.writePdf(n, it, ::mathResults, includeAi, clean)
                         else PageExporter.writePng(page, n.paper, it, results = mathResults(page), includeAi = includeAi)
                     }
                 }.exceptionOrNull()

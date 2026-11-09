@@ -120,6 +120,8 @@ fun EditorScreen(
     // Exportar con marcas de la IA: se pregunta solo a quien usa el Modo IA. true = PDF, false = PNG.
     var exportAsk by remember { mutableStateOf<Boolean?>(null) }
     var exportAi by rememberSaveable { mutableStateOf(false) }
+    // PDF para entregar: hoja blanca, sin marcas IA ni hojas vacías, con pie (ver HandIn).
+    var exportClean by rememberSaveable { mutableStateOf(false) }
     var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
     var wheelAt by remember { mutableStateOf<Offset?>(null) }
     // Lazo apretado sobre un lugar vacío: dónde ofrecer «Pegar» (vista) y dónde pegar (documento).
@@ -136,9 +138,10 @@ fun EditorScreen(
     fun export(uri: android.net.Uri?, pdf: Boolean) {
         if (uri == null) return
         val appContext = context.applicationContext
-        vm.exportTo(appContext.contentResolver, uri, pdf, includeAi = exportAi) { error ->
+        vm.exportTo(appContext.contentResolver, uri, pdf, includeAi = exportAi, clean = pdf && exportClean) { error ->
             val message = when {
                 error != null -> "No se pudo exportar: ${error.message}"
+                pdf && exportClean -> "PDF para entregar listo"
                 pdf -> "PDF exportado"
                 else -> "Página exportada"
             }
@@ -287,7 +290,8 @@ fun EditorScreen(
             onAi = { aiMenu = true },
             onGraph = { graphOpen = true },
             onPdf = {
-                if (vm.usesAi) exportAsk = true else { exportAi = false; pdfLauncher.launch("${notebook.name}.pdf") }
+                if (!vm.usesAi) exportAi = false
+                exportAsk = true
             },
             onPng = {
                 if (vm.usesAi) exportAsk = false else { exportAi = false; pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png") }
@@ -647,15 +651,22 @@ fun EditorScreen(
             onDismissRequest = { exportAsk = null },
             title = { Text(if (pdf) "Exportar PDF" else "Exportar página") },
             text = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.material3.Checkbox(exportAi, { exportAi = it })
-                    Text("Incluir correcciones de la IA")
+                androidx.compose.foundation.layout.Column {
+                    if (pdf) Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(exportClean, { exportClean = it })
+                        Text("Para entregar: hoja blanca, sin marcas ni hojas vacías, con número de página")
+                    }
+                    if (vm.usesAi) Row(verticalAlignment = Alignment.CenterVertically) {
+                        val enabled = !(pdf && exportClean)
+                        androidx.compose.material3.Checkbox(exportAi && enabled, { exportAi = it }, enabled = enabled)
+                        Text("Incluir correcciones de la IA")
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     exportAsk = null
-                    if (pdf) pdfLauncher.launch("${notebook.name}.pdf")
+                    if (pdf) pdfLauncher.launch(if (exportClean) "${notebook.name} - entrega.pdf" else "${notebook.name}.pdf")
                     else pngLauncher.launch("${notebook.name} - página ${vm.pageIndex + 1}.png")
                 }) { Text("Exportar") }
             },
