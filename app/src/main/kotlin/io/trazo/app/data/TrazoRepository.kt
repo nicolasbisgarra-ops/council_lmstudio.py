@@ -185,11 +185,13 @@ class TrazoRepository(root: File) {
 
     private fun saveFolders(c: FolderCatalog) = write(foldersFile, FolderCatalog.encode(c))
 
-    fun addFolder(name: String, colorArgb: Long = Folder.DEFAULT_COLOR): Folder = synchronized(lock) {
-        val (c, f) = folders().add(name, colorArgb)
+    fun addFolder(name: String, colorArgb: Long = Folder.DEFAULT_COLOR, parentId: String? = null): Folder = synchronized(lock) {
+        val (c, f) = folders().add(name, colorArgb, parentId = parentId)
         saveFolders(c)
         f
     }
+
+    fun moveFolder(id: String, parentId: String?) = synchronized(lock) { saveFolders(folders().moved(id, parentId)) }
 
     fun renameFolder(id: String, name: String) = synchronized(lock) { saveFolders(folders().renamed(id, name)) }
 

@@ -130,9 +130,11 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
     var pendingOrderRevision by remember { mutableStateOf<Long?>(null) }
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
     var addingFolder by remember { mutableStateOf(false) }
+    var addingSubfolderOf by remember { mutableStateOf<Folder?>(null) }
     var folderMenu by remember { mutableStateOf(false) }
     var renamingFolder by remember { mutableStateOf<Folder?>(null) }
     var recoloringFolder by remember { mutableStateOf<Folder?>(null) }
+    var movingFolder by remember { mutableStateOf<Folder?>(null) }
     var moving by remember { mutableStateOf<NotebookSummary?>(null) }
     var coverFor by remember { mutableStateOf<NotebookSummary?>(null) }
     var coverId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -213,7 +215,10 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
         val inFolder = when (filter) {
             FILTER_ALL -> items
             FILTER_NONE -> items.filter { it.folderId == null || folders[it.folderId] == null }
-            else -> items.filter { it.folderId == filter }
+            else -> {
+                val sub = folders.descendants(filter)
+                items.filter { it.folderId in sub }
+            }
         }
         val filtered = if (q.isEmpty()) inFolder else inFolder.filter { searchKey(it.name).contains(q) }
         when (sort) {
@@ -358,15 +363,17 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
             loaded && items.isEmpty() -> EmptyState(Modifier.padding(padding))
             else -> Column(Modifier.padding(padding).fillMaxSize()) {
               FolderRow(
-                  folders.ordered(), filter, onSelect = { filter = it }, onAdd = { addingFolder = true },
+                  folders, filter, onSelect = { filter = it }, onAdd = { addingFolder = true },
+                  onAddSubfolder = { addingSubfolderOf = it },
                   menuOpen = folderMenu, onMenu = { folderMenu = it },
                   onRename = { renamingFolder = it }, onRecolor = { recoloringFolder = it },
+                  onMove = { movingFolder = it },
                   onDelete = { f ->
                       io("Carpeta eliminada", "No se puede eliminar") {
                           try {
                               repo.deleteFolder(f.id)
                           } catch (e: FolderNotEmptyException) {
-                              error("La carpeta tiene ${e.count} ${if (e.count == 1) "cuaderno" else "cuadernos"}. Movelos o elimínalos primero.")
+                              error("La carpeta tiene ${e.count} ${if (e.count == 1) "cuaderno o subcarpeta" else "cuadernos o subcarpetas"}. Movelos o elimínalos primero.")
                           }
                       }
                   },
@@ -463,6 +470,12 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
             if (name != null) io("Carpeta creada", "No se pudo crear") { filter = repo.addFolder(name).id }
         }
     }
+    addingSubfolderOf?.let { parent ->
+        NameDialog("Nueva subcarpeta", "") { name ->
+            addingSubfolderOf = null
+            if (name != null) io("Subcarpeta creada", "No se pudo crear") { filter = repo.addFolder(name, parentId = parent.id).id }
+        }
+    }
     renamingFolder?.let { f ->
         NameDialog("Renombrar carpeta", f.name) { name ->
             renamingFolder = null
@@ -490,8 +503,38 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
             confirmButton = { TextButton(onClick = { recoloringFolder = null }) { Text("Cerrar") } },
         )
     }
+    movingFolder?.let { folder ->
+        val forbidden = folders.descendants(folder.id)
+        val options = listOf<Folder?>(null) + folders.treeOrder().filter {
+            it.id !in forbidden && runCatching { folders.moved(folder.id, it.id) }.isSuccess
+        }
+        AlertDialog(
+            onDismissRequest = { movingFolder = null },
+            title = { Text("Mover «${folder.name}»") },
+            text = {
+                Column {
+                    options.forEach { target ->
+                        val selected = folder.parentId == target?.id
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable {
+                                movingFolder = null
+                                io("Carpeta movida", "No se pudo mover") { repo.moveFolder(folder.id, target?.id) }
+                            }.padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = selected, onClick = null)
+                            if (target != null) Box(Modifier.padding(start = 8.dp).size(12.dp).clip(CircleShape).background(Color(target.colorArgb.toInt())))
+                            val label = if (target == null) "Raíz" else folderLabel(folders, target)
+                            Text(label, Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { movingFolder = null }) { Text("Cancelar") } },
+        )
+    }
     moving?.let { nb ->
-        val options = listOf<Folder?>(null) + folders.ordered()
+        val options = listOf<Folder?>(null) + folders.treeOrder()
         AlertDialog(
             onDismissRequest = { moving = null },
             title = { Text("Mover «${nb.name}»") },
@@ -508,7 +551,7 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
                         ) {
                             RadioButton(selected = selected, onClick = null)
                             if (f != null) Box(Modifier.padding(start = 8.dp).size(12.dp).clip(CircleShape).background(Color(f.colorArgb.toInt())))
-                            Text(f?.name ?: "Sin carpeta", Modifier.padding(start = 8.dp))
+                            Text(if (f == null) "Sin carpeta" else folderLabel(folders, f), Modifier.padding(start = 8.dp))
                         }
                     }
                 }
@@ -641,46 +684,68 @@ private fun coverBitmap(file: File?): ImageBitmap? {
     return bmp
 }
 
-/** Fila de carpetas: Todos, Sin carpeta, cada carpeta y «+ Carpeta»; la elegida tiene su menú. */
+private fun folderLabel(folders: FolderCatalog, folder: Folder): String {
+    val depth = (folders.path(folder.id).size - 1).coerceAtLeast(0)
+    return if (depth == 0) folder.name else "${"  ".repeat(depth - 1)}↳ ${folder.name}"
+}
+
+/** Fila de carpetas: Todos, Sin carpeta, cada carpeta y «+ Carpeta»; la elegida tiene su menú y su ruta. */
 @Composable
 private fun FolderRow(
-    folders: List<Folder>,
+    folders: FolderCatalog,
     filter: String,
     onSelect: (String) -> Unit,
     onAdd: () -> Unit,
+    onAddSubfolder: (Folder) -> Unit,
     menuOpen: Boolean,
     onMenu: (Boolean) -> Unit,
     onRename: (Folder) -> Unit,
     onRecolor: (Folder) -> Unit,
+    onMove: (Folder) -> Unit,
     onDelete: (Folder) -> Unit,
 ) {
-    val current = folders.firstOrNull { it.id == filter }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Row(
-            Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 8.dp, top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(selected = filter == FILTER_ALL, onClick = { onSelect(FILTER_ALL) }, label = { Text("Todos") })
-            FilterChip(selected = filter == FILTER_NONE, onClick = { onSelect(FILTER_NONE) }, label = { Text("Sin carpeta") })
-            folders.forEach { f ->
-                FilterChip(
-                    selected = filter == f.id,
-                    onClick = { onSelect(f.id) },
-                    label = { Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    leadingIcon = { Box(Modifier.size(10.dp).clip(CircleShape).background(Color(f.colorArgb.toInt()))) },
-                )
+    val current = folders[filter]
+    val path = remember(folders, current) { current?.let { folders.path(it.id) }.orEmpty() }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 8.dp, top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(selected = filter == FILTER_ALL, onClick = { onSelect(FILTER_ALL) }, label = { Text("Todos") })
+                FilterChip(selected = filter == FILTER_NONE, onClick = { onSelect(FILTER_NONE) }, label = { Text("Sin carpeta") })
+                folders.treeOrder().forEach { f ->
+                    FilterChip(
+                        selected = filter == f.id,
+                        onClick = { onSelect(f.id) },
+                        label = { Text(folderLabel(folders, f), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = { Box(Modifier.size(10.dp).clip(CircleShape).background(Color(f.colorArgb.toInt()))) },
+                    )
+                }
+                FilterChip(selected = false, onClick = onAdd, label = { Text("Carpeta") }, leadingIcon = { Icon(Icons.Filled.Add, null, Modifier.size(16.dp)) })
             }
-            FilterChip(selected = false, onClick = onAdd, label = { Text("Carpeta") }, leadingIcon = { Icon(Icons.Filled.Add, null, Modifier.size(16.dp)) })
-        }
-        if (current != null) {
-            Box(Modifier.padding(end = 8.dp)) {
-                IconButton(onClick = { onMenu(true) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Filled.MoreVert, "Opciones de la carpeta ${current.name}") }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { onMenu(false) }, shape = RoundedCornerShape(16.dp)) {
-                    DropdownMenuItem(text = { Text("Renombrar") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { onMenu(false); onRename(current) })
-                    DropdownMenuItem(text = { Text("Color") }, onClick = { onMenu(false); onRecolor(current) })
-                    DropdownMenuItem(text = { Text("Eliminar") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { onMenu(false); onDelete(current) })
+            if (current != null) {
+                Box(Modifier.padding(end = 8.dp)) {
+                    IconButton(onClick = { onMenu(true) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Filled.MoreVert, "Opciones de la carpeta ${current.name}") }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { onMenu(false) }, shape = RoundedCornerShape(16.dp)) {
+                        DropdownMenuItem(text = { Text("Nueva subcarpeta") }, leadingIcon = { Icon(Icons.Filled.Add, null) }, onClick = { onMenu(false); onAddSubfolder(current) })
+                        DropdownMenuItem(text = { Text("Mover a…") }, onClick = { onMenu(false); onMove(current) })
+                        DropdownMenuItem(text = { Text("Renombrar") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { onMenu(false); onRename(current) })
+                        DropdownMenuItem(text = { Text("Color") }, onClick = { onMenu(false); onRecolor(current) })
+                        DropdownMenuItem(text = { Text("Eliminar") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { onMenu(false); onDelete(current) })
+                    }
                 }
             }
+        }
+        if (path.isNotEmpty()) {
+            Text(
+                path.joinToString(" › ") { it.name },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
         }
     }
 }

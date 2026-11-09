@@ -11,6 +11,7 @@ data class Folder(
     val name: String,
     val colorArgb: Long = DEFAULT_COLOR,
     val orderKey: Int = 0,
+    val parentId: String? = null,
 ) {
     companion object {
         const val DEFAULT_COLOR = 0xFF607D8BL
@@ -29,20 +30,90 @@ data class FolderCatalog(val folders: List<Folder> = emptyList()) {
     /** Por [Folder.orderKey] y, a igual clave, por id. */
     fun ordered(): List<Folder> = folders.sortedWith(compareBy<Folder>({ it.orderKey }, { it.id }))
 
+    /** Subcarpetas directas de [parentId] (o carpetas raíz si es null), por [Folder.orderKey] e id. */
+    fun children(parentId: String? = null): List<Folder> = ordered().filter { it.parentId == parentId }
+
+    /** En orden de árbol (preorden), ordenando cada nivel por [Folder.orderKey] y luego por id. */
+    fun treeOrder(): List<Folder> {
+        val out = ArrayList<Folder>(folders.size)
+        val seen = HashSet<String>()
+        fun visit(parentId: String?) {
+            for (child in children(parentId)) {
+                if (!seen.add(child.id)) continue
+                out.add(child)
+                visit(child.id)
+            }
+        }
+        visit(null)
+        return out
+    }
+
+    /** Ruta desde la raíz hasta la carpeta [id] (vacía si no existe). */
+    fun path(id: String?): List<Folder> {
+        if (id == null) return emptyList()
+        val byId = folders.associateBy { it.id }
+        val out = ArrayList<Folder>()
+        val seen = HashSet<String>()
+        var cur = byId[id]
+        while (cur != null && seen.add(cur.id)) {
+            out.add(cur)
+            cur = cur.parentId?.let { byId[it] }
+        }
+        out.reverse()
+        return out
+    }
+
+    /** Ids de toda la subárbol de [id], incluida ella misma (vacío si no existe). */
+    fun descendants(id: String): Set<String> {
+        if (this[id] == null) return emptySet()
+        val out = LinkedHashSet<String>()
+        fun visit(cur: String) {
+            if (!out.add(cur)) return
+            for (child in children(cur)) visit(child.id)
+        }
+        visit(id)
+        return out
+    }
+
     operator fun get(id: String?): Folder? = folders.firstOrNull { it.id == id }
 
-    fun add(name: String, colorArgb: Long = Folder.DEFAULT_COLOR, ids: IdGenerator = IdGenerator.RANDOM): Pair<FolderCatalog, Folder> {
-        val folder = Folder(ids.next(), cleanName(name), colorArgb, (folders.maxOfOrNull { it.orderKey } ?: -1) + 1)
+    fun add(
+        name: String,
+        colorArgb: Long = Folder.DEFAULT_COLOR,
+        ids: IdGenerator = IdGenerator.RANDOM,
+        parentId: String? = null,
+    ): Pair<FolderCatalog, Folder> {
+        val validParent = parentId?.takeIf { this[it] != null }
+        if (validParent != null) {
+            require(path(validParent).size < MAX_DEPTH) { "Max folder depth ($MAX_DEPTH) exceeded" }
+        }
+        val folder = Folder(ids.next(), cleanName(name), colorArgb, (folders.maxOfOrNull { it.orderKey } ?: -1) + 1, validParent)
         return FolderCatalog(folders + folder) to folder
+    }
+
+    fun moved(id: String, newParent: String?): FolderCatalog {
+        require(this[id] != null) { "No folder $id" }
+        require(newParent == null || this[newParent] != null) { "No parent folder $newParent" }
+        require(newParent !in descendants(id)) { "Cycle in folder hierarchy" }
+        val parentDepth = if (newParent == null) 0 else path(newParent).size
+        require(parentDepth + subtreeHeight(id) <= MAX_DEPTH) { "Max folder depth ($MAX_DEPTH) exceeded" }
+        return edit(id) { it.copy(parentId = newParent) }
+    }
+
+    private fun subtreeHeight(id: String, seen: Set<String> = emptySet()): Int {
+        if (id in seen) return 0
+        val nextSeen = seen + id
+        val maxChild = children(id).maxOfOrNull { subtreeHeight(it.id, nextSeen) } ?: 0
+        return 1 + maxChild
     }
 
     fun renamed(id: String, name: String): FolderCatalog = edit(id) { it.copy(name = cleanName(name)) }
 
     fun recolored(id: String, colorArgb: Long): FolderCatalog = edit(id) { it.copy(colorArgb = colorArgb) }
 
-    /** Elimina la carpeta solo si ningún cuaderno de [notebookFolders] la usa. */
+    /** Elimina la carpeta solo si no tiene subcarpetas y ningún cuaderno de [notebookFolders] la usa. */
     fun removed(id: String, notebookFolders: Collection<String?>): FolderCatalog {
-        val count = notebookFolders.count { it == id }
+        val count = notebookFolders.count { it == id } + children(id).size
         if (count > 0) throw FolderNotEmptyException(count)
         return FolderCatalog(folders.filter { it.id != id })
     }
@@ -54,6 +125,7 @@ data class FolderCatalog(val folders: List<Folder> = emptyList()) {
 
     companion object {
         const val MAX_NAME = 60
+        const val MAX_DEPTH = 5
 
         fun cleanName(name: String): String = name.trim().take(MAX_NAME).ifEmpty { "Carpeta" }
 
@@ -66,7 +138,20 @@ data class FolderCatalog(val folders: List<Folder> = emptyList()) {
             val file = runCatching { TrazoFormat.json.decodeFromString(FoldersFile.serializer(), text) }.getOrNull()
             if (file == null || file.format != FOLDERS_FORMAT || file.schemaVersion > TrazoFormat.SCHEMA_VERSION) return FolderCatalog()
             // Ids repetidos (archivo editado a mano): queda la primera.
-            return FolderCatalog(file.folders.distinctBy { it.id }.map { it.copy(name = cleanName(it.name)) })
+            val unique = file.folders.distinctBy { it.id }.map { it.copy(name = cleanName(it.name)) }
+            val byId = unique.associateBy { it.id }
+            fun validParent(f: Folder): Boolean {
+                val p = f.parentId ?: return true
+                if (p !in byId) return false
+                val seen = HashSet<String>().apply { add(f.id) }
+                var cur: String? = p
+                while (cur != null) {
+                    if (!seen.add(cur)) return false
+                    cur = byId[cur]?.parentId
+                }
+                return true
+            }
+            return FolderCatalog(unique.map { if (validParent(it)) it else it.copy(parentId = null) })
         }
     }
 }
