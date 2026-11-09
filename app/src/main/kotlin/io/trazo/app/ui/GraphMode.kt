@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -79,8 +81,24 @@ fun GraphDialog(vm: EditorViewModel, darkPaper: Boolean, onDismiss: () -> Unit) 
     val texts = remember { mutableStateListOf<String>().apply { addAll(saved) } }
     var size by remember { mutableStateOf(IntSize.Zero) }
     var view by remember { mutableStateOf<GraphView?>(null) }
-    val compiled = texts.map { FunctionPlot.compile(it) }
+    // Deslizadores: una letra libre («a·x² + b») es un parámetro que se mueve entre -10 y 10.
+    val params = remember { mutableStateMapOf<String, Float>() }
+    val names = texts.flatMap { FunctionPlot.parameters(it) }.distinct()
+    val values = names.associateWith { (params[it] ?: 1f).toDouble() }
+    val compiled = texts.map { FunctionPlot.compile(it, values) }
     val fns = compiled.mapIndexedNotNull { i, c -> (c as? FunctionPlot.Compiled.Ok)?.let { i to it.fn } }
+    var showPoints by rememberSaveable { mutableStateOf(true) }
+    var picked by remember { mutableStateOf<FunctionPlot.Notable?>(null) }
+    val notable = view?.takeIf { showPoints && size.width > 0 }?.let { v ->
+        val a = v.cx - size.width / 2.0 * v.ux
+        val b = v.cx + size.width / 2.0 * v.ux
+        val yLo = v.cy - size.height / 2.0 * v.uy
+        val yHi = v.cy + size.height / 2.0 * v.uy
+        // El índice de la lista compilada → el de la función escrita (para el color).
+        FunctionPlot.notablePoints(fns.map { it.second }, a, b)
+            .filter { it.y in yLo..yHi }
+            .map { it.copy(fn = fns[it.fn].first, other = if (it.other >= 0) fns[it.other].first else -1) }
+    }.orEmpty()
 
     fun sync() { saved.clear(); saved.addAll(texts) }
     fun fit() {
@@ -102,6 +120,9 @@ fun GraphDialog(vm: EditorViewModel, darkPaper: Boolean, onDismiss: () -> Unit) 
             Column(Modifier.fillMaxSize().padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Gráfica", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { showPoints = !showPoints; picked = null }) {
+                        Text(if (showPoints) "Ocultar puntos" else "Puntos notables")
+                    }
                     TextButton(onClick = ::fit) { Text("Ajustar") }
                     TextButton(enabled = fns.isNotEmpty() && size.width > 0, onClick = {
                         val v = view ?: return@TextButton
@@ -131,13 +152,43 @@ fun GraphDialog(vm: EditorViewModel, darkPaper: Boolean, onDismiss: () -> Unit) 
                                 )
                             }
                         }
-                        .pointerInput(texts.joinToString("\n")) { detectTapGestures(onDoubleTap = { fit() }) },
+                        .pointerInput(texts.joinToString("\n"), notable, view) {
+                            detectTapGestures(onDoubleTap = { fit() }, onTap = { o ->
+                                val v = view ?: return@detectTapGestures
+                                val a = v.cx - size.width / 2.0 * v.ux
+                                val yHi = v.cy + size.height / 2.0 * v.uy
+                                // El punto notable más cercano al toque, si está a menos de 28 dp.
+                                val hit = notable.minByOrNull { n ->
+                                    val dx = (n.x - a) / v.ux - o.x
+                                    val dy = (yHi - n.y) / v.uy - o.y
+                                    dx * dx + dy * dy
+                                }?.takeIf { n ->
+                                    val dx = (n.x - a) / v.ux - o.x
+                                    val dy = (yHi - n.y) / v.uy - o.y
+                                    dx * dx + dy * dy <= (28 * density) * (28 * density)
+                                }
+                                picked = if (hit == picked) null else hit
+                            })
+                        },
                 ) {
                     val v = view
                     if (v != null) {
                         Canvas(Modifier.fillMaxSize()) {
                             drawGraph(v, fns.map { (i, f) -> GRAPH_COLORS[i % GRAPH_COLORS.size] to f }, darkPaper)
+                            drawNotable(v, notable, picked, darkPaper)
                         }
+                    }
+                }
+                for (name in names) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        val value = params[name] ?: 1f
+                        Text("$name = ${fmt(value.toDouble())}", fontFamily = FontFamily.Monospace, modifier = Modifier.width(110.dp))
+                        Slider(
+                            value = value,
+                            onValueChange = { params[name] = Math.round(it * 10) / 10f; picked = null },
+                            valueRange = -10f..10f,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
                 LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -166,7 +217,7 @@ fun GraphDialog(vm: EditorViewModel, darkPaper: Boolean, onDismiss: () -> Unit) 
                                 Icon(Icons.Filled.Add, null, Modifier.padding(end = 6.dp)); Text("Agregar función")
                             }
                             Text(
-                                "Ej.: 2x^2 - 3, sin x, e^-x, |x|, sqrt(x), ln x. Doble toque para ajustar.",
+                                "Ej.: 2x^2 - 3, sin x, e^-x, |x|, a·x + b (con deslizadores). Toque un punto para ver sus coordenadas.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.width(360.dp),
@@ -224,7 +275,46 @@ private fun DrawScope.drawGraph(v: GraphView, fns: List<Pair<Color, FunctionPlot
     }
 }
 
+/** Puntos notables como anillos del color de su curva; el elegido lleva su nombre y coordenadas. */
+private fun DrawScope.drawNotable(v: GraphView, points: List<FunctionPlot.Notable>, picked: FunctionPlot.Notable?, dark: Boolean) {
+    if (points.isEmpty()) return
+    val a = v.cx - size.width / 2.0 * v.ux
+    val yHi = v.cy + size.height / 2.0 * v.uy
+    fun at(n: FunctionPlot.Notable) = Offset(((n.x - a) / v.ux).toFloat(), ((yHi - n.y) / v.uy).toFloat())
+    val bg = if (dark) Color(0xFF15171A) else Color.White
+    for (n in points) {
+        val c = GRAPH_COLORS[n.fn % GRAPH_COLORS.size]
+        val r = if (n == picked) 6.dp.toPx() else 4.dp.toPx()
+        drawCircle(bg, r, at(n))
+        drawCircle(c, r, at(n), style = Stroke(2.dp.toPx()))
+    }
+    val p = picked ?: return
+    val kind = when (p.kind) {
+        FunctionPlot.Kind.ROOT -> "Raíz"
+        FunctionPlot.Kind.MIN -> "Mínimo"
+        FunctionPlot.Kind.MAX -> "Máximo"
+        FunctionPlot.Kind.Y_INTERCEPT -> "Corte con y"
+        FunctionPlot.Kind.INTERSECTION -> "Intersección"
+    }
+    val text = "$kind (${fmt(p.x)}; ${fmt(p.y)})"
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = (if (dark) Color.White else Color.Black).toArgb(); textSize = 14.dp.toPx()
+    }
+    val o = at(p)
+    val tw = paint.measureText(text)
+    val pad = 6.dp.toPx()
+    val x = (o.x + 10.dp.toPx()).coerceAtMost(size.width - tw - 2 * pad).coerceAtLeast(0f)
+    val y = (o.y - 12.dp.toPx()).coerceIn(paint.textSize + pad, size.height - pad)
+    drawRoundRect(
+        bg.copy(alpha = 0.9f), Offset(x, y - paint.textSize - pad / 2), androidx.compose.ui.geometry.Size(tw + 2 * pad, paint.textSize + 1.5f * pad),
+        androidx.compose.ui.geometry.CornerRadius(pad),
+    )
+    drawContext.canvas.nativeCanvas.drawText(text, x + pad, y, paint)
+}
+
 private fun fmt(v: Double): String {
+    // Una raíz hallada numéricamente puede dar 1e-13: se muestra 0.
+    if (abs(v) < 1e-9) return "0"
     val r = if (abs(v) >= 1e5 || abs(v) < 1e-3) String.format(java.util.Locale.ROOT, "%.1e", v)
     else String.format(java.util.Locale.ROOT, "%.4f", v).trimEnd('0').trimEnd('.')
     return r.replace('.', ',')
