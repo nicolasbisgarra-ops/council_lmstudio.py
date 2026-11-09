@@ -683,7 +683,7 @@ class InkController(
 
     fun selectAll() {
         if (mode != Mode.NONE) return
-        select(page.strokes.map { it.id } + page.images.map { it.id })
+        select(page.strokes.map { it.id } + page.images.filterNot { it.locked }.map { it.id })
     }
 
     /** Duplica la selección desplazada (dx, dy): ids nuevos; los groupId se reasignan de forma consistente (los que compartían grupo comparten el nuevo); la selección pasa a ser la copia. Un solo StrokeEdit.Kind.INSERT. Devuelve los ids nuevos. */
@@ -838,7 +838,7 @@ class InkController(
         commitShapeEdit()
         val edit = StrokeEdit(
             page.strokes.toList(), emptyList(), StrokeEdit.Kind.CLEAR,
-            removedShapes = page.shapes.toList(), removedImages = page.images.toList(),
+            removedShapes = page.shapes.toList(), removedImages = page.images.filterNot { it.locked },
         )
         if (edit.isEmpty) return
         history.perform(page, edit)
@@ -1227,12 +1227,12 @@ class InkController(
     // ------------------------------------------------------------------ imágenes
 
     /** Imagen de más arriba bajo (x, y), o null. */
-    fun imageAt(x: Float, y: Float): PageImage? = page.images.lastOrNull { it.bounds.contains(x, y) }
+    fun imageAt(x: Float, y: Float): PageImage? = page.images.lastOrNull { !it.locked && it.bounds.contains(x, y) }
 
     /** Imágenes cuyo centro quedó dentro del lazo. */
     private fun lassoImages(): List<String> =
         if (lassoPoints.size < 3) emptyList()
-        else page.images.filter { Lasso.contains(lassoPoints, it.bounds.centerX, it.bounds.centerY) }.map { it.id }
+        else page.images.filter { !it.locked && Lasso.contains(lassoPoints, it.bounds.centerX, it.bounds.centerY) }.map { it.id }
 
     /** Pone una imagen en la hoja (debajo de la tinta), en un paso deshacible; queda seleccionada. */
     fun insertImage(image: PageImage) {

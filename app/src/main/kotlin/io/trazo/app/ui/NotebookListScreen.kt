@@ -3,6 +3,7 @@
 package io.trazo.app.ui
 
 import android.graphics.BitmapFactory
+import android.provider.OpenableColumns
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -90,6 +91,7 @@ import io.trazo.app.trazo
 import io.trazo.core.Folder
 import io.trazo.core.FolderCatalog
 import io.trazo.core.FolderNotEmptyException
+import io.trazo.core.PdfImport
 import io.trazo.core.Notebook
 import io.trazo.core.NoteSearch
 import io.trazo.core.NotebookOrder
@@ -182,6 +184,19 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
         if (uri != null) io("Cuaderno importado", "Archivo no válido") {
             val input = context.contentResolver.openInputStream(uri) ?: error("No se pudo abrir el archivo")
             input.use { repo.importNotebook(it) }
+        }
+    }
+
+    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val folder = filter.takeIf { it != FILTER_ALL && it != FILTER_NONE }
+        Toast.makeText(context, "Importando PDF…", Toast.LENGTH_SHORT).show()
+        io("PDF importado: escribí encima", "No se pudo abrir el PDF") {
+            val fileName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("No se pudo abrir el archivo")
+            // PdfRenderer cierra el descriptor al terminar.
+            repo.importPdf(fd, PdfImport.nameFor(fileName), folder)
         }
     }
 
@@ -309,6 +324,11 @@ fun NotebookListScreen(onOpen: (String, Int?) -> Unit, onPatterns: () -> Unit, o
                                 text = { Text("Importar cuaderno…") },
                                 leadingIcon = { Icon(TrazoIcons.Import, null) },
                                 onClick = { menu = false; importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Importar PDF para anotar…") },
+                                leadingIcon = { Icon(TrazoIcons.Import, null) },
+                                onClick = { menu = false; pdfLauncher.launch(arrayOf("application/pdf")) },
                             )
                             DropdownMenuItem(
                                 text = { Text("Biblioteca de patrones") },

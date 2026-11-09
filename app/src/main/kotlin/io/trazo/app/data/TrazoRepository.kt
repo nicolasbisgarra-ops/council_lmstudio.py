@@ -2,9 +2,12 @@ package io.trazo.app.data
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.pdf.PdfRenderer
 import android.media.ExifInterface
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.AtomicFile
 import io.trazo.core.CoverKind
 import io.trazo.core.Covers
@@ -20,6 +23,7 @@ import io.trazo.core.Paper
 import io.trazo.core.PatternCategory
 import io.trazo.core.PatternLibrary
 import io.trazo.core.PatternUpgrades
+import io.trazo.core.PdfImport
 import io.trazo.core.PresetPatterns
 import io.trazo.core.LazyNotebook
 import io.trazo.core.NotebookOrder
@@ -361,6 +365,36 @@ class TrazoRepository(root: File) {
         Notebook.new(name.ifBlank { "Cuaderno" }).copy(paper = paper, folderId = folderId?.takeIf { folders()[it] != null })
             .also { saveNotebook(it) }
 
+    /**
+     * Cuaderno nuevo con una hoja por página del PDF (hasta [PdfImport.MAX_PAGES]): cada página se dibuja
+     * sobre blanco a [PDF_RENDER_WIDTH] px de ancho y queda como fondo fijo, para escribir encima.
+     */
+    fun importPdf(fd: ParcelFileDescriptor, name: String, folderId: String? = null, onProgress: (Int, Int) -> Unit = { _, _ -> }): Notebook {
+        val rendered = PdfRenderer(fd).use { pdf ->
+            val count = minOf(pdf.pageCount, PdfImport.MAX_PAGES)
+            require(count > 0) { "El PDF no tiene hojas" }
+            (0 until count).map { i ->
+                onProgress(i, count)
+                pdf.openPage(i).use { page ->
+                    val w = PDF_RENDER_WIDTH
+                    // Hojas muy largas: se limita el alto para no quedarse sin memoria.
+                    val h = (w.toLong() * page.height / page.width.coerceAtLeast(1)).toInt().coerceIn(1, PDF_RENDER_WIDTH * 3)
+                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    try {
+                        bmp.eraseColor(Color.WHITE)
+                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        val bytes = ImageImport.encode(bmp) ?: error("La hoja ${i + 1} es demasiado grande")
+                        PdfImport.RenderedPage(storeImage(bytes), w, h)
+                    } finally {
+                        bmp.recycle()
+                    }
+                }
+            }
+        }
+        return PdfImport.notebook(name, rendered).copy(folderId = folderId?.takeIf { folders()[it] != null })
+            .also { saveNotebook(it) }
+    }
+
     fun deleteNotebook(id: String) = synchronized(lock) {
         val cover = loadLazy(id)?.coverImage
         fileFor(id).delete()
@@ -566,6 +600,8 @@ class TrazoRepository(root: File) {
     private fun safe(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
 
     private companion object {
+        /** Ancho en píxeles de cada hoja de un PDF importado: nítido para leer con zoom sin pesar demasiado. */
+        const val PDF_RENDER_WIDTH = 1600
         val IMAGE_NAME = Regex("[0-9a-f]{64}\\.(webp|png)")
     }
 }

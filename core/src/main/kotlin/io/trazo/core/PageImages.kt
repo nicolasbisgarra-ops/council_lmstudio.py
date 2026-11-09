@@ -32,6 +32,8 @@ data class PageImage(
     val preset: ImagePreset = ImagePreset.NONE,
     val source: String? = null,
     val quad: List<Float>? = null,
+    /** Fondo fijo (hoja de un PDF importado): no se selecciona, mueve ni borra al vaciar la hoja. */
+    val locked: Boolean = false,
 ) {
     val bounds: Bounds get() = Bounds(left, top, right, bottom)
 
