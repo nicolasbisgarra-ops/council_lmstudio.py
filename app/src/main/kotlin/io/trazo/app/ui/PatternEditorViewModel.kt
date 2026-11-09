@@ -29,6 +29,8 @@ import io.trazo.core.Tool
 class Pad(strokes: List<InkStroke> = emptyList(), patterns: () -> List<InkPattern> = { emptyList() }, recognize: Boolean = false) {
     val controller = InkController(PageState(strokes), History(), patterns).apply {
         recognitionEnabled = recognize
+        // Un gesto puede ser un garabato: en el editor nunca se tacha para borrar.
+        scratchToErase = false
         width = 3f
     }
     val strokes: List<InkStroke> get() = controller.page.strokes

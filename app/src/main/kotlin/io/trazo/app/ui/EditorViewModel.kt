@@ -195,6 +195,7 @@ class EditorViewModel(
                     aiNote = aiNote?.let { open -> page.ai?.notes?.firstOrNull { it.id == open.id } }
                     aiRevision++
                 }
+                is InkEvent.ScratchErased -> Unit
             }
         }
     }
@@ -210,6 +211,7 @@ class EditorViewModel(
         controller.minInkLengthPx = 12f * density
         controller.handleRadiusPx = 24f * density
         controller.recognitionEnabled = s.gesturesEnabled
+        controller.scratchToErase = s.scratchToErase
         controller.autoAlign = s.autoAlign
         controller.rows = s.rows
         controller.symbolColors = s.symbolColors

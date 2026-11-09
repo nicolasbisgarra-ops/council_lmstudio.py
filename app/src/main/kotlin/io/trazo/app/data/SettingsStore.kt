@@ -60,6 +60,8 @@ data class TrazoSettings(
     val penWidth: Float = 3f,
     val showHoldIndicator: Boolean = true,
     val haptics: Boolean = true,
+    /** Un zigzag apretado encima de lo escrito lo borra. */
+    val scratchToErase: Boolean = true,
     /** Cuando el usuario corrige o enseña un gesto en la hoja, se guarda como ejemplo del patrón. */
     val learnFromCorrections: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
@@ -132,6 +134,7 @@ class SettingsStore(context: Context) {
         penWidth = prefs.getFloat("penWidth", 3f),
         showHoldIndicator = prefs.getBoolean("showHoldIndicator", true),
         haptics = prefs.getBoolean("haptics", true),
+        scratchToErase = prefs.getBoolean("scratchToErase", true),
         learnFromCorrections = prefs.getBoolean("learnFromCorrections", true),
         themeMode = prefs.enum("themeMode", ThemeMode.SYSTEM),
         accent = prefs.getInt("accent", DEFAULT_ACCENT),
@@ -183,6 +186,7 @@ class SettingsStore(context: Context) {
             .putFloat("penWidth", s.penWidth)
             .putBoolean("showHoldIndicator", s.showHoldIndicator)
             .putBoolean("haptics", s.haptics)
+            .putBoolean("scratchToErase", s.scratchToErase)
             .putBoolean("learnFromCorrections", s.learnFromCorrections)
             .putString("themeMode", s.themeMode.name)
             .putInt("accent", s.accent)

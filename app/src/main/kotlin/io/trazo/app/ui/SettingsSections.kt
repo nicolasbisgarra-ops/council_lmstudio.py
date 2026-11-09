@@ -77,7 +77,7 @@ internal fun TrazoSettings.resetSection(section: PreferenceSection): TrazoSettin
         )
         PreferenceSection.MATH -> copy(mathNotes = defaults.mathNotes, mathResultColor = defaults.mathResultColor)
         PreferenceSection.GENERAL -> copy(
-            haptics = defaults.haptics, fingerDraws = defaults.fingerDraws, gesturesEnabled = defaults.gesturesEnabled,
+            haptics = defaults.haptics, scratchToErase = defaults.scratchToErase, fingerDraws = defaults.fingerDraws, gesturesEnabled = defaults.gesturesEnabled,
         )
         // Los perfiles del Modo IA viven en su propio almacén (AiStore).
         PreferenceSection.AI -> this

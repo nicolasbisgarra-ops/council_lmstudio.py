@@ -29,6 +29,8 @@ sealed interface InkEvent {
     data class AiNoteTapped(val note: AiNote) : InkEvent
     /** Cambiaron las marcas del Modo IA ([PageState.ai]) o se mostró u ocultó su capa. */
     data object AiNotesChanged : InkEvent
+    /** Un tachado en zigzag borró [count] trazos ([ScratchOut]); el zigzag no queda como tinta. */
+    data class ScratchErased(val count: Int) : InkEvent
 }
 
 /**
@@ -107,6 +109,8 @@ class InkController(
     /** Herramienta de la goma del lápiz (extremo trasero). */
     var hardwareEraserTool: Tool = Tool.ERASER
     var recognitionEnabled: Boolean = true
+    /** Un zigzag apretado encima de la tinta la borra ([ScratchOut]). */
+    var scratchToErase: Boolean = true
 
     /** Estilo con que se escribe ahora. */
     val style: InkStyle get() = InkStyle(color, width, brush)
@@ -454,7 +458,7 @@ class InkController(
                 val tapToDismiss = tap && dismissedSelection
                 // Tocar un resultado lo explica, sin dejar un punto encima.
                 val explained = tap && !dismissedSelection && tapAt(x, y, wholeLine = false)
-                if (!heldWithoutInk && !tapToDismiss && !explained) {
+                if (!heldWithoutInk && !tapToDismiss && !explained && !scratchErase(stroke)) {
                     history.perform(page, StrokeEdit(emptyList(), listOf(stroke), StrokeEdit.Kind.DRAW))
                     contactHalo?.let { inHalo(it, stroke, timeMs) }
                     emit(InkEvent.PageChanged)
@@ -751,6 +755,25 @@ class InkController(
         val gone = edit.removed.mapTo(HashSet()) { it.id }
         selection = (selection.filter { it !in gone || page.contains(it) } + edit.added.map { it.id }).distinct()
         emit(InkEvent.PageChanged); emit(InkEvent.SelectionChanged)
+        return true
+    }
+
+    /** Si [stroke] es un tachado encima de tinta, borra lo tachado (un solo paso deshacible) y devuelve true. */
+    private fun scratchErase(stroke: InkStroke): Boolean {
+        if (!scratchToErase || contactStyle.brush == Brush.HIGHLIGHTER) return false
+        val unit = 1f / pxPerUnit
+        val targets = ScratchOut.targets(
+            stroke.points, page.strokes,
+            slop = tremorRadiusPx * unit,
+            reach = max(tremorRadiusPx * unit, stroke.width * 2f),
+            minSizePx = ScratchOut.MIN_SIZE_PX * unit,
+        )
+        if (targets.isEmpty()) return false
+        history.perform(page, StrokeEdit(targets, emptyList(), StrokeEdit.Kind.ERASE))
+        if (selection.isNotEmpty()) { selection = selection.filter { page.has(it) }; emit(InkEvent.SelectionChanged) }
+        refreshCalcs(emptyList())
+        emit(InkEvent.ScratchErased(targets.size))
+        emit(InkEvent.PageChanged)
         return true
     }
 

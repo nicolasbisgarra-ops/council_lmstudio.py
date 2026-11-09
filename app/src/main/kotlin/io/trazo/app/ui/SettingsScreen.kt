@@ -383,6 +383,7 @@ private fun SettingsPage(
         PreferenceSection.SYNC -> SyncSettingsPage()
         PreferenceSection.GENERAL -> PrefCard("General") {
             SwitchRow("Vibrar al reemplazar un gesto", s.haptics, { on -> update { it.copy(haptics = on) } })
+            SwitchRow("Tachar para borrar", s.scratchToErase, { on -> update { it.copy(scratchToErase = on) } }, subtitle = "Un zigzag apretado encima de lo escrito lo borra (se deshace con deshacer).")
             SwitchRow(
                 "Escribir también con el dedo", s.fingerDraws, { on -> update { it.copy(fingerDraws = on) } },
                 subtitle = "Si está activo, el dedo deja de desplazar la hoja (usá dos dedos o la mano de la barra).",
