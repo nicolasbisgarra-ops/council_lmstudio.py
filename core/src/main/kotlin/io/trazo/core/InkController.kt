@@ -460,8 +460,10 @@ class InkController(
             Mode.DRAW -> {
                 penMoveIfMoved(x, y, pressure, timeMs)
                 dwell.up()
-                val stroke = currentStroke()
                 val onRuler = rulerTarget != null
+                val stroke = currentStroke().let {
+                    if (contactStyle.brush == Brush.HIGHLIGHTER && !onRuler) HighlighterLine.straighten(it) else it
+                }
                 val tiny = lengthUnits * pxPerUnit < minInkLengthPx / 4f
                 val heldWithoutInk = tiny && timeMs - downTime >= holdMillis
                 val tap = tiny && timeMs - downTime < TAP_MS
