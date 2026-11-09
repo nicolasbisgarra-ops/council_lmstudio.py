@@ -95,4 +95,46 @@ class HandwriteTest {
             }
         }
     }
+
+    private fun mine(id: String, name: String, vararg pts: Pair<Float, Float>): InkPattern {
+        val ink = listOf(InkStroke(id, pts.map { (x, y) -> InkPoint(x, y) }))
+        return InkPattern(id, name, listOf(ink), ink)
+    }
+
+    private fun text(s: String, p: List<InkPattern> = patterns) = write(p, MathNotes.Explanation(page.bounds(), listOf(s)))
+
+    @Test fun `usa la mayuscula que dibujo el usuario`() {
+        val a = mine("mi-A", "A", 0f to 100f, 25f to 0f, 50f to 100f)
+        assertNotEquals(text("A").map { it.points }, text("A", patterns + a).map { it.points })
+        assertEquals(1, text("A", patterns + a).size)
+    }
+
+    @Test fun `dos letras a del usuario se van turnando`() {
+        val a1 = mine("mi-a1", "a", 0f to 0f, 0f to 50f, 40f to 50f)
+        val a2 = mine("mi-a2", "a", 0f to 0f, 40f to 25f, 0f to 50f, 40f to 50f)
+        // Puede haber otra «a» de fábrica en la lista: con tres letras salen las dos del usuario.
+        val counts = text("aaa", patterns + a1 + a2).map { it.points.size }
+        assertTrue("$counts", counts.containsAll(listOf(3, 4)))
+    }
+
+    @Test fun `los simbolos nuevos tienen trazos`() {
+        for (c in "∫∂∇∈∪∩⊂∅∀∃∴∠⊥∥≡∝←↔⇔↑↓ρηκνξψχζΩΠΦΘΛΓ~&@\$€§'") {
+            assertTrue("$c", c in HandFont.glyphs)
+            assertTrue("$c", text(c.toString()).isNotEmpty())
+        }
+    }
+
+    @Test fun `los alias se escriben como su caracter`() {
+        // El temblor depende del texto, así que se compara la forma: misma cantidad de trazos y puntos.
+        fun shape(s: String) = text(s).map { it.points.size }
+        assertEquals(shape("Σ"), shape("∑"))
+        assertEquals(shape("Ω"), shape("\u2126"))
+        assertEquals(shape("'"), shape("’"))
+    }
+
+    @Test fun `el renglon no se va para arriba ni para abajo`() {
+        val out = text(List(40) { "o" }.joinToString(""))
+        val tops = out.groupBy { it.groupId }.values.first().sortedBy { listOf(it).bounds().left }.map { listOf(it).bounds().centerY }
+        assertTrue(tops.max() - tops.min() < 40f)
+    }
 }

@@ -1179,11 +1179,19 @@ object MathNotes {
 
         private fun pattern(name: String): InkPattern? = user[name]?.takeIf { it.outputInk.isNotEmpty() } ?: presets[name]
 
-        /** La letra como la escribió el usuario en este renglón; si no está, su patrón. */
-        private fun letter(l: String, row: List<Glyph>): InkPattern? =
-            row.firstNotNullOfOrNull { g ->
+        /** Todos los patrones del usuario para cada letra: si dibujó dos «a», se van turnando al escribir. */
+        private val variants: Map<String, List<InkPattern>> =
+            patterns.filter { it.enabled && it.outputInk.isNotEmpty() && !PresetPatterns.isSign(it) && !it.id.startsWith(PresetPatterns.PREFIX) }
+                .mapNotNull { p -> letterOf(p)?.let { it to p } }.groupBy({ it.first }, { it.second })
+
+        /** La letra como la escribió el usuario en este renglón; si no está, su patrón ([n]: cuántas van). */
+        private fun letter(l: String, row: List<Glyph>, n: Int = 0): InkPattern? {
+            val inRow = row.mapNotNull { g ->
                 byId[g.strokes.first().patternId]?.takeIf { it.outputInk.isNotEmpty() && letterOf(it) == l }
-            } ?: letters[l]
+            }
+            val all = (inRow + variants[l].orEmpty()).distinctBy { it.id }
+            return all.getOrNull(n % maxOf(1, all.size)) ?: letters[l]
+        }
 
         /** «=» después de la cuenta, con su estilo; null si no hay patrón de igual. */
         fun equals(row: List<Glyph>): List<InkStroke>? {
@@ -1438,10 +1446,14 @@ object MathNotes {
                 run.clear()
             }
             fun own(p: InkPattern?) = p?.takeIf { it.outputInk.isNotEmpty() && !it.id.startsWith(PresetPatterns.PREFIX) }
+            val seen = HashMap<Char, Int>()
             for (c in text) {
+                val nth = seen.merge(c, 1, Int::plus)!! - 1
                 val mine = when {
                     c in '0'..'9' -> own(user[c.toString()])?.let { glyph(it, x, baseline - h / 2f, h, style, group) }
-                    c in 'a'..'z' -> own(letter(c.toString(), row))?.let { p ->
+                    // Mayúsculas (también griegas): del alto de las cifras.
+                    c.isUpperCase() -> own(letter(c.toString(), row, nth))?.let { glyph(it, x, baseline - h / 2f, h, style, group) }
+                    c.isLowerCase() && c != 'π' -> own(letter(c.toString(), row, nth))?.let { p ->
                         val floor = AutoAlign.floor(p)
                         val size = h * 0.8f / floor
                         glyph(p, x, baseline - size * floor + size / 2f, size, style, group)
