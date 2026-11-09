@@ -619,6 +619,13 @@ private fun EditorMenu(vm: EditorViewModel, actions: EditorActions, buttonSize: 
             item("Borrar toda la página", TrazoIcons.Eraser, !vm.pageIsEmpty, actions.onClearPage)()
             item("Ajustar a la página", TrazoIcons.Fit, action = vm::fitToPage)()
             item("Modo gráfica", null, action = actions.onGraph)()
+            val rk = vm.rulerKind
+            item(if (rk == io.trazo.core.Ruler.Kind.RULER) "Quitar regla" else "Regla", null) {
+                vm.toggleRuler(io.trazo.core.Ruler.Kind.RULER)
+            }()
+            item(if (rk == io.trazo.core.Ruler.Kind.PROTRACTOR) "Quitar transportador" else "Transportador", null) {
+                vm.toggleRuler(io.trazo.core.Ruler.Kind.PROTRACTOR)
+            }()
             HorizontalDivider()
             item("Exportar cuaderno como PDF…", TrazoIcons.Export, action = actions.onPdf)()
             item("Exportar página como PNG…", TrazoIcons.Export, action = actions.onPng)()

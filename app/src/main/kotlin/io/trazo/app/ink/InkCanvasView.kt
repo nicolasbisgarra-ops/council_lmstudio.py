@@ -27,6 +27,7 @@ import io.trazo.core.InkStroke
 import io.trazo.core.Notebook
 import io.trazo.core.Paper
 import io.trazo.core.PointerKind
+import io.trazo.core.Ruler
 import io.trazo.core.Tool
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -77,6 +78,7 @@ class InkCanvasView @JvmOverloads constructor(
             if (field === value) return
             field?.removeListener(listener)
             field = value
+            value?.rulerSnapPx = RULER_SNAP_DP * density
             if (isAttachedToWindow) value?.addListener(listener)
             invalidateContent()
         }
@@ -91,6 +93,58 @@ class InkCanvasView @JvmOverloads constructor(
      */
     var onFloorDrag: ((Float) -> Unit)? = null
     private var draggingFloor = false
+
+    /** Regla o transportador sobre la hoja (vive en el controlador); se avisa al soltarla para guardar la posición. */
+    var onRulerMoved: ((Ruler) -> Unit)? = null
+    private var draggingRuler = false
+    private val rulerLast = HashMap<Int, Pair<Float, Float>>()
+
+    private fun rulerPointers(event: MotionEvent, skip: Int = -1): Map<Int, Pair<Float, Float>> =
+        (0 until event.pointerCount).filter { it != skip }.take(2)
+            .associate { event.getPointerId(it) to screenToDocument(event.getX(it), event.getY(it)) }
+
+    /** Dedos sobre la regla: uno la mueve, dos la mueven y la giran. Devuelve true si se ocupó del evento. */
+    private fun handleRuler(c: InkController, event: MotionEvent, action: Int): Boolean {
+        val r = c.ruler ?: run { draggingRuler = false; return false }
+        val index = event.actionIndex
+        if (!draggingRuler) {
+            if (action != MotionEvent.ACTION_DOWN || event.getToolType(index) != MotionEvent.TOOL_TYPE_FINGER) return false
+            val (x, y) = screenToDocument(event.getX(index), event.getY(index))
+            if (!r.contains(x, y, RULER_SLOP_DP * density / pxPerUnit)) return false
+            cancelContact(); navigating = false
+            draggingRuler = true
+            rulerLast.clear(); rulerLast.putAll(rulerPointers(event))
+            parent?.requestDisallowInterceptTouchEvent(true)
+            invalidate()
+            return true
+        }
+        when (action) {
+            MotionEvent.ACTION_POINTER_DOWN -> { rulerLast.clear(); rulerLast.putAll(rulerPointers(event)) }
+            MotionEvent.ACTION_POINTER_UP -> { rulerLast.clear(); rulerLast.putAll(rulerPointers(event, skip = index)) }
+            MotionEvent.ACTION_MOVE -> {
+                val now = rulerPointers(event)
+                val ids = rulerLast.keys.filter { it in now }
+                c.ruler = if (ids.size >= 2) {
+                    val (a0, b0) = rulerLast.getValue(ids[0]) to rulerLast.getValue(ids[1])
+                    val (a1, b1) = now.getValue(ids[0]) to now.getValue(ids[1])
+                    r.transformed(a0.first, a0.second, b0.first, b0.second, a1.first, a1.second, b1.first, b1.second)
+                } else if (ids.size == 1) {
+                    val a0 = rulerLast.getValue(ids[0]); val a1 = now.getValue(ids[0])
+                    r.moved(a1.first - a0.first, a1.second - a0.second)
+                } else r
+                rulerLast.clear(); rulerLast.putAll(now)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                draggingRuler = false
+                rulerLast.clear()
+                val settled = r.settled()
+                c.ruler = settled
+                onRulerMoved?.invoke(settled)
+            }
+        }
+        invalidate()
+        return true
+    }
 
     private fun onFloorGrip(x: Float, y: Float): Boolean {
         val g = floorGuide ?: return false
@@ -600,6 +654,7 @@ class InkCanvasView @JvmOverloads constructor(
             invalidate()
             return true
         }
+        if (handleRuler(c, event, action)) return true
         if (isStylus(event.getToolType(index)) &&
             (spenButton || (event.buttonState and STYLUS_BUTTONS) != 0)
         ) {
@@ -814,6 +869,61 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
+    private val rulerFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val rulerLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val rulerText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val rulerRect = RectF()
+
+    /** Dibuja la regla o el transportador en coordenadas de la hoja (el lienzo ya tiene [docToScreen]). */
+    private fun drawRuler(canvas: Canvas, r: Ruler) {
+        val ink = if (paperColors.dark) Color.WHITE else Color.rgb(40, 40, 48)
+        rulerFill.color = withAlpha(accentColor, if (draggingRuler) 70 else 45)
+        rulerLine.color = withAlpha(ink, 190)
+        rulerLine.strokeWidth = 1f * density / pxPerUnit
+        rulerText.color = withAlpha(ink, 210)
+        rulerText.textSize = 10f * density / pxPerUnit
+        canvas.save()
+        canvas.translate(r.cx, r.cy)
+        canvas.rotate(Math.toDegrees(r.angle.toDouble()).toFloat())
+        // Una hoja mide 1000 unidades de ancho ≈ 21 cm: marcas cada milímetro.
+        val mm = Notebook.PAGE_WIDTH / 210f
+        when (r.kind) {
+            Ruler.Kind.RULER -> {
+                val h = r.thickness / 2; val half = r.length / 2
+                rulerRect.set(-half, -h, half, h)
+                canvas.drawRect(rulerRect, rulerFill)
+                canvas.drawRect(rulerRect, rulerLine)
+                val count = (r.length / mm).toInt()
+                for (i in 0..count) {
+                    val x = -half + i * mm
+                    val tick = when { i % 10 == 0 -> 3f; i % 5 == 0 -> 2f; else -> 1.2f } * mm
+                    canvas.drawLine(x, -h, x, -h + tick, rulerLine)
+                    canvas.drawLine(x, h, x, h - tick, rulerLine)
+                    if (i % 10 == 0 && i > 0 && i < count) canvas.drawText((i / 10).toString(), x, -h + 3f * mm + rulerText.textSize, rulerText)
+                }
+                canvas.drawText(String.format(java.util.Locale.ROOT, "%.0f°", r.degrees), 0f, h - 3.5f * mm, rulerText)
+            }
+            Ruler.Kind.PROTRACTOR -> {
+                val rad = r.radius
+                rulerRect.set(-rad, -rad, rad, rad)
+                canvas.drawArc(rulerRect, 180f, 180f, true, rulerFill)
+                canvas.drawArc(rulerRect, 180f, 180f, true, rulerLine)
+                for (d in 0..180) {
+                    val t = Math.toRadians(d.toDouble())
+                    val ux = kotlin.math.cos(t).toFloat(); val uy = -kotlin.math.sin(t).toFloat()
+                    val tick = when { d % 10 == 0 -> 5f; d % 5 == 0 -> 3f; else -> 1.5f } * mm
+                    canvas.drawLine(ux * rad, uy * rad, ux * (rad - tick), uy * (rad - tick), rulerLine)
+                    if (d % 30 == 0) {
+                        val lr = rad - 5f * mm - rulerText.textSize
+                        canvas.drawText(d.toString(), ux * lr, uy * lr + rulerText.textSize / 3f, rulerText)
+                    }
+                }
+                canvas.drawCircle(0f, 0f, 1.5f * mm, rulerLine)
+            }
+        }
+        canvas.restore()
+    }
+
     private fun drawContent(canvas: Canvas) {
         val c = controller
         canvas.drawColor(deskColor)
@@ -873,6 +983,7 @@ class InkCanvasView @JvmOverloads constructor(
                 canvas.drawCircle(h.at.x, h.at.y, r, lassoPaint)
             }
         }
+        c.ruler?.let { drawRuler(canvas, it) }
         canvas.restore()
 
         // Contorno de la goma: mientras borra y mientras el lápiz se acerca con una herramienta de borrar.
@@ -1060,6 +1171,8 @@ class InkCanvasView @JvmOverloads constructor(
         private const val LASSO_HOLD_MS = 550L
         /** Acciones del S Pen con el botón apretado en Galaxy antiguos (fuera del SDK). */
         private const val FLOOR_GRIP_DP = 24f
+        private const val RULER_SLOP_DP = 8f
+        private const val RULER_SNAP_DP = 14f
         private const val SPEN_ACTION_DOWN = 211
         private const val SPEN_ACTION_UP = 212
         private const val SPEN_ACTION_MOVE = 213

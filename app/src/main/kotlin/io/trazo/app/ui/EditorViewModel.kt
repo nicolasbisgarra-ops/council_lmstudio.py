@@ -482,6 +482,20 @@ class EditorViewModel(
         return (x - viewport.tx) / vpScale to (y - viewport.ty) / vpScale
     }
 
+    /** Regla o transportador que flota sobre la hoja (null si no hay). */
+    var rulerKind by mutableStateOf<io.trazo.core.Ruler.Kind?>(null)
+        private set
+
+    /** Pone la herramienta en el centro de la vista, o la quita si ya estaba. */
+    fun toggleRuler(kind: io.trazo.core.Ruler.Kind) {
+        if (controller.ruler?.kind == kind) {
+            controller.ruler = null; rulerKind = null
+        } else {
+            val (cx, cy) = viewCenter()
+            controller.ruler = io.trazo.core.Ruler(kind, cx, cy); rulerKind = kind
+        }
+    }
+
     private fun storeImage(bmp: android.graphics.Bitmap): String {
         val bytes = io.trazo.app.data.ImageImport.encode(bmp) ?: error("La imagen es demasiado grande")
         return repo.storeImage(bytes).also { io.trazo.app.image.ImagePainter.stored(it) }

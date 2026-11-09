@@ -333,6 +333,12 @@ class InkController(
         else -> tool
     }
 
+    /** Regla o transportador sobre la hoja (null: no hay). La pluma apoyada cerca de un borde se pega a él. */
+    var ruler: Ruler? = null
+    /** Distancia en píxeles a la que la pluma se pega a la regla. */
+    var rulerSnapPx = 24f
+    private var rulerTarget: Ruler.Target? = null
+
     fun penDown(x: Float, y: Float, pressure: Float, timeMs: Long, kind: PointerKind, pxPerUnit: Float = 1f) {
         if (mode != Mode.NONE) cancel()
         this.pxPerUnit = max(pxPerUnit, 1e-3f)
@@ -377,6 +383,8 @@ class InkController(
                 mode = Mode.DRAW
                 currentId = ids.next()
                 points.clear(); lengthUnits = 0f
+                rulerTarget = ruler?.snapTarget(x, y, rulerSnapPx / this.pxPerUnit)
+                val (x, y) = snapped(x, y)
                 points += InkPoint(x, y, normalizePressure(pressure, kind), 0L)
                 dwell.durationMs = holdMillis
                 dwell.radius = tremorRadiusPx / this.pxPerUnit
@@ -423,6 +431,7 @@ class InkController(
     fun penMove(x: Float, y: Float, pressure: Float, timeMs: Long) {
         when (mode) {
             Mode.DRAW -> {
+                val (x, y) = snapped(x, y)
                 val last = points.last()
                 val p = InkPoint(x, y, normalizePressure(pressure, kind), (timeMs - downTime).coerceAtLeast(last.timeMs))
                 lengthUnits += dist(last, p)
@@ -452,13 +461,14 @@ class InkController(
                 penMoveIfMoved(x, y, pressure, timeMs)
                 dwell.up()
                 val stroke = currentStroke()
+                val onRuler = rulerTarget != null
                 val tiny = lengthUnits * pxPerUnit < minInkLengthPx / 4f
                 val heldWithoutInk = tiny && timeMs - downTime >= holdMillis
                 val tap = tiny && timeMs - downTime < TAP_MS
                 val tapToDismiss = tap && dismissedSelection
                 // Tocar un resultado lo explica, sin dejar un punto encima.
                 val explained = tap && !dismissedSelection && tapAt(x, y, wholeLine = false)
-                if (!heldWithoutInk && !tapToDismiss && !explained && !scratchErase(stroke)) {
+                if (!heldWithoutInk && !tapToDismiss && !explained && (onRuler || !scratchErase(stroke))) {
                     history.perform(page, StrokeEdit(emptyList(), listOf(stroke), StrokeEdit.Kind.DRAW))
                     contactHalo?.let { inHalo(it, stroke, timeMs) }
                     emit(InkEvent.PageChanged)
@@ -570,7 +580,7 @@ class InkController(
      * @return true si conviene redibujar (indicador de pausa o conversión).
      */
     fun tick(nowMs: Long): Boolean {
-        if (mode != Mode.DRAW || !recognitionEnabled || contactStyle.brush == Brush.HIGHLIGHTER) return false
+        if (mode != Mode.DRAW || !recognitionEnabled || contactStyle.brush == Brush.HIGHLIGHTER || rulerTarget != null) return false
         val pats = patterns().filter { it.enabled }
         val minHold = minOf(holdMillis, pats.minOfOrNull { it.holdMillis ?: holdMillis } ?: holdMillis)
         if (!dwell.isStill(nowMs, minHold, lengthUnits)) return dwell.isTouching
@@ -1147,7 +1157,14 @@ class InkController(
 
     private fun penMoveIfMoved(x: Float, y: Float, pressure: Float, timeMs: Long) {
         val last = points.last()
-        if (last.x != x || last.y != y) penMove(x, y, pressure, timeMs)
+        val (sx, sy) = snapped(x, y)
+        if (last.x != sx || last.y != sy) penMove(x, y, pressure, timeMs)
+    }
+
+    /** (x, y) pegado al borde de la regla que tomó este trazo, o tal cual si no tomó ninguno. */
+    private fun snapped(x: Float, y: Float): Pair<Float, Float> {
+        val r = ruler; val t = rulerTarget
+        return if (r != null && t != null) r.project(t, x, y) else x to y
     }
 
     private fun eraseAt(x: Float, y: Float) {
@@ -1254,6 +1271,7 @@ class InkController(
 
     private fun resetContact() {
         mode = Mode.NONE
+        rulerTarget = null
         points.clear()
         lengthUnits = 0f
         pendingConvert = null

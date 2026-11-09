@@ -439,6 +439,8 @@ fun EditorScreen(
                                 v.hapticsEnabled = settings.haptics
                                 v.paperColors = paper
                                 v.accentColor = accent
+                                vm.rulerKind // al poner o quitar la regla
+                                v.invalidate()
                             },
                             modifier = Modifier.fillMaxSize().clipToBounds(),
                         )
