@@ -89,8 +89,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import io.trazo.app.sync.ReviewWebServer
 import io.trazo.app.sync.localAddresses
-import io.trazo.core.share.ReviewWebServer
 import io.trazo.core.share.SharedMessage
 import io.trazo.core.share.SharedNote
 import io.trazo.core.share.SharedReview

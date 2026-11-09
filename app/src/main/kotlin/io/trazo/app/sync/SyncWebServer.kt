@@ -1,5 +1,7 @@
-package io.trazo.core.share
+package io.trazo.app.sync
 
+import io.trazo.core.share.ReviewWebPage
+import io.trazo.core.share.SharedReview
 import io.trazo.core.sync.SyncAddresses
 import java.io.ByteArrayOutputStream
 import java.io.InputStream

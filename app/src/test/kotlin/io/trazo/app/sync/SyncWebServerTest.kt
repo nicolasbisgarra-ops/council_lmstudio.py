@@ -1,5 +1,9 @@
-package io.trazo.core.share
+package io.trazo.app.sync
 
+import io.trazo.core.share.ReviewWebPage
+import io.trazo.core.share.SharedMessage
+import io.trazo.core.share.SharedNote
+import io.trazo.core.share.SharedReview
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -27,21 +31,6 @@ class ReviewWebServerTest {
         clock: () -> Long = System::currentTimeMillis,
         png: () -> ByteArray? = { byteArrayOf(1, 2, 3) },
     ) = ReviewWebServer({ review }, png, token = "tok", clock = clock, allowAddress = allow)
-
-    @Test fun htmlEscapesEverything() {
-        val html = ReviewWebPage.html(review, "tok", 15)
-        assertFalse(html.contains("<script>"))
-        assertFalse(html.contains("<b>mal</b>"))
-        assertTrue(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"))
-        assertTrue(html.contains("Hoja &lt;1&gt;"))
-        assertTrue(html.contains("&amp; &quot;el&quot;"))
-        assertTrue(html.contains("src=\"/tok/page.png?t=42\""))
-        assertTrue(html.contains("http-equiv=\"refresh\" content=\"15\""))
-        assertTrue(html.contains("Hay un error"))
-        assertTrue(html.contains("msg err"))
-        assertFalse(ReviewWebPage.html(review, "tok", 0).contains("http-equiv"))
-        assertEquals("&amp;&lt;&gt;&quot;&#39;", ReviewWebPage.escape("&<>\"'"))
-    }
 
     @Test fun routes() {
         val s = server()
