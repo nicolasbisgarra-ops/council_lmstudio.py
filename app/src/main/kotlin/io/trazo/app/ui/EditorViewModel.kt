@@ -31,6 +31,7 @@ import io.trazo.ai.ReviewScope
 import io.trazo.ai.ReviewTicket
 import io.trazo.ai.MarkKind
 import io.trazo.ai.AiTutor
+import io.trazo.ai.ImageQuality
 import io.trazo.ai.AiTutorPrompt
 import io.trazo.ai.TutorRole
 import io.trazo.ai.TutorTurn
@@ -90,6 +91,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import io.trazo.app.sync.SyncWebHost
+import io.trazo.app.sync.WebAi
+import io.trazo.app.sync.WebAiProfile
 import io.trazo.app.sync.SyncWebServer
 import io.trazo.core.share.SharedMessage
 import io.trazo.core.share.SharedNote
@@ -1395,6 +1398,33 @@ class EditorViewModel(
     /** Lo que la web de revisión ve y puede pedir de la hoja abierta. */
     private val webHost = object : SyncWebHost {
         override fun review(): SharedReview = onMain { sharedReview() }
+
+        override fun ai(): WebAi? = onMain {
+            if (!webAllowed()) return@onMain null
+            val s = app.trazo.ai.settings.value
+            WebAi(
+                profiles = s.profiles.map { WebAiProfile(it.id, it.name, it.provider.label, it.model, it.problem == null) },
+                current = s.current?.id,
+                quality = (s.current?.imageQuality ?: ImageQuality.MEDIUM).name.lowercase(),
+                qualities = ImageQuality.values().map { it.name.lowercase() to it.label },
+            )
+        }
+
+        override fun chooseAi(profileId: String?, quality: String?): String? = onMain {
+            if (!webAllowed()) return@onMain EXAM_WEB
+            val store = app.trazo.ai
+            val level = quality?.let { key -> ImageQuality.values().firstOrNull { it.name.equals(key, ignoreCase = true) } }
+            if (quality != null && level == null) return@onMain "Esa calidad no existe."
+            if (profileId != null) {
+                if (store.settings.value.profiles.none { it.id == profileId }) return@onMain "Ese modelo ya no existe."
+                store.select(profileId)
+            }
+            if (level != null) {
+                val current = store.settings.value.current ?: return@onMain "No hay un modelo elegido."
+                store.save(current.copy(imageQuality = level))
+            }
+            null
+        }
 
         override fun pagePng(): ByteArray? {
             val (page, paper, results) = onMain {

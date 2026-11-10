@@ -342,4 +342,5 @@ button:disabled { cursor: default; }
 .choices { display: flex; flex-wrap: wrap; gap: 6px; }
 .choice { border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 999px; padding: 6px 12px; font-size: .9em; }
 .choice[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.choice:disabled { opacity: .45; }
 .look .fine { margin-top: 14px; }

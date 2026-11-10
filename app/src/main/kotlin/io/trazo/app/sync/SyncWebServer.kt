@@ -21,14 +21,28 @@ import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+
+/** Un modelo de IA visto desde la web: sin claves ni direcciones. [ready] = ya se puede usar tal cual. */
+data class WebAiProfile(val id: String, val name: String, val provider: String, val model: String, val ready: Boolean)
+
+/** Lo que la web muestra para elegir: los modelos, cuál se usa y la calidad de la foto que se le manda. */
+data class WebAi(val profiles: List<WebAiProfile>, val current: String?, val quality: String, val qualities: List<Pair<String, String>>)
 
 /** Lo que la hoja abierta le ofrece a la web. Las llamadas llegan desde los hilos del servidor. */
 interface SyncWebHost {
     fun review(): SharedReview
+
+    /** Los modelos que se pueden elegir desde la web; null si no están disponibles ahora. */
+    fun ai(): WebAi? = null
+
+    /** Elige el modelo por [profileId] y/o la calidad de la foto ([quality]: low, medium o high). Devuelve null si salió, o por qué no. */
+    fun chooseAi(profileId: String?, quality: String?): String? = "Los modelos no están disponibles."
 
     /** La hoja con las marcas de la IA, como PNG; null si no hay hoja. */
     fun pagePng(): ByteArray?
@@ -199,6 +213,7 @@ class SyncWebServer(
                 "/api/pair" -> pair(req)
                 "/api/chat" -> authorized(req) { chat(req) }
                 "/api/review" -> authorized(req) { review(req) }
+                "/api/ai" -> authorized(req) { aiChoose(req) }
                 "/api/unpair" -> authorized(req) { device ->
                     access.forget(device.id)
                     json(200, OK, listOf("Set-Cookie" to "${WebAccess.COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"))
@@ -209,6 +224,7 @@ class SyncWebServer(
         return when {
             path == "/api/state" -> authorized(req) { state(req) }
             path == "/api/page.png" -> authorized(req) { pagePng() }
+            path == "/api/ai" -> authorized(req) { aiState() }
             path.startsWith("/api/image/") -> authorized(req) { image(path.removePrefix("/api/image/")) }
             path.startsWith("/api/") -> notFound()
             else -> static(req)
@@ -314,6 +330,41 @@ class SyncWebServer(
         val fresh = (body(req)?.get("fresh") as? JsonPrimitive)?.booleanOrNull ?: false
         val h = host() ?: return json(409, fail(NO_SHEET))
         val problem = runCatching { h.restart(fresh) }.getOrElse { "No se pudo pedir la revisión." }
+        return if (problem == null) json(200, OK) else json(409, fail(problem))
+    }
+
+    // ------------------------------------------------------------------ el modelo de IA
+
+    private fun aiState(): Response {
+        val h = host() ?: return json(409, fail(NO_SHEET))
+        val ai = try {
+            h.ai()
+        } catch (_: Throwable) {
+            return json(503, fail("Trazo está ocupado."))
+        } ?: return json(409, fail(AI_UNAVAILABLE))
+        return json(
+            200,
+            buildJsonObject {
+                put("ok", true)
+                put("current", ai.current)
+                put("quality", ai.quality)
+                putJsonArray("profiles") {
+                    ai.profiles.forEach { p ->
+                        addJsonObject { put("id", p.id); put("name", p.name); put("provider", p.provider); put("model", p.model); put("ready", p.ready) }
+                    }
+                }
+                putJsonArray("qualities") { ai.qualities.forEach { (key, label) -> addJsonObject { put("key", key); put("label", label) } } }
+            }.toString(),
+        )
+    }
+
+    private fun aiChoose(req: Request): Response {
+        val o = body(req) ?: return json(400, fail("No se entendió el pedido."))
+        val profile = (o["profile"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.take(80)
+        val quality = (o["quality"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.take(20)
+        if (profile == null && quality == null) return json(400, fail("Elegí un modelo o una calidad."))
+        val h = host() ?: return json(409, fail(NO_SHEET))
+        val problem = runCatching { h.chooseAi(profile, quality) }.getOrElse { "No se pudo cambiar el modelo." }
         return if (problem == null) json(200, OK) else json(409, fail(problem))
     }
 
@@ -427,6 +478,7 @@ class SyncWebServer(
         /** El puerto de siempre, para que la dirección no cambie entre un día y otro. */
         const val DEFAULT_PORT = 8787
         const val NO_SHEET = "Abrí una hoja en Trazo para verla acá."
+        const val AI_UNAVAILABLE = "Los modelos no están disponibles ahora."
         private const val MAX_LINE = 4096
         private const val MAX_HEAD = 16384
         private const val MAX_HEADERS = 60

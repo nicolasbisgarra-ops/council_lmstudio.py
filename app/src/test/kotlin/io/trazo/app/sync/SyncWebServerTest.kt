@@ -30,6 +30,13 @@ class SyncWebServerTest {
         var restarts = ArrayList<Boolean>()
         var problem: String? = null
         var broken = false
+        var models: WebAi? = WebAi(
+            listOf(WebAiProfile("a", "Claude", "Claude (Anthropic)", "m1", true), WebAiProfile("b", "Local", "LM Studio", "", false)),
+            "a", "medium", listOf("low" to "Baja", "medium" to "Media", "high" to "Alta"),
+        )
+        var picked: Pair<String?, String?>? = null
+        override fun ai(): WebAi? = models
+        override fun chooseAi(profileId: String?, quality: String?): String? { if (problem == null) picked = profileId to quality; return problem }
         override fun review(): SharedReview = if (broken) error("ocupado") else review
         override fun pagePng(): ByteArray? { renders++; return png }
         override fun chatImage(name: String): ByteArray? = if (name == "foto.jpg") byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1) else null
@@ -226,6 +233,26 @@ class SyncWebServerTest {
         assertEquals(200, post("/api/review", "{\"fresh\":true}", cookie).code)
         assertEquals(200, post("/api/review", "{}", cookie).code)
         assertEquals(listOf(true, false), host!!.restarts)
+    }
+
+    @Test fun choosesTheModelFromTheWeb() {
+        val cookie = link()
+        assertEquals(401, get("/api/ai").code)
+        assertEquals(401, post("/api/ai", "{\"profile\":\"b\"}").code)
+        val state = get("/api/ai", cookie)
+        assertEquals(200, state.code)
+        assertTrue(state.text, state.text.contains("\"current\":\"a\"") && state.text.contains("\"ready\":false") && state.text.contains("\"key\":\"high\""))
+        assertEquals(200, post("/api/ai", "{\"profile\":\"b\",\"quality\":\"high\"}", cookie).code)
+        assertEquals("b" to "high", host!!.picked)
+        assertEquals(200, post("/api/ai", "{\"quality\":\"low\"}", cookie).code)
+        assertEquals(null to "low", host!!.picked)
+        assertEquals(400, post("/api/ai", "{}", cookie).code)
+        assertEquals(400, post("/api/ai", "no es json", cookie).code)
+        host!!.problem = "Ese modelo ya no existe."
+        assertEquals(409, post("/api/ai", "{\"profile\":\"zz\"}", cookie).code)
+        host!!.problem = null
+        host!!.models = null
+        assertEquals(409, get("/api/ai", cookie).code)
     }
 
     @Test fun onlyOurOwnPageCanPost() {

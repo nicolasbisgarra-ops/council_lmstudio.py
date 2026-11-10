@@ -458,6 +458,73 @@
 
   function closeMenu() { $('menu').hidden = true; }
 
+  // ---- el modelo de IA: elige el mismo que usa Trazo en la tableta. Las claves y las direcciones quedan allá.
+  function loadModel() {
+    request('GET', '/api/ai').then(function (r) {
+      if (r.status === 200 && r.json && r.json.ok) showModel(r.json);
+      else toast((r.json && r.json.error) || 'No se pudo leer los modelos.');
+    }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
+  }
+
+  function pickModel(payload) {
+    request('POST', '/api/ai', payload).then(function (r) {
+      if (r.status === 200) loadModel();
+      else toast((r.json && r.json.error) || 'No se pudo cambiar el modelo.');
+    }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
+  }
+
+  function choiceButton(label, pressed, enabled, onPick) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'choice';
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(pressed));
+    b.disabled = !enabled;
+    b.addEventListener('click', onPick);
+    return b;
+  }
+
+  function showModel(data) {
+    var body = document.createElement('div');
+    body.className = 'look';
+    function part(title, node, note) {
+      var s = document.createElement('div');
+      s.className = 'look-part';
+      var h = document.createElement('h3');
+      h.textContent = title;
+      s.appendChild(h);
+      s.appendChild(node);
+      if (note) s.appendChild(paragraph(note));
+      return s;
+    }
+    var profiles = data.profiles || [];
+    var models = document.createElement('div');
+    models.className = 'choices';
+    profiles.forEach(function (p) {
+      models.appendChild(choiceButton(p.name + (p.model ? ' · ' + p.model : ''), data.current === p.id, p.ready, function () {
+        pickModel({ profile: p.id });
+      }));
+    });
+    body.appendChild(part('Modelo', models, profiles.length
+      ? 'Los apagados faltan configurar en Trazo (clave o inicio de sesión).'
+      : 'Todavía no hay modelos configurados en Trazo.'));
+    var quality = document.createElement('div');
+    quality.className = 'choices';
+    (data.qualities || []).forEach(function (q) {
+      quality.appendChild(choiceButton(q.label, data.quality === q.key, true, function () { pickModel({ quality: q.key }); }));
+    });
+    body.appendChild(part('Calidad de la foto', quality, 'Una foto más grande lee mejor la letra, pero tarda más y gasta más.'));
+    $('dialog-title').textContent = 'Modelo de IA';
+    var box = $('dialog-body');
+    box.textContent = '';
+    box.appendChild(body);
+    $('dialog-yes').textContent = 'Listo';
+    $('dialog-yes').onclick = function () { $('dialog').hidden = true; };
+    $('dialog-no').hidden = true;
+    $('dialog').hidden = false;
+    $('dialog-yes').focus();
+  }
+
   function dialog(title, body, yes, onYes) {
     $('dialog-title').textContent = title;
     var box = $('dialog-body');
@@ -577,6 +644,7 @@
     $('menu-btn').addEventListener('click', function (e) {
       e.stopPropagation();
       $('m-review').hidden = app.dataset.view !== 'main';
+      $('m-model').hidden = app.dataset.view !== 'main';
       $('menu').hidden = !$('menu').hidden;
     });
     document.addEventListener('click', function (e) { if (!$('menu').hidden && !$('menu').contains(e.target)) closeMenu(); });
@@ -584,6 +652,7 @@
       closeMenu();
       dialog('Nueva revisión', paragraph('Se borra la conversación de esta hoja y el tutor la revisa de nuevo desde cero.'), 'Revisar de nuevo', function () { review(true); });
     });
+    $('m-model').addEventListener('click', function () { closeMenu(); loadModel(); });
     $('m-install').addEventListener('click', function () { closeMenu(); installHelp(); });
     $('m-unpair').addEventListener('click', function () {
       closeMenu();
