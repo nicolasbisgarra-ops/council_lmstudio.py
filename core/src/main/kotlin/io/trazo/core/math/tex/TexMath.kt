@@ -78,7 +78,7 @@ object TexMath {
         return out
     }
 
-    private val LOOKS_TEX = Regex("""\\[A-Za-z]|[{}^_]""")
+    private val LOOKS_TEX = Regex("""\\[A-Za-z]|[\{\}^_]""")
 
     private val DELIMITERS = listOf(
         Triple("$$", "$$", true), Triple("\\[", "\\]", true), Triple("\\(", "\\)", false), Triple("$", "$", false),

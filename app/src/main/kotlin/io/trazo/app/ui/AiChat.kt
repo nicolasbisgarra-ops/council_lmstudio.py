@@ -443,7 +443,7 @@ private object LatexEngine {
 private const val MAX_FORMULA_PX = 8000
 
 private val ROW_SPACING = Regex("""\\\\\s*\[[^\]]{1,15}\]""")
-private val TEXT_ARG = Regex("""\\(text|textrm|textit|textbf|mbox|operatorname)\s*\{([^{}]*)\}""")
+private val TEXT_ARG = Regex("""\\(text|textrm|textit|textbf|mbox|operatorname)\s*\{([^\{\}]*)\}""")
 private val ACCENTS = mapOf(
     'á' to "\\'a", 'é' to "\\'e", 'í' to "\\'i", 'ó' to "\\'o", 'ú' to "\\'u", 'ñ' to "\\~n", 'ü' to "\\\"u",
     'Á' to "\\'A", 'É' to "\\'E", 'Í' to "\\'I", 'Ó' to "\\'O", 'Ú' to "\\'U", 'Ñ' to "\\~N",
