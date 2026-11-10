@@ -17,7 +17,7 @@ fun StudyDestination(notebookId: String, exam: Boolean, onBack: () -> Unit) {
     val app = LocalContext.current.trazo
     val notes by produceState<List<AiNote>?>(null, notebookId) {
         value = withContext(Dispatchers.IO) {
-            app.repository.loadNotebook(notebookId)?.let { PracticePlanner.notesFromPages(it.pages) }.orEmpty()
+            runCatching { app.repository.loadNotebook(notebookId) }.getOrNull()?.let { PracticePlanner.notesFromPages(it.pages) }.orEmpty()
         }
     }
     val loaded = notes

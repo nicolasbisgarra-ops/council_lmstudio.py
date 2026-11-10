@@ -168,11 +168,13 @@ class TrazoRepository(root: File) {
     fun listNotebooks(): List<NotebookSummary> = synchronized(lock) {
         notebooksDir.listFiles { f -> f.name.endsWith(".trazo.json") }.orEmpty()
             // Para la portada alcanza con decodificar la primera página.
-            .mapNotNull { f -> runCatching { TrazoFormat.decodeLazy(AtomicFile(f).readFully().toString(Charsets.UTF_8)) }.getOrNull() }
-            .map {
-                val (kind, image) = Covers.normalized(it.coverKind, it.coverImage)
-                val cover = image?.let { name -> File(coversDir, name) }?.takeIf { f -> kind == CoverKind.IMAGE && f.isFile }
-                NotebookSummary(it.id, it.name, it.pageCount, it.updatedAt, it.page(0), it.paper, it.folderId, cover)
+            .mapNotNull { f ->
+                runCatching {
+                    val nb = TrazoFormat.decodeLazy(AtomicFile(f).readFully().toString(Charsets.UTF_8))
+                    val (kind, image) = Covers.normalized(nb.coverKind, nb.coverImage)
+                    val cover = image?.let { name -> File(coversDir, name) }?.takeIf { c -> kind == CoverKind.IMAGE && c.isFile }
+                    NotebookSummary(nb.id, nb.name, nb.pageCount, nb.updatedAt, nb.page(0), nb.paper, nb.folderId, cover)
+                }.onFailure { android.util.Log.w("Trazo", "Cuaderno ilegible: ${f.name}", it) }.getOrNull()
             }
             .sortedByDescending { it.updatedAt }
     }

@@ -1273,6 +1273,7 @@ class EditorViewModel(
 
     /** Escribe la explicación del resultado debajo de la cuenta, con una letra parecida a la del usuario. */
     fun writeExplanation(e: MathNotes.Explanation) {
+        if (!app.trazo.study.isAllowed(StudyFeature.CALCULATOR)) { mathExplanation = null; return }
         val ink = MathNotes.handwrite(controller.page.strokes, repo.patterns.value, e)
         mathExplanation = null
         controller.addInk(ink)
@@ -1280,6 +1281,7 @@ class EditorViewModel(
 
     /** Copia la respuesta del tutor del chat en la hoja, debajo de lo último escrito, con la letra del usuario. */
     fun writeTutorAnswer(text: String) {
+        if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) return
         val ink = MathNotes.handwriteBelow(controller.page.strokes, repo.patterns.value, TutorText.plain(text))
         if (ink.isNotEmpty()) controller.addInk(ink)
     }
@@ -1446,6 +1448,15 @@ class EditorViewModel(
         }
 
         override fun send(text: String, image: ByteArray?): String? {
+            // Primero se chequea si se puede; recién después se guarda la foto.
+            onMain {
+                when {
+                    !webAllowed() -> EXAM_WEB
+                    currentPageId() == null -> SyncWebServer.NO_SHEET
+                    chatBusy -> "El tutor todavía está contestando."
+                    else -> null
+                }
+            }?.let { return it }
             val stored = image?.let { bytes ->
                 runCatching {
                     val bmp = io.trazo.app.data.ImageImport.decode({ bytes.inputStream() }, CHAT_IMAGE_SIDE) ?: error("No se pudo leer la imagen")
@@ -1656,14 +1667,17 @@ class EditorViewModel(
     fun clearChatAttachment() { chatAttachment = null }
 
     /** Archivo de una imagen adjunta en el chat, para mostrarla en la burbuja. */
-    fun chatImageFile(name: String): java.io.File = java.io.File(repo.imagesDir, name)
+    fun chatImageFile(name: String): java.io.File {
+        require(name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '.' } && !name.startsWith(".")) { "Nombre de imagen inválido" }
+        return java.io.File(repo.imagesDir, name)
+    }
 
     /** La hoja entera (con sus imágenes) y, debajo, la imagen adjunta; un solo PNG para el modelo. */
     private fun chatImage(page: Page, paper: Paper, attachment: String?, longEdgePx: Int): ByteArray? {
         val sheet = if (page.allInk.isNotEmpty() || page.images.isNotEmpty()) {
             runCatching { PageExporter.thumbnail(page, paper, longEdgePx.coerceIn(256, 2400)) }.getOrNull()
         } else null
-        val extra = attachment?.let { io.trazo.app.data.ImageImport.decodeFile(chatImageFile(it).path) }
+        val extra = attachment?.let { runCatching { io.trazo.app.data.ImageImport.decodeFile(chatImageFile(it).path) }.getOrNull() }
         try {
             return AiCapture.chatPng(sheet, extra, longEdgePx)
         } finally {
@@ -1762,7 +1776,9 @@ class EditorViewModel(
             aiJob?.cancel()
             updateAi(pendingPage) { a -> a?.copy(notes = a.notes.filterNot { it.reviewId == id }) }
         }
-        if (!controller.isContactActive) saveNow()
+        // Un contacto a medias se descarta (revierte borrado o arrastre parcial) y lo demás se guarda igual.
+        if (controller.isContactActive) controller.cancel()
+        runCatching { saveNow() }.onFailure { android.util.Log.e("Trazo", "No se pudo guardar al cerrar", it) }
         // Cerrado y guardado: la sincronización ya puede llevarlo al otro dispositivo.
         repo.markClosed(notebookId)
         app.trazo.sync.requestSync()
@@ -1804,6 +1820,9 @@ class EditorViewModel(
                     mathExplanation = null
                     aiVisible = false
                     controller.aiVisible = false
+                    // El chat tampoco puede seguir contestando durante el examen.
+                    cancelChat()
+                    chatOpen = false
                 }
                 revision++
             }

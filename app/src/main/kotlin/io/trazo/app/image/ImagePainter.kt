@@ -60,19 +60,22 @@ object ImagePainter {
     fun stored(name: String) = synchronized(missing) { missing -= name }
 
     fun draw(canvas: Canvas, images: List<PageImage>, darkPaper: Boolean) {
+        // El lienzo y la exportación dibujan desde hilos distintos: rect y paint se tocan con el candado.
         for (img in images) {
-            rect.set(img.left, img.top, img.right, img.bottom)
             val bmp = bitmap(img.asset)
-            if (bmp == null || bmp.isRecycled) {
-                canvas.drawRect(rect, placeholder)
-                continue
+            synchronized(this) {
+                rect.set(img.left, img.top, img.right, img.bottom)
+                if (bmp == null || bmp.isRecycled) {
+                    canvas.drawRect(rect, placeholder)
+                } else {
+                    paint.colorFilter = when (img.preset) {
+                        ImagePreset.DARK -> if (darkPaper) lightTint else darkTint
+                        else -> null
+                    }
+                    canvas.drawBitmap(bmp, null, rect, paint)
+                    paint.colorFilter = null
+                }
             }
-            paint.colorFilter = when (img.preset) {
-                ImagePreset.DARK -> if (darkPaper) lightTint else darkTint
-                else -> null
-            }
-            canvas.drawBitmap(bmp, null, rect, paint)
         }
-        paint.colorFilter = null
     }
 }

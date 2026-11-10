@@ -43,7 +43,8 @@ object AiMarkPainter {
 
     fun colorOf(note: AiNote): Int = runCatching { MarkKind.valueOf(note.kind).color }.getOrDefault(MarkKind.CALCULATION.color)
 
-    fun draw(canvas: Canvas, notes: List<AiNote>, verdict: AiReviewRecord?) {
+    // Lo usan el lienzo (hilo principal) y la exportación (en segundo plano): Paint y Path son compartidos.
+    fun draw(canvas: Canvas, notes: List<AiNote>, verdict: AiReviewRecord?): Unit = synchronized(this) {
         for (p in AiNotes.layout(notes)) {
             val color = colorOf(p.note)
             line.color = color

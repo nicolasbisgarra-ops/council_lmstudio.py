@@ -188,7 +188,7 @@ class SyncWebServer(
                     if (length == null || length < 0) { write(out, plain(411, "Falta el tamaño"), false); return }
                     if (length > maxBody(path)) { write(out, json(413, fail("Es demasiado grande.")), false); return }
                     sock.soTimeout = BODY_TIMEOUT
-                    body = input.readNBytes(length.toInt())
+                    body = readFully(input, length.toInt())
                     if (body.size.toLong() != length) return
                 }
                 val response = try {
@@ -199,6 +199,18 @@ class SyncWebServer(
                 write(out, response, head)
             }
         }
+    }
+
+    /** `InputStream.readNBytes(int)` recién existe en Android 13; esto lee hasta [n] bytes o el fin del flujo. */
+    private fun readFully(input: InputStream, n: Int): ByteArray {
+        val buf = ByteArray(n)
+        var off = 0
+        while (off < n) {
+            val r = input.read(buf, off, n - off)
+            if (r < 0) break
+            off += r
+        }
+        return if (off == n) buf else buf.copyOf(off)
     }
 
     private fun maxBody(path: String): Long = if (path == "/api/chat") MAX_CHAT_BODY else MAX_SMALL_BODY

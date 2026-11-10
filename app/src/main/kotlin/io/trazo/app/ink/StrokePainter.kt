@@ -53,7 +53,8 @@ object StrokePainter {
     }
 
     /** @param darkPaper la hoja es oscura: las tintas muy oscuras se muestran claras ([InkLook]). */
-    fun draw(canvas: Canvas, stroke: InkStroke, darkPaper: Boolean = false) {
+    // Lo usan el lienzo (hilo principal) y la exportación (en segundo plano): Paint y Path son compartidos.
+    fun draw(canvas: Canvas, stroke: InkStroke, darkPaper: Boolean = false): Unit = synchronized(this) {
         val color = InkLook.displayColor(stroke.color, darkPaper, stroke.brush)
         when (stroke.brush) {
             Brush.HIGHLIGHTER -> {
@@ -138,7 +139,7 @@ object PaperPainter {
         width: Float = Notebook.PAGE_WIDTH,
         height: Float = Notebook.PAGE_HEIGHT,
         colors: PaperColors = PaperColors.LIGHT,
-    ) {
+    ): Unit = synchronized(this) {
         fill.color = colors.sheet
         canvas.drawRect(0f, 0f, width, height, fill)
         line.strokeWidth = 1.2f

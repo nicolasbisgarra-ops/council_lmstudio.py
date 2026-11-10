@@ -34,7 +34,7 @@ fun ErrorSheetScreen(notebookId: String, onBack: () -> Unit, onOpenPage: (Int) -
     val app = LocalContext.current.trazo
     val sheet by produceState<ErrorSheet.Sheet?>(null, notebookId) {
         value = withContext(Dispatchers.IO) {
-            ErrorSheet.build(app.repository.loadNotebook(notebookId)?.pages.orEmpty())
+            ErrorSheet.build(runCatching { app.repository.loadNotebook(notebookId) }.getOrNull()?.pages.orEmpty())
         }
     }
     Scaffold(topBar = {
