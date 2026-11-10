@@ -1,14 +1,30 @@
 {
   "permissions": {
     "allow": [
-      "command(ls)", "command(ls *)", "command(find *)", "command(grep *)", "command(rg *)",
-      "command(cat *)", "command(head *)", "command(tail *)", "command(wc *)",
-      "command(git status*)", "command(git diff*)", "command(git log*)", "command(git show*)",
+      "read_file(*)",
+      "command(ls)",
+      "command(ls *)",
+      "command(find *)",
+      "command(grep *)",
+      "command(rg *)",
+      "command(cat *)",
+      "command(head *)",
+      "command(tail *)",
+      "command(wc *)",
+      "command(git status*)",
+      "command(git diff*)",
+      "command(git log*)",
+      "command(git show*)",
       "command(./gradlew *)"
     ],
     "deny": [
-      "command(git push*)", "command(git commit*)", "command(git reset*)", "command(git checkout*)",
-      "command(rm *)", "command(curl *)", "command(wget *)"
+      "command(git push*)",
+      "command(git commit*)",
+      "command(git reset*)",
+      "command(git checkout*)",
+      "command(rm *)",
+      "command(curl *)",
+      "command(wget *)"
     ]
   }
 }
