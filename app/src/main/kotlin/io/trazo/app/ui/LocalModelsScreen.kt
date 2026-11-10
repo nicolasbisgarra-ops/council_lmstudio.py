@@ -2,6 +2,7 @@
 
 package io.trazo.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -9,13 +10,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -30,7 +28,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -57,6 +54,7 @@ import kotlinx.coroutines.CancellationException
 /** Standalone local model catalog; callers can add this destination to their navigation stack. */
 @Composable
 fun LocalModelsScreen(onBack: () -> Unit, onUse: (LocalModel) -> Unit = {}) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val store = remember(context) { LocalModelStore(context) }
     val models by store.models.collectAsState()
@@ -105,8 +103,8 @@ fun LocalModelsScreen(onBack: () -> Unit, onUse: (LocalModel) -> Unit = {}) {
         }
     }
 
-    Scaffold(
-        topBar = {
+    // Va dentro del scroll de Ajustes: sin Scaffold, que pediría una altura finita.
+    Column(Modifier.fillMaxWidth()) {
             TopAppBar(
                 title = { Text("Modelos locales") },
                 navigationIcon = {
@@ -114,10 +112,8 @@ fun LocalModelsScreen(onBack: () -> Unit, onUse: (LocalModel) -> Unit = {}) {
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
-        },
-    ) { insets ->
         Column(
-            Modifier.fillMaxSize().padding(insets).padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
@@ -183,8 +179,8 @@ fun LocalModelsScreen(onBack: () -> Unit, onUse: (LocalModel) -> Unit = {}) {
                     }
                 }
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
-                    items(models, key = { it.id }) { model ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    models.forEach { model ->
                         LocalModelRow(
                             model = model,
                             name = store.displayName(model),

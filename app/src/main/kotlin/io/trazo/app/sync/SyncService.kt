@@ -696,9 +696,16 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
 
     @Synchronized
     private fun stopDiscovery() {
-        val l = discovering ?: return
+        nearby.clear()
+        unpaired.clear()
+        serviceIds.clear()
+        resolveQueue.clear()
+        val l = discovering
         discovering = null
-        runCatching { nsd?.stopServiceDiscovery(l) }
+        if (l != null) {
+            runCatching { nsd?.stopServiceDiscovery(l) }
+        }
+        scope.launch { refresh() }
     }
 
     @Synchronized
@@ -718,28 +725,34 @@ class SyncService(context: Context, private val repo: TrazoRepository) {
         val l = object : NsdManager.ResolveListener {
             override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) = done()
             override fun onServiceResolved(info: NsdServiceInfo) {
-                val id = info.attributes["id"]?.toString(Charsets.UTF_8)
-                // Una IPv4 antes que una IPv6 de enlace local (sin la interfaz no se puede conectar a esa).
-                val candidates = (if (Build.VERSION.SDK_INT >= 34) runCatching { info.hostAddresses }.getOrDefault(emptyList()) else emptyList()) +
-                    listOfNotNull(info.host)
-                val host = candidates.filter { !it.isLinkLocalAddress || (it is java.net.Inet6Address && it.scopedInterface != null) }
-                    .minByOrNull { if (it.address.size == 4) 0 else 1 }
-                val mine = store.config().deviceId
-                if (id != null && id != mine && host != null && SyncAddresses.isAllowed(host.address)) {
-                    val addr = host.hostAddress.orEmpty()
-                    serviceIds[info.serviceName] = id
-                    if (store.peers().any { it.deviceId == id }) nearby[id] = addr else unpaired[info.serviceName] = addr
-                    scope.launch { refresh() }
-                    requestSync()
+                try {
+                    val id = info.attributes["id"]?.toString(Charsets.UTF_8)
+                    // Una IPv4 antes que una IPv6 de enlace local (sin la interfaz no se puede conectar a esa).
+                    val candidates = (if (Build.VERSION.SDK_INT >= 34) runCatching { info.hostAddresses }.getOrDefault(emptyList()) else emptyList()) +
+                        listOfNotNull(info.host)
+                    val host = candidates.filter { !it.isLinkLocalAddress || (it is java.net.Inet6Address && it.scopedInterface != null) }
+                        .minByOrNull { if (it.address.size == 4) 0 else 1 }
+                    val mine = store.config().deviceId
+                    if (id != null && id != mine && host != null && SyncAddresses.isAllowed(host.address)) {
+                        val addr = host.hostAddress.orEmpty()
+                        serviceIds[info.serviceName] = id
+                        if (store.peers().any { it.deviceId == id }) nearby[id] = addr else unpaired[info.serviceName] = addr
+                        scope.launch { refresh() }
+                        requestSync()
+                    }
+                } finally {
+                    done()
                 }
-                done()
             }
             fun done() {
                 synchronized(this@SyncService) { resolving = false }
                 resolveNext()
             }
         }
-        runCatching { m.resolveService(next, l) }.onFailure { resolving = false }
+        runCatching { m.resolveService(next, l) }.onFailure {
+            resolving = false
+            resolveNext()
+        }
     }
 
     // ------------------------------------------------------------------ estado
