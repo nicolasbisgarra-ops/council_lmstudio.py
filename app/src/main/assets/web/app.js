@@ -639,31 +639,45 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('/sw.js').catch(function () {});
 }
 
-// Apariencia (tema, color de las fórmulas, lado del chat) y diseño en PC: el chat flota y se mueve libre, o va
-// pegado a un costado. Son preferencias de este navegador (localStorage); si no se pueden guardar, da igual.
+// Apariencia (tema, color de las fórmulas, lado del chat) y vista en PC: el chat y la hoja pueden verse las dos
+// (una al lado de la otra, o una libre sobre la otra), o solo una a pantalla completa. Son preferencias de este
+// navegador (localStorage); si no se pueden guardar, da igual.
 (function () {
-  var KEY_BOX = 'trazo_chat_box', KEY_DOCK = 'trazo_chat_dock', KEY_TEXT = 'trazo_text', KEY_LOOK = 'trazo_look';
+  var KEY_CHAT = 'trazo_chat_box', KEY_PAGE = 'trazo_page_box', KEY_DOCK = 'trazo_chat_dock', KEY_TEXT = 'trazo_text', KEY_LOOK = 'trazo_look';
   var THEMES = [['sistema', 'Sistema'], ['claro', 'Claro'], ['oscuro', 'Oscuro'], ['neon', 'Neón'], ['matrix', 'Matrix'],
     ['oled', 'OLED'], ['vintage', 'Vintage'], ['papel-viejo', 'Papel viejo'], ['papel-nuevo', 'Papel nuevo']];
   var TEX = [['', 'Automático'], ['#111111', 'Negro'], ['#1d4ed8', 'Azul'], ['#b91c1c', 'Rojo'], ['#15803d', 'Verde'], ['#7c3aed', 'Violeta']];
-  var LAYOUTS = [['float', 'Flotante'], ['dock', 'A un costado']];
+  var VIEWS = [['chat-libre', 'Chat libre'], ['ambos', 'Las dos'], ['hoja-libre', 'Hoja libre'], ['chat', 'Solo chat'], ['hoja', 'Solo hoja']];
   var SIDES = [['right', 'Derecha'], ['left', 'Izquierda']];
+  var VIEW_HELP = {
+    'chat-libre': 'El chat flota libre sobre la hoja, que ocupa toda la pantalla.',
+    'ambos': 'La hoja y el chat, uno al lado del otro. Arrastrá el borde del chat para cambiar su ancho.',
+    'hoja-libre': 'La hoja flota libre sobre el chat, que ocupa toda la pantalla.',
+    'chat': 'Solo el chat, a pantalla completa.',
+    'hoja': 'Solo la hoja, a pantalla completa.'
+  };
   var wide = window.matchMedia('(min-width: 900px)');
   var root = document.documentElement;
   var app = document.getElementById('app');
-  var pane = document.getElementById('pane-chat');
+  var chatPane = document.getElementById('pane-chat');
+  var pagePane = document.getElementById('pane-page');
   var grip = document.getElementById('grip');
   var rz = document.getElementById('rz');
+  var pgrip = document.getElementById('pgrip');
+  var prz = document.getElementById('prz');
   function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
   function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin guardado */ } }
   function has(list, v) { return list.some(function (it) { return it[0] === v; }); }
 
-  var look = Object.assign({ theme: 'sistema', tex: '', layout: 'float', side: 'right' }, load(KEY_LOOK) || {});
+  var saved = load(KEY_LOOK) || {};
+  var look = { theme: saved.theme, tex: saved.tex, side: saved.side, view: saved.view };
+  if (!look.view) look.view = saved.layout === 'dock' ? 'ambos' : 'chat-libre';
   if (!has(THEMES, look.theme)) look.theme = 'sistema';
   if (!has(TEX, look.tex)) look.tex = '';
-  if (!has(LAYOUTS, look.layout)) look.layout = 'float';
+  if (!has(VIEWS, look.view)) look.view = 'chat-libre';
   if (!has(SIDES, look.side)) look.side = 'right';
-  var box = load(KEY_BOX) || {};
+  var chatBox = load(KEY_CHAT) || {};
+  var pageBox = load(KEY_PAGE) || {};
   var dock = load(KEY_DOCK) || {};
   var scale = Number(load(KEY_TEXT)) || 1;
 
@@ -684,59 +698,93 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     applyLook();
     place();
   }
-  function clamp(b) {
+
+  // Un panel libre: su caja (x, y, w, h) queda dentro de la pantalla, y se corrige en el mismo objeto.
+  function clampBox(b) {
     var vw = window.innerWidth, vh = window.innerHeight;
     b.w = Math.max(280, Math.min(b.w, vw - 8));
     b.h = Math.max(220, Math.min(b.h, vh - 8));
-    // Todo el panel queda dentro de la pantalla: la barra y la esquina siempre se pueden agarrar.
     b.y = Math.max(4, Math.min(b.y, vh - b.h - 4));
     b.x = Math.max(4, Math.min(b.x, vw - b.w - 4));
     return b;
   }
-  function place() {
-    var mode = wide.matches ? look.layout : 'none';
-    pane.classList.toggle('float', mode === 'float');
-    pane.classList.toggle('docked', mode === 'dock');
-    pane.removeAttribute('style');
+  function floatDefaults(which, b) {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    if (typeof b.w !== 'number') b.w = which === 'chat' ? 440 : Math.min(760, Math.round(vw * 0.5));
+    if (typeof b.h !== 'number') b.h = vh - 100;
+    if (typeof b.y !== 'number') b.y = 72;
+    if (typeof b.x !== 'number') {
+      // El chat va del lado elegido; la hoja libre, del lado contrario.
+      var chatLeft = look.side === 'left';
+      var left = which === 'chat' ? chatLeft : !chatLeft;
+      b.x = left ? 12 : vw - b.w - 12;
+    }
+    return b;
+  }
+  // Pone un panel en su modo: 'off' (oculto), 'full' (ocupa el espacio), 'float' (libre) o 'dock' (pegado al costado).
+  function apply(el, mode, which, b) {
+    el.classList.remove('float', 'docked', 'full', 'off');
+    el.removeAttribute('style');
+    if (mode === 'none') return;
+    if (mode === 'off') { el.classList.add('off'); return; }
+    if (mode === 'full') { el.classList.add('full'); return; }
     if (mode === 'float') {
-      if (typeof box.w !== 'number') box.w = 440;
-      if (typeof box.h !== 'number') box.h = window.innerHeight - 100;
-      if (typeof box.x !== 'number') box.x = look.side === 'left' ? 12 : window.innerWidth - box.w - 12;
-      if (typeof box.y !== 'number') box.y = 72;
-      box = clamp(box);
-      pane.style.left = box.x + 'px';
-      pane.style.top = box.y + 'px';
-      pane.style.width = box.w + 'px';
-      pane.style.height = box.h + 'px';
-    } else if (mode === 'dock') {
+      el.classList.add('float');
+      floatDefaults(which, b);
+      clampBox(b);
+      el.style.left = b.x + 'px';
+      el.style.top = b.y + 'px';
+      el.style.width = b.w + 'px';
+      el.style.height = b.h + 'px';
+      return;
+    }
+    if (mode === 'dock') {
+      el.classList.add('docked');
       if (typeof dock.w !== 'number') dock.w = 420;
       dock.w = Math.max(300, Math.min(dock.w, Math.round(window.innerWidth * 0.6)));
-      pane.style.width = dock.w + 'px';
+      el.style.width = dock.w + 'px';
     }
   }
-  function drag(e, mode) {
+  function place() {
+    var modes;
+    if (!wide.matches) modes = { chat: 'none', page: 'none' };
+    else if (look.view === 'chat-libre') modes = { chat: 'float', page: 'full' };
+    else if (look.view === 'ambos') modes = { chat: 'dock', page: 'full' };
+    else if (look.view === 'hoja-libre') modes = { chat: 'full', page: 'float' };
+    else if (look.view === 'chat') modes = { chat: 'full', page: 'off' };
+    else modes = { chat: 'off', page: 'full' };
+    apply(chatPane, modes.chat, 'chat', chatBox);
+    apply(pagePane, modes.page, 'page', pageBox);
+  }
+
+  // Arrastrar la barra mueve un panel libre; arrastrar el borde o la esquina cambia su tamaño.
+  function startDrag(e, pane, kind) {
     if (e.button !== undefined && e.button !== 0) return;
     if (e.target.closest && e.target.closest('button')) return;
     var docked = pane.classList.contains('docked');
-    if (!docked && !pane.classList.contains('float')) return;
-    if (mode === 'move' && docked) return;
+    var floating = pane.classList.contains('float');
+    if (!docked && !floating) return;
+    if (kind === 'move' && docked) return;
+    var isChat = pane === chatPane;
+    var b = isChat ? chatBox : pageBox;
+    var key = isChat ? KEY_CHAT : KEY_PAGE;
     e.preventDefault();
     var target = e.currentTarget;
     var sx = e.clientX, sy = e.clientY;
-    var start = { x: box.x, y: box.y, w: box.w, h: box.h, dw: dock.w };
+    var start = { x: b.x, y: b.y, w: b.w, h: b.h, dw: dock.w };
     target.setPointerCapture(e.pointerId);
     function move(ev) {
       var dx = ev.clientX - sx, dy = ev.clientY - sy;
       if (docked) dock.w = start.dw + (look.side === 'left' ? dx : -dx);
-      else if (mode === 'move') { box.x = start.x + dx; box.y = start.y + dy; }
-      else { box.w = start.w + dx; box.h = Math.min(start.h + dy, window.innerHeight - box.y - 4); }
+      else if (kind === 'move') { b.x = start.x + dx; b.y = start.y + dy; }
+      else { b.w = start.w + dx; b.h = Math.min(start.h + dy, window.innerHeight - b.y - 4); }
       place();
     }
     function up() {
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
       target.removeEventListener('pointercancel', up);
-      if (docked) save(KEY_DOCK, dock); else save(KEY_BOX, box);
+      if (docked) save(KEY_DOCK, dock); else save(key, b);
     }
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', up);
@@ -771,18 +819,18 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     var body = el('div', 'look');
     body.appendChild(section('Tema', choices(THEMES, look.theme, function (v) { setLook({ theme: v }); })));
     body.appendChild(section('Color de las fórmulas', choices(TEX, look.tex, function (v) { setLook({ tex: v }); })));
-    body.appendChild(section('Chat en PC', choices(LAYOUTS, look.layout, function (v) { setLook({ layout: v }); })));
+    body.appendChild(section('Vista en PC', choices(VIEWS, look.view, function (v) { setLook({ view: v }); })));
+    body.appendChild(el('p', 'fine', VIEW_HELP[look.view]));
     body.appendChild(section('Lado del chat', choices(SIDES, look.side, function (v) {
-      delete box.x;
-      save(KEY_BOX, box);
+      delete chatBox.x; delete pageBox.x;
+      save(KEY_CHAT, chatBox); save(KEY_PAGE, pageBox);
       setLook({ side: v });
     })));
-    body.appendChild(el('p', 'fine', 'En PC, «Flotante» deja el chat libre sobre la hoja: lo movés arrastrando su barra y lo ' +
-      'agrandás desde la esquina. «A un costado» lo pega al lado elegido. El teléfono no cambia.'));
-    var box2 = document.getElementById('dialog-body');
+    body.appendChild(el('p', 'fine', 'En el teléfono no cambia nada. Las vistas libres se mueven arrastrando su barra y se agrandan desde la esquina.'));
     document.getElementById('dialog-title').textContent = 'Apariencia';
-    box2.textContent = '';
-    box2.appendChild(body);
+    var box = document.getElementById('dialog-body');
+    box.textContent = '';
+    box.appendChild(body);
     var yes = document.getElementById('dialog-yes');
     yes.textContent = 'Listo';
     yes.onclick = function () { document.getElementById('dialog').hidden = true; };
@@ -791,8 +839,10 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     yes.focus();
   }
 
-  grip.addEventListener('pointerdown', function (e) { drag(e, 'move'); });
-  rz.addEventListener('pointerdown', function (e) { drag(e, 'size'); });
+  grip.addEventListener('pointerdown', function (e) { startDrag(e, chatPane, 'move'); });
+  rz.addEventListener('pointerdown', function (e) { startDrag(e, chatPane, 'size'); });
+  pgrip.addEventListener('pointerdown', function (e) { startDrag(e, pagePane, 'move'); });
+  prz.addEventListener('pointerdown', function (e) { startDrag(e, pagePane, 'size'); });
   document.getElementById('fs-down').addEventListener('click', function () { setText(scale - 0.1); });
   document.getElementById('fs-up').addEventListener('click', function () { setText(scale + 0.1); });
   document.getElementById('m-look').addEventListener('click', function () {

@@ -300,36 +300,40 @@ button:disabled { cursor: default; }
 }
 .noscript { padding: 24px; text-align: center; }
 
-/* ------------------------------------------------------------------ PC: el chat flota o va a un costado */
+/* ------------------------------------------------------------------ PC: vistas: chat y hoja, libres o a pantalla completa */
 .grip, .rz { display: none; }
 @media (min-width: 900px) {
-  .chat-pane.float, .chat-pane.docked { min-width: 0; max-width: none; }
-  .chat-pane.float {
-    position: fixed; z-index: 30; border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+  .chat-pane .grip { display: flex; }
+  .page-pane.float .grip { display: flex; }
+  .pane.off { display: none; }
+  .pane.full { flex: 1 1 0; min-width: 0; max-width: none; width: auto; }
+  .pane.float {
+    position: fixed; z-index: 30; border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); max-width: none; min-width: 0;
   }
-  .chat-pane.docked { position: relative; flex: none; border-left: 1px solid var(--line); }
+  .chat-pane.float { overflow: hidden; }
+  .page-pane.float { overflow: auto; padding-top: 0; }
+  .chat-pane.docked { position: relative; flex: none; max-width: none; min-width: 0; border-left: 1px solid var(--line); }
   [data-side="left"] .chat-pane.docked { order: -1; border-left: 0; border-right: 1px solid var(--line); }
-  .chat-pane.float .grip, .chat-pane.docked .grip {
-    display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 14px;
+  .grip {
+    align-items: center; gap: 4px; padding: 6px 8px 6px 14px;
     border-bottom: 1px solid var(--line); background: var(--surface); user-select: none;
   }
-  .chat-pane.float .grip { cursor: move; touch-action: none; }
-  .chat-pane.float .grip-title, .chat-pane.docked .grip-title {
-    flex: 1; min-width: 0; color: var(--muted); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .chat-pane.float .grip button, .chat-pane.docked .grip button {
+  .pane.float > .grip, .chat-pane.docked > .grip { cursor: move; touch-action: none; }
+  .grip-title { flex: 1; min-width: 0; color: var(--muted); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-pane .grip button {
     width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font-weight: 700; font-size: .95em;
   }
-  .chat-pane.float .grip button:hover, .chat-pane.docked .grip button:hover { background: var(--line); }
+  .chat-pane .grip button:hover { background: var(--line); }
+  .page-pane.float .grip { position: sticky; top: 0; z-index: 3; margin: 0 0 10px; }
   .chat-pane.float .composer { padding-right: 30px; }
-  .chat-pane.float .rz {
+  .pane.float > .rz {
     display: block; position: absolute; right: 0; bottom: 0; z-index: 5; width: 24px; height: 24px; cursor: nwse-resize; touch-action: none;
     background: linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 56%, transparent 56%, transparent 72%, var(--muted) 72%, var(--muted) 78%, transparent 78%);
     opacity: .6;
   }
-  .chat-pane.docked .rz { display: block; position: absolute; top: 0; bottom: 0; z-index: 5; width: 8px; cursor: ew-resize; touch-action: none; }
-  [data-side="right"] .chat-pane.docked .rz { left: -4px; }
-  [data-side="left"] .chat-pane.docked .rz { right: -4px; }
+  .chat-pane.docked > .rz { display: block; position: absolute; top: 0; bottom: 0; z-index: 5; width: 8px; cursor: ew-resize; touch-action: none; }
+  [data-side="right"] .chat-pane.docked > .rz { left: -4px; }
+  [data-side="left"] .chat-pane.docked > .rz { right: -4px; }
 }
 
 /* ------------------------------------------------------------------ menú de apariencia */
