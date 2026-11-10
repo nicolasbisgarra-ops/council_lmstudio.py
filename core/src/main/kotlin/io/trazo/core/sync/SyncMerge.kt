@@ -123,8 +123,61 @@ object SyncMerge {
     fun folderHashes(c: FolderCatalog): Map<String, String> =
         c.folders.associate { it.id to SyncHash.json(Folder.serializer(), it) }
 
-    fun folders(base: Map<String, String>, local: FolderCatalog, remote: FolderCatalog): FolderCatalog =
-        FolderCatalog(byId(base, local.folders, remote.folders, { it.id }, { SyncHash.json(Folder.serializer(), it) }) { l, _ -> l })
+    fun folders(base: Map<String, String>, local: FolderCatalog, remote: FolderCatalog): FolderCatalog {
+        val merged = byId(base, local.folders, remote.folders, { it.id }, { SyncHash.json(Folder.serializer(), it) }) { l, _ -> l }
+        return FolderCatalog(sanitizeFolders(merged))
+    }
+
+    private fun sanitizeFolders(folders: List<Folder>): List<Folder> {
+        if (folders.isEmpty()) return emptyList()
+        val byId = folders.associateBy { it.id }
+        val children = HashMap<String, MutableList<String>>()
+        for (f in folders) {
+            val p = f.parentId
+            if (p != null && p in byId && p != f.id) {
+                children.getOrPut(p) { ArrayList() }.add(f.id)
+            }
+        }
+
+        val visited = HashSet<String>()
+        val sanitized = byId.toMutableMap()
+        val queue = ArrayDeque<Pair<String, Int>>()
+
+        for (f in folders) {
+            if (f.parentId == null || f.parentId !in byId || f.parentId == f.id) {
+                if (f.parentId != null) {
+                    sanitized[f.id] = f.copy(parentId = null)
+                }
+                if (visited.add(f.id)) {
+                    queue.add(f.id to 1)
+                }
+            }
+        }
+
+        while (visited.size < folders.size) {
+            while (queue.isNotEmpty()) {
+                val (id, depth) = queue.removeFirst()
+                val directChildren = children[id].orEmpty()
+                for (childId in directChildren) {
+                    if (childId in visited) continue
+                    if (depth < FolderCatalog.MAX_DEPTH) {
+                        visited.add(childId)
+                        queue.add(childId to depth + 1)
+                    } else {
+                        sanitized[childId] = sanitized.getValue(childId).copy(parentId = null)
+                        visited.add(childId)
+                        queue.add(childId to 1)
+                    }
+                }
+            }
+            val unvisited = folders.firstOrNull { it.id !in visited } ?: break
+            sanitized[unvisited.id] = sanitized.getValue(unvisited.id).copy(parentId = null)
+            visited.add(unvisited.id)
+            queue.add(unvisited.id to 1)
+        }
+
+        return folders.map { sanitized.getValue(it.id) }
+    }
 
     /** Orden manual: el del lado que lo cambió; si los dos, el de aquí con lo nuevo del otro al final. */
     fun order(base: String?, local: List<String>, remote: List<String>): List<String> {

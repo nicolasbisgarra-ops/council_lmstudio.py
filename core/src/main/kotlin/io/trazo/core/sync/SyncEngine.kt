@@ -154,8 +154,12 @@ class SyncEngine(
             val m = mergeNotebook(key, base.notebooks[id], lp != null, rp != null, ::get)
             if (m == null) { deferred++; continue }
             var ok = true
+            var localApplied = false
             if (m.print != lp) {
-                if (store.replace(key, m.localFingerprint, m.text)) received++ else ok = false
+                if (store.replace(key, m.localFingerprint, m.text)) {
+                    received++
+                    localApplied = true
+                } else ok = false
             }
             if (ok && m.print != rp) {
                 if (put(key, m.text, m.remoteFingerprint)) sent++ else ok = false
@@ -163,7 +167,15 @@ class SyncEngine(
             if (ok) {
                 conflicts += m.conflicts
                 if (m.print == null) notebooks.remove(id) else notebooks[id] = m.print
-            } else deferred++
+            } else {
+                // Lo local ya tiene la mezcla, pero el otro sigue en rp: esa es la base común.
+                // Así la próxima vez solo se manda lo local, sin volver a crear copias de conflicto.
+                if (localApplied) {
+                    conflicts += m.conflicts
+                    if (rp == null) notebooks.remove(id) else notebooks[id] = rp
+                }
+                deferred++
+            }
         }
 
         // ---- patrones
@@ -266,8 +278,8 @@ class SyncEngine(
             when (m) {
                 SyncMessage.GetManifest -> ch.send(SyncMessage.Manifest(manifest()))
                 is SyncMessage.Get -> {
-                    val key = SyncKey.parse(m.key) ?: throw SyncAuthException("Clave inválida")
-                    val text = store.read(key)
+                    val key = SyncKey.parse(m.key)
+                    val text = key?.let { store.read(it) }
                     ch.send(SyncMessage.Text(m.key, text, SyncHash.fingerprint(text)))
                 }
                 is SyncMessage.Put -> {

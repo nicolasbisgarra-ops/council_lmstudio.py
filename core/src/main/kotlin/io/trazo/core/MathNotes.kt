@@ -390,18 +390,31 @@ object MathNotes {
         val f0 = f(0) ?: return null
         val f1 = f(1) ?: return null
         val f2 = f(2) ?: return null
-        if (f0 is ExactValue && f1 is ExactValue && f2 is ExactValue) {
+        val f3 = f(3) ?: return null
+        val fm1 = f(-1) ?: return null
+        val candidate = if (f0 is ExactValue && f1 is ExactValue && f2 is ExactValue && f3 is ExactValue && fm1 is ExactValue) {
             val slope = f1 - f0
-            if (slope.isZero || f2 - f1 != slope) return null
+            if (slope.isZero || f2 - f1 != slope || f3 - f2 != slope || f0 - fm1 != slope) return null
             val c = slope.rational ?: return approx(f0.toDouble(), slope.toDouble())
             val k = f0.rational ?: return approx(f0.toDouble(), slope.toDouble())
             val x = -(k / c)
-            return "(${x.num})/(${x.den})"
-        }
-        val (y0, y1, y2) = Triple(f0.toDouble(), f1.toDouble(), f2.toDouble())
-        val slope = y1 - y0
-        if (abs(slope) < 1e-12 || abs((y2 - y1) - slope) > 1e-9 * maxOf(1.0, abs(slope))) return null
-        return approx(y0, slope)
+            "(${x.num})/(${x.den})"
+        } else {
+            val y0 = f0.toDouble()
+            val y1 = f1.toDouble()
+            val y2 = f2.toDouble()
+            val y3 = f3.toDouble()
+            val ym1 = fm1.toDouble()
+            val slope = y1 - y0
+            val tol = 1e-9 * maxOf(1.0, abs(slope))
+            if (abs(slope) < 1e-12) return null
+            if (abs((y2 - y1) - slope) > tol || abs((y3 - y2) - slope) > tol || abs((y0 - ym1) - slope) > tol) return null
+            approx(y0, slope)
+        } ?: return null
+
+        val check = VariableGraph.evaluate(texts + "$name=$candidate")[line] as? LineResult.Check
+        if (check?.holds != true) return null
+        return candidate
     }
 
     private fun approx(f0: Double, slope: Double): String? {

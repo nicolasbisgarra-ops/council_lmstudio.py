@@ -30,8 +30,23 @@ internal object Calculus {
     }
 
     /** F(b) − F(a): reemplaza [v] por cada límite. */
-    fun between(f: MathValue, v: String, a: MathValue, b: MathValue): MathValue =
-        SymbolicValue.add(substitute(f, v, b), SymbolicValue.negate(substitute(f, v, a)))
+    fun between(f: MathValue, v: String, a: MathValue, b: MathValue): MathValue {
+        if (hasPole(f, v) && crossesZero(a, b)) domain("La integral diverge")
+        return SymbolicValue.add(substitute(f, v, b), SymbolicValue.negate(substitute(f, v, a)))
+    }
+
+    internal fun hasPole(f: MathValue, v: String): Boolean = when (f) {
+        is TupleValue -> f.items.any { hasPole(it, v) }
+        else -> SymbolicValue.termsOf(f).any { (m, _) -> (m[v] ?: 0) < 0 }
+    }
+
+    internal fun crossesZero(a: MathValue, b: MathValue): Boolean {
+        if (a.hasLetters() || b.hasLetters() || a is TupleValue || b is TupleValue) return false
+        val da = a.toDouble()
+        val db = b.toDouble()
+        if (da.isNaN() || db.isNaN()) return false
+        return (da <= 0.0 && db >= 0.0) || (da >= 0.0 && db <= 0.0)
+    }
 
     private fun substitute(f: MathValue, v: String, x: MathValue): MathValue = when (f) {
         is TupleValue -> TupleValue(f.items.map { substitute(it, v, x) })

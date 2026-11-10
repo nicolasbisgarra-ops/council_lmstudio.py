@@ -36,13 +36,17 @@ object Evaluator {
 
     private fun integral(e: Expr.Integral, lookup: (String) -> MathValue): MathValue {
         val v = e.variable
-        val primitive = runCatching { Calculus.antiderivative(evaluate(e.operand, bind(v, lookup)), v) }
+        val operand = runCatching { evaluate(e.operand, bind(v, lookup)) }.getOrNull()
+        val primitive = runCatching { Calculus.antiderivative(operand ?: evaluate(e.operand, bind(v, lookup)), v) }
         if (e.lower == null || e.upper == null) {
             return SymbolicValue.add(primitive.getOrThrow(), SymbolicValue.variable(Calculus.CONSTANT))
         }
         val a = evaluate(e.lower, lookup)
         val b = evaluate(e.upper, lookup)
         primitive.getOrNull()?.let { return Calculus.between(it, v, a, b) }
+        if (operand != null && Calculus.hasPole(operand, v) && Calculus.crossesZero(a, b)) {
+            domain("La integral diverge")
+        }
         if (a.hasLetters() || b.hasLetters() || a is TupleValue || b is TupleValue) primitive.getOrThrow()
         return Calculus.simpson({ x ->
             evaluate(e.operand) { if (it == v) ApproxValue(x) else lookup(it) }.toDouble()

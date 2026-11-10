@@ -98,8 +98,15 @@ sealed interface SyncKey {
         }
 
     companion object {
+        private val ID_REGEX = Regex("[A-Za-z0-9_-]+")
+
+        fun isValidId(id: String): Boolean = ID_REGEX.matches(id)
+
         fun parse(s: String): SyncKey? = when {
-            s.startsWith("nb:") && s.length > 3 -> NotebookKey(s.substring(3))
+            s.startsWith("nb:") && s.length > 3 -> {
+                val id = s.substring(3)
+                if (isValidId(id)) NotebookKey(id) else null
+            }
             s == "patterns" -> Patterns
             s == "folders" -> Folders
             s == "order" -> Order
