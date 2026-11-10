@@ -459,8 +459,17 @@
   function closeMenu() { $('menu').hidden = true; }
 
   // ---- el modelo de IA: elige el mismo que usa Trazo en la tableta. Las claves y las direcciones quedan allá.
+  // Si el navegador ya no está vinculado, se vuelve a la pantalla de vinculación (como en el resto de la app).
+  function modelUnpaired() {
+    $('dialog').hidden = true;
+    S.v = null; S.data = null;
+    setView('pair');
+    pairError('Este navegador ya no está vinculado. Escaneá el QR o escribí un código nuevo.');
+  }
+
   function loadModel() {
     request('GET', '/api/ai').then(function (r) {
+      if (r.status === 401) return modelUnpaired();
       if (r.status === 200 && r.json && r.json.ok) showModel(r.json);
       else toast((r.json && r.json.error) || 'No se pudo leer los modelos.');
     }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
@@ -468,6 +477,7 @@
 
   function pickModel(payload) {
     request('POST', '/api/ai', payload).then(function (r) {
+      if (r.status === 401) return modelUnpaired();
       if (r.status === 200) loadModel();
       else toast((r.json && r.json.error) || 'No se pudo cambiar el modelo.');
     }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });

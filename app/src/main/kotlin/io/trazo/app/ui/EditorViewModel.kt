@@ -1400,10 +1400,10 @@ class EditorViewModel(
         override fun review(): SharedReview = onMain { sharedReview() }
 
         override fun ai(): WebAi? = onMain {
-            if (!webAllowed()) return@onMain null
+            if (!webAllowed() || currentPageId() == null) return@onMain null
             val s = app.trazo.ai.settings.value
             WebAi(
-                profiles = s.profiles.map { WebAiProfile(it.id, it.name, it.provider.label, it.model, it.problem == null) },
+                profiles = s.profiles.map { WebAiProfile(it.id, it.name, it.provider.label, it.model, aiReady(it)) },
                 current = s.current?.id,
                 quality = (s.current?.imageQuality ?: ImageQuality.MEDIUM).name.lowercase(),
                 qualities = ImageQuality.values().map { it.name.lowercase() to it.label },
@@ -1412,11 +1412,13 @@ class EditorViewModel(
 
         override fun chooseAi(profileId: String?, quality: String?): String? = onMain {
             if (!webAllowed()) return@onMain EXAM_WEB
+            if (currentPageId() == null) return@onMain SyncWebServer.NO_SHEET
             val store = app.trazo.ai
             val level = quality?.let { key -> ImageQuality.values().firstOrNull { it.name.equals(key, ignoreCase = true) } }
             if (quality != null && level == null) return@onMain "Esa calidad no existe."
             if (profileId != null) {
-                if (store.settings.value.profiles.none { it.id == profileId }) return@onMain "Ese modelo ya no existe."
+                val target = store.settings.value.profiles.firstOrNull { it.id == profileId } ?: return@onMain "Ese modelo ya no existe."
+                if (!aiReady(target)) return@onMain "Ese modelo todavía no está listo: falta la clave o el inicio de sesión."
                 store.select(profileId)
             }
             if (level != null) {
@@ -1478,6 +1480,12 @@ class EditorViewModel(
     }
 
     private fun webAllowed(): Boolean = app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)
+
+    /** Lista para usarse: la configuración está completa y tiene la clave o la sesión que pide su proveedor. */
+    private fun aiReady(p: AiProfile): Boolean =
+        p.problem == null &&
+            (!p.provider.needsKey || app.trazo.ai.key(p.id) != null) &&
+            (!p.provider.signIn || app.trazo.ai.session(p.id) != null)
 
     private fun sharedReview(): SharedReview {
         if (!webAllowed()) return SharedReview(open = false, hint = EXAM_WEB)
