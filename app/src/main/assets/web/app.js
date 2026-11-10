@@ -88,7 +88,7 @@
     if (app.dataset.view === view) return;
     app.dataset.view = view;
     closeMenu();
-    if (view === 'pair' || view === 'loading') { $('title').textContent = 'Trazo'; document.title = 'Trazo'; }
+    if (view === 'pair' || view === 'loading') { $('title').textContent = 'Trazo'; document.title = 'Trazo Side Chat'; }
     if (view === 'pair') setTimeout(function () { $('code').focus(); }, 50);
     updateStatus();
   }
@@ -139,14 +139,14 @@
     if (!d.open) {
       $('closed-text').textContent = d.hint || 'Abrí una hoja en Trazo para verla acá.';
       $('title').textContent = 'Trazo';
-      document.title = 'Trazo';
+      document.title = 'Trazo Side Chat';
       setView('closed');
       updateStatus();
       return;
     }
     setView('main');
     $('title').textContent = d.title || 'Trazo';
-    document.title = d.title ? d.title + ' · Trazo' : 'Trazo';
+    document.title = d.title ? d.title + ' · Trazo Side Chat' : 'Trazo Side Chat';
     renderPage(d);
     renderNotes(d);
     renderChat(d);
@@ -633,3 +633,8 @@
   setTab('chat');
   tick();
 })();
+
+// Chrome solo instala la app con un service worker, y solo en un origen seguro (HTTPS o localhost).
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').catch(function () {});
+}
