@@ -639,84 +639,169 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('/sw.js').catch(function () {});
 }
 
-// PC: el chat se mueve y se redimensiona libre (arrastrando la barra o la esquina), y la letra se agranda o
-// achica. Son preferencias de este navegador: se guardan en localStorage y, si no se pueden guardar, da igual.
+// Apariencia (tema, color de las fórmulas, lado del chat) y diseño en PC: el chat flota y se mueve libre, o va
+// pegado a un costado. Son preferencias de este navegador (localStorage); si no se pueden guardar, da igual.
 (function () {
-  var KEY_BOX = 'trazo_chat_box', KEY_TEXT = 'trazo_text';
+  var KEY_BOX = 'trazo_chat_box', KEY_DOCK = 'trazo_chat_dock', KEY_TEXT = 'trazo_text', KEY_LOOK = 'trazo_look';
+  var THEMES = [['sistema', 'Sistema'], ['claro', 'Claro'], ['oscuro', 'Oscuro'], ['neon', 'Neón'], ['matrix', 'Matrix'],
+    ['oled', 'OLED'], ['vintage', 'Vintage'], ['papel-viejo', 'Papel viejo'], ['papel-nuevo', 'Papel nuevo']];
+  var TEX = [['', 'Automático'], ['#111111', 'Negro'], ['#1d4ed8', 'Azul'], ['#b91c1c', 'Rojo'], ['#15803d', 'Verde'], ['#7c3aed', 'Violeta']];
+  var LAYOUTS = [['float', 'Flotante'], ['dock', 'A un costado']];
+  var SIDES = [['right', 'Derecha'], ['left', 'Izquierda']];
   var wide = window.matchMedia('(min-width: 900px)');
+  var root = document.documentElement;
   var app = document.getElementById('app');
   var pane = document.getElementById('pane-chat');
   var grip = document.getElementById('grip');
   var rz = document.getElementById('rz');
   function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
   function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin guardado */ } }
+  function has(list, v) { return list.some(function (it) { return it[0] === v; }); }
+
+  var look = Object.assign({ theme: 'sistema', tex: '', layout: 'float', side: 'right' }, load(KEY_LOOK) || {});
+  if (!has(THEMES, look.theme)) look.theme = 'sistema';
+  if (!has(TEX, look.tex)) look.tex = '';
+  if (!has(LAYOUTS, look.layout)) look.layout = 'float';
+  if (!has(SIDES, look.side)) look.side = 'right';
   var box = load(KEY_BOX) || {};
+  var dock = load(KEY_DOCK) || {};
   var scale = Number(load(KEY_TEXT)) || 1;
 
+  function applyLook() {
+    if (look.theme === 'sistema') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', look.theme);
+    if (look.tex) root.style.setProperty('--tex', look.tex); else root.style.removeProperty('--tex');
+    app.setAttribute('data-side', look.side);
+  }
   function applyText() { app.style.fontSize = (16 * scale).toFixed(1) + 'px'; }
   function setText(next) {
     scale = Math.min(1.6, Math.max(0.8, Math.round(next * 10) / 10));
     save(KEY_TEXT, scale);
     applyText();
   }
+  function setLook(partial) {
+    look = Object.assign({}, look, partial);
+    save(KEY_LOOK, look);
+    applyLook();
+    place();
+  }
   function clamp(b) {
     var vw = window.innerWidth, vh = window.innerHeight;
     b.w = Math.max(280, Math.min(b.w, vw - 8));
     b.h = Math.max(220, Math.min(b.h, vh - 8));
-    b.x = Math.max(4, Math.min(b.x, vw - b.w - 4));
     // Todo el panel queda dentro de la pantalla: la barra y la esquina siempre se pueden agarrar.
     b.y = Math.max(4, Math.min(b.y, vh - b.h - 4));
+    b.x = Math.max(4, Math.min(b.x, vw - b.w - 4));
     return b;
   }
   function place() {
-    if (!wide.matches) {
-      pane.classList.remove('float');
-      pane.removeAttribute('style');
-      return;
+    var mode = wide.matches ? look.layout : 'none';
+    pane.classList.toggle('float', mode === 'float');
+    pane.classList.toggle('docked', mode === 'dock');
+    pane.removeAttribute('style');
+    if (mode === 'float') {
+      if (typeof box.w !== 'number') box.w = 440;
+      if (typeof box.h !== 'number') box.h = window.innerHeight - 100;
+      if (typeof box.x !== 'number') box.x = look.side === 'left' ? 12 : window.innerWidth - box.w - 12;
+      if (typeof box.y !== 'number') box.y = 72;
+      box = clamp(box);
+      pane.style.left = box.x + 'px';
+      pane.style.top = box.y + 'px';
+      pane.style.width = box.w + 'px';
+      pane.style.height = box.h + 'px';
+    } else if (mode === 'dock') {
+      if (typeof dock.w !== 'number') dock.w = 420;
+      dock.w = Math.max(300, Math.min(dock.w, Math.round(window.innerWidth * 0.6)));
+      pane.style.width = dock.w + 'px';
     }
-    pane.classList.add('float');
-    if (typeof box.x !== 'number') box = { x: window.innerWidth - 460, y: 72, w: 440, h: window.innerHeight - 100 };
-    box = clamp(box);
-    pane.style.left = box.x + 'px';
-    pane.style.top = box.y + 'px';
-    pane.style.width = box.w + 'px';
-    pane.style.height = box.h + 'px';
   }
   function drag(e, mode) {
     if (e.button !== undefined && e.button !== 0) return;
     if (e.target.closest && e.target.closest('button')) return;
+    var docked = pane.classList.contains('docked');
+    if (!docked && !pane.classList.contains('float')) return;
+    if (mode === 'move' && docked) return;
     e.preventDefault();
     var target = e.currentTarget;
     var sx = e.clientX, sy = e.clientY;
-    var start = { x: box.x, y: box.y, w: box.w, h: box.h };
+    var start = { x: box.x, y: box.y, w: box.w, h: box.h, dw: dock.w };
     target.setPointerCapture(e.pointerId);
     function move(ev) {
       var dx = ev.clientX - sx, dy = ev.clientY - sy;
-      if (mode === 'move') { box.x = start.x + dx; box.y = start.y + dy; }
-      else {
-        box.w = start.w + dx;
-        box.h = Math.min(start.h + dy, window.innerHeight - box.y - 4);
-      }
+      if (docked) dock.w = start.dw + (look.side === 'left' ? dx : -dx);
+      else if (mode === 'move') { box.x = start.x + dx; box.y = start.y + dy; }
+      else { box.w = start.w + dx; box.h = Math.min(start.h + dy, window.innerHeight - box.y - 4); }
       place();
     }
     function up() {
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
       target.removeEventListener('pointercancel', up);
-      save(KEY_BOX, box);
+      if (docked) save(KEY_DOCK, dock); else save(KEY_BOX, box);
     }
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', up);
     target.addEventListener('pointercancel', up);
   }
 
+  // ---- el menú «Apariencia»
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function choices(list, current, pick) {
+    var wrap = el('div', 'choices');
+    list.forEach(function (it) {
+      var b = el('button', 'choice', it[1]);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(current === it[0]));
+      b.addEventListener('click', function () { pick(it[0]); renderLook(); });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+  function section(title, node) {
+    var s = el('div', 'look-part');
+    s.appendChild(el('h3', null, title));
+    s.appendChild(node);
+    return s;
+  }
+  function renderLook() {
+    var body = el('div', 'look');
+    body.appendChild(section('Tema', choices(THEMES, look.theme, function (v) { setLook({ theme: v }); })));
+    body.appendChild(section('Color de las fórmulas', choices(TEX, look.tex, function (v) { setLook({ tex: v }); })));
+    body.appendChild(section('Chat en PC', choices(LAYOUTS, look.layout, function (v) { setLook({ layout: v }); })));
+    body.appendChild(section('Lado del chat', choices(SIDES, look.side, function (v) {
+      delete box.x;
+      save(KEY_BOX, box);
+      setLook({ side: v });
+    })));
+    body.appendChild(el('p', 'fine', 'En PC, «Flotante» deja el chat libre sobre la hoja: lo movés arrastrando su barra y lo ' +
+      'agrandás desde la esquina. «A un costado» lo pega al lado elegido. El teléfono no cambia.'));
+    var box2 = document.getElementById('dialog-body');
+    document.getElementById('dialog-title').textContent = 'Apariencia';
+    box2.textContent = '';
+    box2.appendChild(body);
+    var yes = document.getElementById('dialog-yes');
+    yes.textContent = 'Listo';
+    yes.onclick = function () { document.getElementById('dialog').hidden = true; };
+    document.getElementById('dialog-no').hidden = true;
+    document.getElementById('dialog').hidden = false;
+    yes.focus();
+  }
+
   grip.addEventListener('pointerdown', function (e) { drag(e, 'move'); });
   rz.addEventListener('pointerdown', function (e) { drag(e, 'size'); });
   document.getElementById('fs-down').addEventListener('click', function () { setText(scale - 0.1); });
   document.getElementById('fs-up').addEventListener('click', function () { setText(scale + 0.1); });
+  document.getElementById('m-look').addEventListener('click', function () {
+    document.getElementById('menu').hidden = true;
+    renderLook();
+  });
   window.addEventListener('resize', place);
   if (wide.addEventListener) wide.addEventListener('change', place);
+  applyLook();
   applyText();
   place();
 })();
-
