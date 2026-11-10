@@ -477,12 +477,16 @@
     request('GET', '/api/ai').then(function (r) {
       if (r.status === 401) return modelUnpaired();
       if (refresh && !modelOpen()) return;
-      if (r.status === 200 && r.json && r.json.ok) showModel(r.json);
+      if (r.status === 200 && r.json && r.json.ok) showModel(r.json, !refresh);
       else toast((r.json && r.json.error) || 'No se pudo leer los modelos.');
     }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
   }
 
-  function pickModel(payload) {
+  // Al redibujar, el foco vuelve a la opción que se tocó (no al botón «Listo»).
+  var modelFocus = null;
+
+  function pickModel(payload, key) {
+    modelFocus = key;
     request('POST', '/api/ai', payload).then(function (r) {
       if (r.status === 401) return modelUnpaired();
       if (r.status === 200) loadModel(true);
@@ -490,18 +494,19 @@
     }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
   }
 
-  function choiceButton(label, pressed, enabled, onPick) {
+  function choiceButton(label, pressed, enabled, onPick, key) {
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'choice';
     b.textContent = label;
+    b.dataset.k = key;
     b.setAttribute('aria-pressed', String(pressed));
     b.disabled = !enabled;
     b.addEventListener('click', onPick);
     return b;
   }
 
-  function showModel(data) {
+  function showModel(data, fresh) {
     var body = document.createElement('div');
     body.className = 'look';
     function part(title, node, note) {
@@ -519,8 +524,8 @@
     models.className = 'choices';
     profiles.forEach(function (p) {
       models.appendChild(choiceButton(p.name + (p.model ? ' · ' + p.model : ''), data.current === p.id, p.ready, function () {
-        pickModel({ profile: p.id });
-      }));
+        pickModel({ profile: p.id }, 'p:' + p.id);
+      }, 'p:' + p.id));
     });
     body.appendChild(part('Modelo', models, profiles.length
       ? 'Los apagados faltan configurar en Trazo (clave o inicio de sesión).'
@@ -528,7 +533,7 @@
     var quality = document.createElement('div');
     quality.className = 'choices';
     (data.qualities || []).forEach(function (q) {
-      quality.appendChild(choiceButton(q.label, data.quality === q.key, !!data.current, function () { pickModel({ quality: q.key }); }));
+      quality.appendChild(choiceButton(q.label, data.quality === q.key, !!data.current, function () { pickModel({ quality: q.key }, 'q:' + q.key); }, 'q:' + q.key));
     });
     body.appendChild(part('Calidad de la foto', quality, 'Una foto más grande lee mejor la letra, pero tarda más y gasta más.'));
     $('dialog-title').textContent = 'Modelo de IA';
@@ -539,7 +544,9 @@
     $('dialog-yes').onclick = function () { $('dialog').hidden = true; };
     $('dialog-no').hidden = true;
     $('dialog').hidden = false;
-    $('dialog-yes').focus();
+    var again = modelFocus && box.querySelector('[data-k="' + modelFocus + '"]');
+    modelFocus = null;
+    if (!fresh && again && !again.disabled) again.focus(); else $('dialog-yes').focus();
   }
 
   function dialog(title, body, yes, onYes) {

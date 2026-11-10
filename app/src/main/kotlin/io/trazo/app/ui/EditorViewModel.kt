@@ -90,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import io.trazo.app.data.LocalModelStore
 import io.trazo.app.sync.SyncWebHost
 import io.trazo.app.sync.WebAi
 import io.trazo.app.sync.WebAiProfile
@@ -1399,10 +1400,10 @@ class EditorViewModel(
     private val webHost = object : SyncWebHost {
         override fun review(): SharedReview = onMain { sharedReview() }
 
-        override fun ai(): WebAi? = onMain {
-            if (!webAllowed() || currentPageId() == null) return@onMain null
-            val s = app.trazo.ai.settings.value
-            WebAi(
+        // Las claves y los archivos locales se leen acá, fuera del hilo de la interfaz: solo el estado se toma en él.
+        override fun ai(): WebAi? {
+            val s = onMain { if (!webAllowed() || currentPageId() == null) null else app.trazo.ai.settings.value } ?: return null
+            return WebAi(
                 profiles = s.profiles.map { WebAiProfile(it.id, it.name, it.provider.label, it.model, aiReady(it)) },
                 current = s.current?.id,
                 quality = (s.current?.imageQuality ?: ImageQuality.MEDIUM).name.lowercase(),
@@ -1410,22 +1411,22 @@ class EditorViewModel(
             )
         }
 
-        override fun chooseAi(profileId: String?, quality: String?): String? = onMain {
-            if (!webAllowed()) return@onMain EXAM_WEB
-            if (currentPageId() == null) return@onMain SyncWebServer.NO_SHEET
-            val store = app.trazo.ai
-            val level = quality?.let { key -> ImageQuality.values().firstOrNull { it.name.equals(key, ignoreCase = true) } }
-            if (quality != null && level == null) return@onMain "Esa calidad no existe."
-            if (profileId != null) {
-                val target = store.settings.value.profiles.firstOrNull { it.id == profileId } ?: return@onMain "Ese modelo ya no existe."
-                if (!aiReady(target)) return@onMain "Ese modelo todavía no está listo: falta la clave o el inicio de sesión."
-                store.select(profileId)
+        override fun chooseAi(profileId: String?, quality: String?): String? {
+            val target = profileId?.let { id -> app.trazo.ai.settings.value.profiles.firstOrNull { it.id == id } ?: return "Ese modelo ya no existe." }
+            if (target != null && !aiReady(target)) return "Ese modelo todavía no está listo: falta la clave o el inicio de sesión."
+            return onMain {
+                if (!webAllowed()) return@onMain EXAM_WEB
+                if (currentPageId() == null) return@onMain SyncWebServer.NO_SHEET
+                val store = app.trazo.ai
+                val level = quality?.let { key -> ImageQuality.values().firstOrNull { it.name.equals(key, ignoreCase = true) } }
+                if (quality != null && level == null) return@onMain "Esa calidad no existe."
+                if (target != null) store.select(target.id)
+                if (level != null) {
+                    val current = store.settings.value.current ?: return@onMain "No hay un modelo elegido."
+                    store.save(current.copy(imageQuality = level))
+                }
+                null
             }
-            if (level != null) {
-                val current = store.settings.value.current ?: return@onMain "No hay un modelo elegido."
-                store.save(current.copy(imageQuality = level))
-            }
-            null
         }
 
         override fun pagePng(): ByteArray? {
@@ -1482,10 +1483,17 @@ class EditorViewModel(
     private fun webAllowed(): Boolean = app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)
 
     /** Lista para usarse: la configuración está completa y tiene la clave o la sesión que pide su proveedor. */
-    private fun aiReady(p: AiProfile): Boolean =
-        p.problem == null &&
-            (!p.provider.needsKey || app.trazo.ai.key(p.id) != null) &&
-            (!p.provider.signIn || app.trazo.ai.session(p.id) != null)
+    private fun aiReady(p: AiProfile): Boolean {
+        if (p.problem != null) return false
+        return when {
+            p.provider == AiProvider.ON_DEVICE -> localModels.get(p.model) != null
+            p.provider.needsKey && app.trazo.ai.key(p.id) == null -> false
+            p.provider.signIn && app.trazo.ai.session(p.id) == null -> false
+            else -> true
+        }
+    }
+
+    private val localModels by lazy { LocalModelStore(app) }
 
     private fun sharedReview(): SharedReview {
         if (!webAllowed()) return SharedReview(open = false, hint = EXAM_WEB)

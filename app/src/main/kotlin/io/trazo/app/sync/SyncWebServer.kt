@@ -371,6 +371,8 @@ class SyncWebServer(
         val quality = try { field("quality", 20) } catch (_: IllegalArgumentException) { return json(400, fail("La calidad tiene que ser un texto.")) }
         if (profile == null && quality == null) return json(400, fail("Elegí un modelo o una calidad."))
         val h = host() ?: return json(409, fail(NO_SHEET))
+        // La calidad tiene que ser una de las que se ofrecen: un valor inventado es un pedido mal hecho (400).
+        if (quality != null && h.ai()?.qualities?.any { it.first == quality } == false) return json(400, fail("Esa calidad no existe."))
         val problem = runCatching { h.chooseAi(profile, quality) }.getOrElse { "No se pudo cambiar el modelo." }
         return if (problem == null) json(200, OK) else json(409, fail(problem))
     }
