@@ -33,7 +33,7 @@ class CrashReportStoreTest {
             stackTrace = arrayOf(StackTraceElement("io.trazo.test.Editor", "complete", "Editor.kt", 42))
         }
 
-        store.save(Thread("editor-worker"), error, appVersion = "0.2.test", sdk = 34)
+        store.save(Thread("editor-worker"), error, appVersion = "0.2.test", sdk = 34, timeMillis = 1_234_567L)
 
         val report = store.readLatest()
         assertNotNull(report)
@@ -48,6 +48,10 @@ class CrashReportStoreTest {
         assertFalse(savedReport.contains("private token"))
         assertFalse(savedReport.contains("2+3="))
         assertFalse(savedReport.contains("nested private content"))
+        assertEquals(1_234_567L, CrashReportStore.timeOf(savedReport))
+        store.clear()
+        assertFalse(store.hasReport())
+        assertEquals(null, CrashReportStore.timeOf("Trazo uncaught exception report v1\nsdk: 34\n"))
     }
 
     @Test

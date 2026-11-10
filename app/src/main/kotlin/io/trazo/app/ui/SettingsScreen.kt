@@ -98,7 +98,12 @@ fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
     val context = LocalContext.current
     val app = context.applicationContext as TrazoApp
     val store = app.settings
-    val lastCrashReport = remember(app) { app.crashReports.readLatest() }
+    var lastCrashReport by remember(app) { mutableStateOf(app.crashReports.readLatest()) }
+    // Los informes guardados antes de instalar la versión actual no sirven para diagnosticarla.
+    val installedAt = remember(app) {
+        @Suppress("DEPRECATION")
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime }.getOrNull()
+    }
     val s by store.settings.collectAsState()
     val stylus = remember { hasStylusDevice() }
     var picking by remember { mutableStateOf<PrefColor?>(null) }
@@ -156,19 +161,47 @@ fun SettingsScreen(onBack: () -> Unit, initialSection: String? = null) {
                         SettingsPage(section, s, stylus, update) { picking = it }
                     }
 
-                    if (section == null && lastCrashReport != null) {
+                    val crashReport = lastCrashReport
+                    if (section == null && crashReport != null) {
+                        val crashAt = io.trazo.app.data.CrashReportStore.timeOf(crashReport)
+                        val stale = crashAt == null || (installedAt != null && crashAt < installedAt)
+                        Text(
+                            buildString {
+                                append("Último cierre: ")
+                                append(
+                                    crashAt?.let {
+                                        java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                                            .format(java.util.Date(it))
+                                    } ?: "fecha desconocida",
+                                )
+                                if (stale) append(" · de una versión anterior, ya no aplica")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                         OutlinedButton(
                             onClick = {
                                 val send = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
                                     putExtra(Intent.EXTRA_SUBJECT, "Informe de error de Trazo")
-                                    putExtra(Intent.EXTRA_TEXT, lastCrashReport)
+                                    putExtra(Intent.EXTRA_TEXT, crashReport)
                                 }
                                 context.startActivity(Intent.createChooser(send, "Compartir último error"))
                             },
                             modifier = Modifier.align(Alignment.CenterHorizontally),
                         ) {
                             Text("Compartir último error")
+                        }
+                        TextButton(
+                            onClick = {
+                                app.crashReports.clear()
+                                lastCrashReport = null
+                            },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            Text("Borrar informe")
                         }
                         Text(
                             "El informe contiene datos técnicos; no incluye mensajes de error ni contenido escrito.",

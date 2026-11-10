@@ -15,6 +15,11 @@ class CrashReportStore(directory: File) {
 
     fun hasReport(): Boolean = readLatest() != null
 
+    /** Borra el informe guardado (por ejemplo, después de compartirlo o al actualizar la app). */
+    fun clear() {
+        runCatching { file.delete() }
+    }
+
     fun readLatest(): String? = runCatching {
         val bytes = file.openRead().use { input ->
             val output = ByteArrayOutputStream()
@@ -34,8 +39,14 @@ class CrashReportStore(directory: File) {
     }.getOrNull()
 
     /** Stores class names and frames only. Exception messages and application content are omitted. */
-    fun save(thread: Thread, error: Throwable, appVersion: String, sdk: Int = Build.VERSION.SDK_INT) {
-        val bytes = reportBytes(thread, error, appVersion, sdk)
+    fun save(
+        thread: Thread,
+        error: Throwable,
+        appVersion: String,
+        sdk: Int = Build.VERSION.SDK_INT,
+        timeMillis: Long = System.currentTimeMillis(),
+    ) {
+        val bytes = reportBytes(thread, error, appVersion, sdk, timeMillis)
         if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) {
             throw IllegalStateException("Unable to create crash report directory")
         }
@@ -49,7 +60,7 @@ class CrashReportStore(directory: File) {
         }
     }
 
-    private fun reportBytes(thread: Thread, error: Throwable, appVersion: String, sdk: Int): ByteArray {
+    private fun reportBytes(thread: Thread, error: Throwable, appVersion: String, sdk: Int, timeMillis: Long): ByteArray {
         val out = StringBuilder()
         var bytesWritten = 0
         var truncated = false
@@ -70,6 +81,7 @@ class CrashReportStore(directory: File) {
         appendLine("Trazo uncaught exception report v1")
         appendLine("appVersion: ${safeValue(appVersion)}")
         appendLine("sdk: $sdk")
+        appendLine("$TIME_PREFIX$timeMillis")
         appendLine("threadId: ${thread.id}")
         appendLine("threadName: ${safeValue(thread.name)}")
 
@@ -109,6 +121,13 @@ class CrashReportStore(directory: File) {
 
     companion object {
         const val MAX_REPORT_BYTES = 64 * 1024
+        private const val TIME_PREFIX = "timeMillis: "
+
+        /** Momento del cierre (ms desde 1970) o null si el informe es de una versión que no lo guardaba. */
+        fun timeOf(report: String): Long? = report.lineSequence()
+            .firstOrNull { it.startsWith(TIME_PREFIX) }
+            ?.removePrefix(TIME_PREFIX)?.trim()?.toLongOrNull()
+
         private const val FILE_NAME = "last-crash-report.txt"
         private const val MAX_LINE_CHARS = 768
         private const val MAX_METADATA_CHARS = 160
