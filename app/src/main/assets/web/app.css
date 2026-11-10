@@ -248,3 +248,28 @@ button:disabled { cursor: default; }
   max-width: min(92vw, 520px); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 12px; box-shadow: var(--shadow); font-size: .94em; text-align: center;
 }
 .noscript { padding: 24px; text-align: center; }
+
+/* ------------------------------------------------------------------ PC: el chat flota y se mueve libre */
+.grip, .rz { display: none; }
+@media (min-width: 900px) {
+  .chat-pane.float {
+    position: fixed; z-index: 30; max-width: none; min-width: 0;
+    border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  .chat-pane.float .grip {
+    display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 14px;
+    border-bottom: 1px solid var(--line); background: var(--surface); cursor: move; touch-action: none; user-select: none;
+  }
+  .chat-pane.float .grip-title { flex: 1; min-width: 0; color: var(--muted); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-pane.float .grip button {
+    width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font-weight: 700; font-size: .95em;
+  }
+  .chat-pane.float .grip button:hover { background: var(--line); }
+  .chat-pane.float .composer { padding-right: 30px; }
+  .chat-pane.float .rz {
+    display: block; position: absolute; right: 0; bottom: 0; z-index: 5; width: 24px; height: 24px; cursor: nwse-resize; touch-action: none;
+    background: linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 56%, transparent 56%, transparent 72%, var(--muted) 72%, var(--muted) 78%, transparent 78%);
+    opacity: .6;
+  }
+}
+

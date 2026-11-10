@@ -47,8 +47,14 @@
     </section>
 
     <section id="pane-chat" class="pane chat-pane" aria-label="Chat de revisión">
+      <div id="grip" class="grip">
+        <span class="grip-title">Chat · arrastrá para moverlo</span>
+        <button id="fs-down" type="button" aria-label="Letra más chica">A−</button>
+        <button id="fs-up" type="button" aria-label="Letra más grande">A+</button>
+      </div>
       <div id="chat" class="chat" aria-live="polite"></div>
       <div id="quick" class="quick" hidden></div>
+      <div id="rz" class="rz" aria-hidden="true"></div>
       <form id="composer" class="composer" autocomplete="off">
         <div id="chip" class="chip" hidden>
           <img id="chip-img" alt="Foto para mandar">

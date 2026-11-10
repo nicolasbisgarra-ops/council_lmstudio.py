@@ -638,3 +638,85 @@
 if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('/sw.js').catch(function () {});
 }
+
+// PC: el chat se mueve y se redimensiona libre (arrastrando la barra o la esquina), y la letra se agranda o
+// achica. Son preferencias de este navegador: se guardan en localStorage y, si no se pueden guardar, da igual.
+(function () {
+  var KEY_BOX = 'trazo_chat_box', KEY_TEXT = 'trazo_text';
+  var wide = window.matchMedia('(min-width: 900px)');
+  var app = document.getElementById('app');
+  var pane = document.getElementById('pane-chat');
+  var grip = document.getElementById('grip');
+  var rz = document.getElementById('rz');
+  function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin guardado */ } }
+  var box = load(KEY_BOX) || {};
+  var scale = Number(load(KEY_TEXT)) || 1;
+
+  function applyText() { app.style.fontSize = (16 * scale).toFixed(1) + 'px'; }
+  function setText(next) {
+    scale = Math.min(1.6, Math.max(0.8, Math.round(next * 10) / 10));
+    save(KEY_TEXT, scale);
+    applyText();
+  }
+  function clamp(b) {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    b.w = Math.max(280, Math.min(b.w, vw - 8));
+    b.h = Math.max(220, Math.min(b.h, vh - 8));
+    b.x = Math.max(4, Math.min(b.x, vw - b.w - 4));
+    // Todo el panel queda dentro de la pantalla: la barra y la esquina siempre se pueden agarrar.
+    b.y = Math.max(4, Math.min(b.y, vh - b.h - 4));
+    return b;
+  }
+  function place() {
+    if (!wide.matches) {
+      pane.classList.remove('float');
+      pane.removeAttribute('style');
+      return;
+    }
+    pane.classList.add('float');
+    if (typeof box.x !== 'number') box = { x: window.innerWidth - 460, y: 72, w: 440, h: window.innerHeight - 100 };
+    box = clamp(box);
+    pane.style.left = box.x + 'px';
+    pane.style.top = box.y + 'px';
+    pane.style.width = box.w + 'px';
+    pane.style.height = box.h + 'px';
+  }
+  function drag(e, mode) {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (e.target.closest && e.target.closest('button')) return;
+    e.preventDefault();
+    var target = e.currentTarget;
+    var sx = e.clientX, sy = e.clientY;
+    var start = { x: box.x, y: box.y, w: box.w, h: box.h };
+    target.setPointerCapture(e.pointerId);
+    function move(ev) {
+      var dx = ev.clientX - sx, dy = ev.clientY - sy;
+      if (mode === 'move') { box.x = start.x + dx; box.y = start.y + dy; }
+      else {
+        box.w = start.w + dx;
+        box.h = Math.min(start.h + dy, window.innerHeight - box.y - 4);
+      }
+      place();
+    }
+    function up() {
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
+      save(KEY_BOX, box);
+    }
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', up);
+  }
+
+  grip.addEventListener('pointerdown', function (e) { drag(e, 'move'); });
+  rz.addEventListener('pointerdown', function (e) { drag(e, 'size'); });
+  document.getElementById('fs-down').addEventListener('click', function () { setText(scale - 0.1); });
+  document.getElementById('fs-up').addEventListener('click', function () { setText(scale + 0.1); });
+  window.addEventListener('resize', place);
+  if (wide.addEventListener) wide.addEventListener('change', place);
+  applyText();
+  place();
+})();
+
