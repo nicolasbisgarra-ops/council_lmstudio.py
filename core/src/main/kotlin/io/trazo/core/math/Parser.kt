@@ -61,7 +61,7 @@ private fun collect(e: Expr, out: MutableSet<String>) {
  * power   = postfix ('^' unary)?                    asociativa a la derecha
  * postfix = primary (superíndice | '%')*               50% = 50/100
  * primary = número | identificador | π | '(' expr (';' expr)* ')' | '√' postfix    con ';', un par
- *         | '[' expr ((';' | número) expr)* ']'      vector; [[1;2];[3;4]] es una matriz
+ *         | '[' expr (';'? expr)* ']'                vector; [[1;2];[3;4]] es una matriz; "[1 -2]" son dos elementos
  *         | 'd/dx' power | '∫' ('_' primary '^' primary)? expr 'dx' | 'det' '(' expr ')'
  * ```
  * La multiplicación implícita nunca toma un número a la derecha: "2 3" es un error, no 6.
@@ -103,16 +103,28 @@ object MathParser {
 
     private class Parser(val tokens: List<Token>) {
         var i = 0
+        var bracketDepth = 0
+        var parenDepth = 0
         fun peek() = tokens[i]
         fun next() = tokens[i++]
 
         fun expr(): Expr {
             var e = term()
             while (peek().kind == Kind.PLUS || peek().kind == Kind.MINUS) {
+                if (bracketDepth > 0 && parenDepth == 0 && isRowElementStart()) break
                 val op = if (next().kind == Kind.PLUS) '+' else '-'
                 e = Expr.Bin(op, e, term())
             }
             return e
+        }
+
+        private fun isRowElementStart(): Boolean {
+            val prev = tokens[i - 1]
+            val curr = tokens[i]
+            val nextTok = tokens.getOrNull(i + 1) ?: return false
+            val spaceBefore = prev.pos + prev.text.length < curr.pos
+            val spaceAfter = curr.pos + curr.text.length < nextTok.pos
+            return spaceBefore && !spaceAfter
         }
 
         fun term(): Expr {
@@ -166,21 +178,34 @@ object MathParser {
                 Kind.PI -> Expr.Pi
                 Kind.SQRT -> Expr.Sqrt(postfix())
                 Kind.LPAREN -> {
+                    parenDepth++
                     val items = mutableListOf(expr())
                     while (peek().kind == Kind.SEP) { next(); items += expr() }
                     val close = next()
+                    parenDepth--
                     if (close.kind != Kind.RPAREN) syntax("falta cerrar un paréntesis", close.pos)
                     items.singleOrNull() ?: Expr.Tuple(items)
                 }
                 Kind.LBRACK -> {
+                    // Un corchete que abre un elemento de otro corchete es una fila: [[a]] es una matriz 1×1.
+                    // Suelto, [a] sigue siendo un agrupador: 2[x+1] es 2(x+1).
+                    val before = tokens.getOrNull(i - 2)?.kind
+                    val row = bracketDepth > 0 && (before == Kind.LBRACK || before == Kind.SEP)
+                    val startsRow = peek().kind == Kind.LBRACK
+                    // Dentro del corchete no cuentan los paréntesis de afuera: det([1 -2]) separa igual.
+                    val outerParens = parenDepth
+                    parenDepth = 0
+                    bracketDepth++
                     val items = mutableListOf(expr())
-                    while (peek().kind == Kind.SEP || peek().kind == Kind.NUMBER || peek().kind == Kind.LBRACK) {
+                    while (peek().kind != Kind.RBRACK && peek().kind != Kind.EOF) {
                         if (peek().kind == Kind.SEP) next()
                         items += expr()
                     }
                     val close = next()
+                    bracketDepth--
+                    parenDepth = outerParens
                     if (close.kind != Kind.RBRACK) syntax("falta cerrar un corchete", close.pos)
-                    items.singleOrNull() ?: Expr.Tuple(items)
+                    if (row || startsRow) Expr.Tuple(items) else items.singleOrNull() ?: Expr.Tuple(items)
                 }
                 Kind.INTEGRAL -> integral(t)
                 Kind.FUNCTION -> {

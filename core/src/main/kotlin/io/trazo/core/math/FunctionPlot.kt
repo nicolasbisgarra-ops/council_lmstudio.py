@@ -304,11 +304,15 @@ object FunctionPlot {
     private data class T(val k: K, val s: String, val v: Double = 0.0)
 
     private val SUPER_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹"
-    private val SUPER_RUN = Regex("[⁰¹²³⁴⁵⁶⁷⁸⁹]+")
+    private val SUPER_RUN = Regex("⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+")
 
     private fun tokens(src: String): List<T> {
         // «x²» → «x^2», «x¹⁰» → «x^10».
-        val sup = SUPER_RUN.replace(src) { m -> "^" + m.value.map { SUPER_DIGITS.indexOf(it) }.joinToString("") }
+        val sup = SUPER_RUN.replace(src) { m ->
+            val v = m.value
+            if (v.startsWith('⁻')) "^-" + v.substring(1).map { SUPER_DIGITS.indexOf(it) }.joinToString("")
+            else "^" + v.map { SUPER_DIGITS.indexOf(it) }.joinToString("")
+        }
         val s = sup.replace('·', '*').replace('×', '*').replace('÷', '/').replace('−', '-').replace('–', '-')
             .replace("π", "pi").replace("√", "sqrt").replace('[', '(').replace(']', ')').replace(',', '.')
         val out = ArrayList<T>()
@@ -443,12 +447,27 @@ object FunctionPlot {
                     p.s !in FUNS -> { val v = params[p.s] ?: 1.0; { v } } // parámetro: vale lo que diga el mapa.
                     else -> {
                         val f = FUNS.getValue(p.s)
-                        // «sin^2 x» = (sin x)^2.
+                        // «sin^2 x» = (sin x)^2; «sin^-1 x» = arcsin(x).
                         var pw: ((Double) -> Double)? = null
-                        if (peek().k == K.OP && peek().s == "^") { i++; pw = primary() }
+                        var isMinusOne = false
+                        if (peek().k == K.OP && peek().s == "^") {
+                            i++
+                            pw = unary()
+                            isMinusOne = try { pw(0.0) == -1.0 && pw(1.0) == -1.0 } catch (_: Throwable) { false }
+                        }
+                        val inv = if (isMinusOne) when (p.s) {
+                            "sin", "sen" -> FUNS["arcsin"] ?: FUNS.getValue("asin")
+                            "cos" -> FUNS["arccos"] ?: FUNS.getValue("acos")
+                            "tan", "tg" -> FUNS["arctan"] ?: FUNS.getValue("atan")
+                            else -> null
+                        } else null
                         val arg = if (peek().k == K.LP) primary() else power()
-                        val g = pw
-                        if (g == null) { x -> f(arg(x)) } else { x -> f(arg(x)).pow(g(x)) }
+                        if (inv != null) {
+                            { x -> inv(arg(x)) }
+                        } else {
+                            val g = pw
+                            if (g == null) { x -> f(arg(x)) } else { x -> f(arg(x)).pow(g(x)) }
+                        }
                     }
                 }
                 K.LP -> {
