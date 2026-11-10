@@ -25,6 +25,9 @@ class TrazoApp : Application() {
     /** Sincronización con los otros dispositivos del usuario (red de casa o Tailscale). */
     val sync: io.trazo.app.sync.SyncService by lazy { io.trazo.app.sync.SyncService(this, repository) }
 
+    /** La revisión en el navegador de otro equipo de la red de casa. */
+    val web: io.trazo.app.sync.SyncWebAccess by lazy { io.trazo.app.sync.SyncWebAccess(this) }
+
     override fun onCreate() {
         super.onCreate()
         CrashReportHandlerInstaller.install(crashReports, appVersionName())

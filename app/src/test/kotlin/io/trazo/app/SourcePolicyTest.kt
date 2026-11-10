@@ -40,6 +40,27 @@ class SourcePolicyTest {
         assertFalse(chat.contains("katex", ignoreCase = true) || chat.contains("WebView"))
     }
 
+    /**
+     * La única excepción (DECISIONES 36): la web de revisión, que corre en el navegador de otro equipo y no
+     * en la app, lleva su motor de fórmulas como archivos fijos. Nada de esa web sale a internet.
+     */
+    @Test fun `the review web is self-contained and its formula engine stays in its vendor folder`() {
+        val web = File(main, "assets/web")
+        assertTrue("falta la web de revisión", File(web, "index.html").isFile)
+        val assets = File(main, "assets").walkTopDown().filter { it.isFile }.toList()
+        for (f in assets) {
+            val path = f.path.replace('\\', '/')
+            assertTrue("$path no es de la web de revisión", path.contains("/assets/web/"))
+            if (f.name.contains("katex", ignoreCase = true)) assertTrue(path, path.contains("/assets/web/vendor/katex/"))
+        }
+        for (f in web.listFiles().orEmpty().filter { it.isFile && it.extension in setOf("html", "js", "css", "webmanifest") }) {
+            val text = f.readText()
+            for (word in listOf("https://", "http://", "//cdn", "googleapis", "eval(", "document.write")) {
+                assertFalse("${f.name} contiene $word", text.contains(word, ignoreCase = true))
+            }
+        }
+    }
+
     @Test fun `T24 the ink surface never draws text, fonts or images`() {
         val ink = sources.filter { it.path.replace('\\', '/').contains("/ink/") }
         assertTrue(ink.isNotEmpty())

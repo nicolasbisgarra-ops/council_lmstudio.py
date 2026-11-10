@@ -89,8 +89,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import io.trazo.app.sync.ReviewWebServer
-import io.trazo.app.sync.localAddresses
+import io.trazo.app.sync.SyncWebHost
+import io.trazo.app.sync.SyncWebServer
 import io.trazo.core.share.SharedMessage
 import io.trazo.core.share.SharedNote
 import io.trazo.core.share.SharedReview
@@ -1381,78 +1381,91 @@ class EditorViewModel(
 
     fun toggleChat() { if (chatOpen) closeChat() else openChat() }
 
-    // ---------------------------------------------------------------- ver la revisión en otro dispositivo
+    // ---------------------------------------------------------------- la revisión en la web
 
-    /** Las direcciones para abrir la revisión desde otro dispositivo y cuándo se apaga. */
-    data class WebShareState(val urls: List<String>, val expiresAt: Long)
+    /** Lee o cambia el estado en el hilo principal desde un hilo del servidor web. */
+    private fun <T> onMain(block: () -> T): T = runBlocking { withTimeout(3000) { withContext(Dispatchers.Main) { block() } } }
 
-    /** Lo que se está compartiendo por la red de casa; null si no se comparte. */
-    var webShare by mutableStateOf<WebShareState?>(null)
-        private set
-    private var webServer: ReviewWebServer? = null
-    private var webGen = 0
+    /** El id de la hoja en edición; null si todavía no cargó. */
+    private fun currentPageId(): String? = notebook?.slots?.getOrNull(pageIndex)?.id?.takeIf { attachedPageId == it }
 
-    /** Arranca (o reinicia con un código nuevo) la página web de solo lectura con la revisión de la hoja actual. */
-    fun startWebShare() {
-        stopWebShare()
-        val gen = webGen
-        viewModelScope.launch {
-            val started = withContext(Dispatchers.IO) {
+    /** La hoja en edición tal como se ve ahora, sin guardarla; null si todavía no cargó. */
+    private fun currentPage(): Page? = currentPageId()?.let { controller.page.toPage(it) }
+
+    /** Lo que la web de revisión ve y puede pedir de la hoja abierta. */
+    private val webHost = object : SyncWebHost {
+        override fun review(): SharedReview = onMain { sharedReview() }
+
+        override fun pagePng(): ByteArray? {
+            val (page, paper, results) = onMain {
+                val p = currentPage()
+                val n = notebook
+                if (p == null || n == null || !webAllowed()) null else Triple(p, n.paper, mathResults(p))
+            } ?: return null
+            val out = ByteArrayOutputStream()
+            PageExporter.writePng(page, paper, out, scale = 1.5f, results = results, includeAi = true)
+            return out.toByteArray()
+        }
+
+        override fun chatImage(name: String): ByteArray? {
+            val mine = onMain { webAllowed() && chatPage == currentPageId() && chatMessages.any { it.image == name } }
+            return if (mine) runCatching { chatImageFile(name).readBytes() }.getOrNull() else null
+        }
+
+        override fun send(text: String, image: ByteArray?): String? {
+            val stored = image?.let { bytes ->
                 runCatching {
-                    val server = ReviewWebServer(review = ::sharedReview, pagePng = ::sharedPng)
-                    val port = server.start()
-                    server to localAddresses().map { ReviewWebServer.url(it, port, server.token) }
-                }.getOrNull()
-            } ?: return@launch
-            if (gen != webGen) {
-                Thread({ started.first.stop() }, "trazo-web-stop").start()
-                return@launch
+                    val bmp = io.trazo.app.data.ImageImport.decode({ bytes.inputStream() }, CHAT_IMAGE_SIDE) ?: error("No se pudo leer la imagen")
+                    try { storeImage(bmp) } finally { bmp.recycle() }
+                }.getOrElse { return "No se pudo leer la foto." }
             }
-            webServer = started.first
-            webShare = WebShareState(started.second, started.first.expiresAt())
+            return onMain {
+                when {
+                    !webAllowed() -> EXAM_WEB
+                    currentPageId() == null -> SyncWebServer.NO_SHEET
+                    chatBusy -> "El tutor todavía está contestando."
+                    else -> {
+                        if (stored != null) chatAttachment = stored
+                        sendChat(text)
+                        null
+                    }
+                }
+            }
+        }
+
+        override fun restart(fresh: Boolean): String? = onMain {
+            val id = currentPageId()
+            when {
+                !webAllowed() -> EXAM_WEB
+                id == null -> SyncWebServer.NO_SHEET
+                chatBusy && !fresh -> "El tutor todavía está contestando."
+                else -> {
+                    if (fresh) { loadChat(id); restartChat() } else sendChat(null)
+                    null
+                }
+            }
         }
     }
 
-    fun stopWebShare() {
-        webGen++
-        val s = webServer
-        webServer = null
-        webShare = null
-        if (s != null) Thread({ s.stop() }, "trazo-web-stop").start()
-    }
+    private fun webAllowed(): Boolean = app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)
 
-    /** Lee el estado en el hilo principal desde el hilo del servidor web. */
-    private fun <T> onMain(block: () -> T): T = runBlocking { withTimeout(3000) { withContext(Dispatchers.Main) { block() } } }
-
-    /** La hoja en edición tal como se ve ahora, sin guardarla; null si todavía no cargó. */
-    private fun currentPage(): Page? {
-        val id = notebook?.slots?.getOrNull(pageIndex)?.id ?: return null
-        return if (attachedPageId == id) controller.page.toPage(id) else null
-    }
-
-    private fun sharedReview(): SharedReview = onMain {
-        val page = currentPage()
-        val title = listOfNotNull(notebook?.name?.takeIf { it.isNotBlank() }, "hoja ${pageIndex + 1}").joinToString(" · ")
-        val msgs = if (page != null && chatPage == page.id) chatMessages else emptyList()
-        SharedReview(
-            title = title,
-            messages = msgs.map {
-                SharedMessage(it.role == TutorRole.STUDENT, it.text, it.line, it.correct, it.verdict, it.error)
+    private fun sharedReview(): SharedReview {
+        if (!webAllowed()) return SharedReview(open = false, hint = EXAM_WEB)
+        val id = currentPageId() ?: return SharedReview(open = false, hint = SyncWebServer.NO_SHEET)
+        val n = notebook ?: return SharedReview(open = false, hint = SyncWebServer.NO_SHEET)
+        val ai = controller.page.ai
+        return SharedReview(
+            open = true,
+            title = listOfNotNull(n.name.takeIf { it.isNotBlank() }, "hoja ${pageIndex + 1}").joinToString(" · "),
+            pageKey = "$id:$editVersion:${System.identityHashCode(ai)}:${n.paper.hashCode()}",
+            messages = (if (chatPage == id) chatMessages else emptyList()).map {
+                SharedMessage(it.role == TutorRole.STUDENT, it.text, it.line, it.correct, it.verdict, it.error, it.image)
             },
-            notes = page?.ai?.notes.orEmpty().map { SharedNote(it.line, it.kind, it.short, it.detail, it.fix) },
-            updatedAt = page?.hashCode()?.toLong()?.and(0xffffffffL) ?: 0L,
+            notes = ai?.notes.orEmpty().map { SharedNote(it.line, it.kind, it.short, it.detail, it.fix) },
+            busy = chatBusy,
+            streaming = chatStreaming,
+            quick = AiTutor.QUICK,
         )
-    }
-
-    private fun sharedPng(): ByteArray? {
-        val (page, paper, results) = onMain {
-            val p = currentPage()
-            val n = notebook
-            if (p == null || n == null) null else Triple(p, n.paper, mathResults(p))
-        } ?: return null
-        val out = ByteArrayOutputStream()
-        PageExporter.writePng(page, paper, out, scale = 1.5f, results = results, includeAi = true)
-        return out.toByteArray()
     }
 
     private fun loadChat(pageId: String) {
@@ -1688,7 +1701,7 @@ class EditorViewModel(
     }
 
     override fun onCleared() {
-        stopWebShare()
+        app.trazo.web.detach(webHost)
         reviewGate.close()
         discussionId++
         discussionJob?.cancel()
@@ -1729,6 +1742,7 @@ class EditorViewModel(
 
     // Al final de la clase: Main.immediate corre esto en el acto y todas las propiedades ya deben existir.
     init {
+        app.trazo.web.attach(webHost)
         viewModelScope.launch {
             app.trazo.study.state.collect { state ->
                 reviewGate.setExamMode(state.examActive)
@@ -1786,5 +1800,6 @@ private const val PAGE_SESSIONS = 8
 /** Lado de la copia para la vista previa del recorte. */
 private const val PREVIEW_SIDE = 900
 private const val CHAT_IMAGE_SIDE = 2048
+private const val EXAM_WEB = "La revisión con IA está bloqueada durante el examen."
 /** Etiqueta de lo que Trazo copia al portapapeles del sistema (no se vuelve a pegar como imagen). */
 private const val CLIP_LABEL = "Trazo"

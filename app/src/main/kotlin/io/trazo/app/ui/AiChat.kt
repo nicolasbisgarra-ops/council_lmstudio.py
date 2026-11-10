@@ -168,10 +168,10 @@ private fun AiChatContent(vm: EditorViewModel, onFontSp: (Float) -> Unit, modifi
                     Text("A+", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 }
                 var showShare by remember { mutableStateOf(false) }
-                IconButton(onClick = { if (vm.webShare == null) vm.startWebShare(); showShare = true }) {
+                IconButton(onClick = { showShare = true }) {
                     Icon(Icons.Filled.Share, contentDescription = "Ver en otro dispositivo")
                 }
-                if (showShare) WebShareDialog(vm) { showShare = false }
+                if (showShare) WebShareDialog { showShare = false }
                 IconButton(onClick = vm::restartChat, enabled = !busy) { Icon(Icons.Filled.Refresh, contentDescription = "Revisar de nuevo") }
                 IconButton(onClick = vm::closeChat) { Icon(Icons.Filled.Close, contentDescription = "Plegar el chat") }
             }

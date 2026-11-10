@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f4f1e8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161816" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Trazo">
+<title>Trazo</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app" class="app" data-view="loading" data-tab="chat">
+
+  <header class="bar">
+    <img class="logo" src="/icon-192.png" alt="" width="32" height="32">
+    <div class="titles">
+      <div id="title" class="title">Trazo</div>
+      <div id="status" class="status">Conectando…</div>
+    </div>
+    <nav class="tabs" aria-label="Vista">
+      <button id="tab-chat" class="tab" type="button" aria-pressed="true">Chat</button>
+      <button id="tab-page" class="tab" type="button" aria-pressed="false">Hoja</button>
+    </nav>
+    <button id="menu-btn" class="icon-btn" type="button" aria-label="Más opciones" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg>
+    </button>
+  </header>
+
+  <main class="panes">
+    <section id="pane-page" class="pane page-pane" aria-label="La hoja">
+      <button id="sheet-btn" class="sheet" type="button" aria-label="Agrandar la hoja">
+        <img id="sheet" alt="La hoja con las marcas de la revisión">
+        <span id="sheet-empty" class="sheet-empty">Cargando la hoja…</span>
+      </button>
+      <h2 id="notes-title" class="section" hidden>Marcas de la revisión</h2>
+      <ol id="notes" class="notes"></ol>
+    </section>
+
+    <section id="pane-chat" class="pane chat-pane" aria-label="Chat de revisión">
+      <div id="chat" class="chat" aria-live="polite"></div>
+      <div id="quick" class="quick" hidden></div>
+      <form id="composer" class="composer" autocomplete="off">
+        <div id="chip" class="chip" hidden>
+          <img id="chip-img" alt="Foto para mandar">
+          <span id="chip-text">Foto lista para mandar</span>
+          <button id="chip-x" class="icon-btn" type="button" aria-label="Quitar la foto">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="row">
+          <button id="attach" class="icon-btn" type="button" aria-label="Adjuntar una foto">
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.500zM4.500 16l4.200-4.200a1.500 1.500 0 0 1 2.100 0L15 16m-1.500-1.500 1.200-1.200a1.500 1.500 0 0 1 2.100 0l2.700 2.700" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="15.500" cy="9.500" r="1.400"/></svg>
+          </button>
+          <textarea id="text" rows="1" maxlength="8000" placeholder="Preguntá algo…" aria-label="Mensaje para el tutor"></textarea>
+          <button id="send" class="send" type="submit" aria-label="Enviar" disabled>
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 12l15-7-5.500 15-2.700-6.300z" fill="currentColor"/></svg>
+          </button>
+        </div>
+        <input id="file" type="file" accept="image/*" hidden>
+      </form>
+    </section>
+  </main>
+
+  <section id="closed" class="center">
+    <img src="/icon-192.png" alt="" width="72" height="72">
+    <h1>Trazo</h1>
+    <p id="closed-text">Abrí una hoja en Trazo para verla acá.</p>
+  </section>
+
+  <section id="pair" class="center">
+    <img src="/icon-192.png" alt="" width="72" height="72">
+    <h1>Vincular con Trazo</h1>
+    <ol class="steps">
+      <li>En la tablet, abrí el <b>chat de revisión</b> y tocá <b>Ver en otro dispositivo</b>.</li>
+      <li>Escaneá el QR con este equipo, o escribí acá el código de 8 dígitos.</li>
+    </ol>
+    <form id="pair-form" autocomplete="off">
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="0000 0000" aria-label="Código de vinculación">
+      <button id="pair-btn" class="primary" type="submit">Vincular</button>
+    </form>
+    <p id="pair-error" class="error" role="alert"></p>
+    <p class="fine">Se vincula una sola vez: después este navegador entra directo mientras Trazo esté abierto en la misma red.</p>
+  </section>
+
+  <section id="loading" class="center">
+    <img src="/icon-192.png" alt="" width="72" height="72">
+    <p id="loading-text">Conectando con Trazo…</p>
+  </section>
+
+  <div id="menu" class="menu" role="menu" hidden>
+    <button id="m-review" type="button" role="menuitem">Nueva revisión</button>
+    <button id="m-install" type="button" role="menuitem">Instalar como app</button>
+    <button id="m-unpair" type="button" role="menuitem">Desvincular este navegador</button>
+  </div>
+
+  <div id="dialog" class="scrim" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <h2 id="dialog-title"></h2>
+      <div id="dialog-body"></div>
+      <div class="actions">
+        <button id="dialog-no" type="button">Cancelar</button>
+        <button id="dialog-yes" class="primary" type="button">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewer" class="viewer" hidden>
+    <button id="viewer-x" class="icon-btn" type="button" aria-label="Cerrar">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <div id="viewer-scroll" class="viewer-scroll"><img id="viewer-img" alt=""></div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</div>
+<noscript><p class="noscript">Esta página necesita JavaScript para mostrar la hoja y el chat.</p></noscript>
+<script src="/vendor/katex/katex.min.js" defer></script>
+<script src="/app.js" defer></script>
+</body>
+</html>

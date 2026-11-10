@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         trazo.sync.setForeground(true)
+        trazo.web.resume()
     }
 
     override fun onStop() {

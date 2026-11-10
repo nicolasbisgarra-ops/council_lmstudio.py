@@ -1,0 +1,3 @@
+KaTeX 0.19.1 (https://katex.org), licencia MIT; las fuentes, SIL OFL 1.1.
+Copia sin cambios de dist/katex.min.js, dist/katex.min.css y dist/fonts/*.woff2 del paquete npm katex@0.19.1.
+Solo la usa la web de revisión (la sirve Trazo en la red de casa); la app no la carga.
