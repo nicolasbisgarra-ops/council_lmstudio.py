@@ -88,6 +88,7 @@
     if (app.dataset.view === view) return;
     app.dataset.view = view;
     closeMenu();
+    if (view !== 'main') $('dialog').hidden = true;
     if (view === 'pair' || view === 'loading') { $('title').textContent = 'Trazo'; document.title = 'Trazo Side Chat'; }
     if (view === 'pair') setTimeout(function () { $('code').focus(); }, 50);
     updateStatus();
@@ -467,9 +468,15 @@
     pairError('Este navegador ya no está vinculado. Escaneá el QR o escribí un código nuevo.');
   }
 
-  function loadModel() {
+  // Abre el diálogo de modelo; con [refresh] solo redibuja si sigue abierto en ese diálogo (no lo reabre).
+  function modelOpen() {
+    return !$('dialog').hidden && $('dialog-title').textContent === 'Modelo de IA';
+  }
+
+  function loadModel(refresh) {
     request('GET', '/api/ai').then(function (r) {
       if (r.status === 401) return modelUnpaired();
+      if (refresh && !modelOpen()) return;
       if (r.status === 200 && r.json && r.json.ok) showModel(r.json);
       else toast((r.json && r.json.error) || 'No se pudo leer los modelos.');
     }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
@@ -478,7 +485,7 @@
   function pickModel(payload) {
     request('POST', '/api/ai', payload).then(function (r) {
       if (r.status === 401) return modelUnpaired();
-      if (r.status === 200) loadModel();
+      if (r.status === 200) loadModel(true);
       else toast((r.json && r.json.error) || 'No se pudo cambiar el modelo.');
     }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
   }
@@ -521,7 +528,7 @@
     var quality = document.createElement('div');
     quality.className = 'choices';
     (data.qualities || []).forEach(function (q) {
-      quality.appendChild(choiceButton(q.label, data.quality === q.key, true, function () { pickModel({ quality: q.key }); }));
+      quality.appendChild(choiceButton(q.label, data.quality === q.key, !!data.current, function () { pickModel({ quality: q.key }); }));
     });
     body.appendChild(part('Calidad de la foto', quality, 'Una foto más grande lee mejor la letra, pero tarda más y gasta más.'));
     $('dialog-title').textContent = 'Modelo de IA';

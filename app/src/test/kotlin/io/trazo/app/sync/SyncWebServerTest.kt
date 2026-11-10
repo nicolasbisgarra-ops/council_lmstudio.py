@@ -248,6 +248,10 @@ class SyncWebServerTest {
         assertEquals(null to "low", host!!.picked)
         assertEquals(400, post("/api/ai", "{}", cookie).code)
         assertEquals(400, post("/api/ai", "no es json", cookie).code)
+        // Un campo de otro tipo no se ignora: no cambia nada a medias.
+        assertEquals(400, post("/api/ai", "{\"profile\":\"b\",\"quality\":999}", cookie).code)
+        assertEquals(400, post("/api/ai", "{\"profile\":null,\"quality\":\"high\"}", cookie).code)
+        assertEquals(null to "low", host!!.picked)
         host!!.problem = "Ese modelo ya no existe."
         assertEquals(409, post("/api/ai", "{\"profile\":\"zz\"}", cookie).code)
         host!!.problem = null

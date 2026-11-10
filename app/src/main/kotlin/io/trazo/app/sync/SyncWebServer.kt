@@ -360,8 +360,15 @@ class SyncWebServer(
 
     private fun aiChoose(req: Request): Response {
         val o = body(req) ?: return json(400, fail("No se entendió el pedido."))
-        val profile = (o["profile"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.take(80)
-        val quality = (o["quality"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.take(20)
+        // Un campo presente con otro tipo (número, objeto, null) es un pedido mal hecho: no se ignora en silencio.
+        fun field(name: String, max: Int): String? {
+            val v = o[name] ?: return null
+            val p = v as? JsonPrimitive
+            if (p == null || !p.isString) throw IllegalArgumentException(name)
+            return p.content.take(max)
+        }
+        val profile = try { field("profile", 80) } catch (_: IllegalArgumentException) { return json(400, fail("El modelo tiene que ser un texto.")) }
+        val quality = try { field("quality", 20) } catch (_: IllegalArgumentException) { return json(400, fail("La calidad tiene que ser un texto.")) }
         if (profile == null && quality == null) return json(400, fail("Elegí un modelo o una calidad."))
         val h = host() ?: return json(409, fail(NO_SHEET))
         val problem = runCatching { h.chooseAi(profile, quality) }.getOrElse { "No se pudo cambiar el modelo." }
