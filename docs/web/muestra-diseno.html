@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Muestra de diseño · Trazo web</title>
+<!--
+  MUESTRA DE DISEÑO (no es código de producción). Abrila en el navegador.
+  Muestra cómo tiene que quedar la web de revisión: barra, hoja con su tira de herramientas (color de hoja),
+  chat con historial de charlas, y el aviso de instalar. Los datos son de mentira.
+  Lo que hay que copiar: proporciones, jerarquía, espacios, radios y nombres de tokens.
+  Lo que NO hay que copiar: el HTML tal cual (la app real arma el DOM con app.js y no usa onclick en línea).
+-->
+<style>
+  /* Tokens: los mismos nombres que app.css. Los nuevos están marcados. */
+  :root {
+    --bg: #f4f1e8; --surface: #fffdf7; --fg: #1c1f1d; --muted: #5d655f; --line: #ddd7c8;
+    --accent: #2f6b5a; --on-accent: #fff; --me: #d9e9e1; --bad-bg: #fde4e1; --bad-fg: #a3231b;
+    --shadow: 0 6px 24px rgba(0,0,0,.18);
+    --r-s: 8px; --r-m: 14px; --r-l: 22px;          /* nuevo: tres radios, nada más */
+    --gap: 12px;                                    /* nuevo: un solo paso de espacio (×0,5 ×1 ×2) */
+    --bar-h: 52px;                                  /* nuevo */
+    --sheet-bg: #fbfaf5;                            /* nuevo: fondo detrás de la imagen mientras carga */
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg: #161816; --surface: #1f2220; --fg: #e8ebe7; --muted: #a3aba5; --line: #353a36;
+    --accent: #7fc4ad; --on-accent: #0c211b; --me: #25423a; --bad-bg: #4a1f1c; --bad-fg: #ffb4ab;
+    --shadow: 0 6px 24px rgba(0,0,0,.6); --sheet-bg: #1a1b20;
+  } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Barra: una sola fila. Título de la hoja a la izquierda, estado como punto + texto corto, acciones a la derecha. */
+  .bar { height: var(--bar-h); display: flex; align-items: center; gap: var(--gap); padding: 0 var(--gap); border-bottom: 1px solid var(--line); background: var(--surface); }
+  .logo { width: 28px; height: 28px; border-radius: var(--r-s); background: var(--accent); }
+  .titles { flex: 1; min-width: 0; }
+  .title { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status { font-size: .8em; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3aa76d; }
+  .dot[data-state="off"] { background: var(--bad-fg); }
+  .pill { height: 34px; padding: 0 14px; border-radius: 17px; border: 1px solid var(--line); display: inline-flex; align-items: center; gap: 6px; }
+  .pill.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+  .icon { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; }
+  .icon:hover, .pill:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  .pill.primary:hover { filter: brightness(1.08); background: var(--accent); }
+
+  /* Cuerpo: hoja a la izquierda (se lleva el espacio), chat a la derecha con ancho fijo cómodo de leer. */
+  .panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr minmax(340px, 420px); }
+  .page-pane { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+
+  /* Tira de la hoja: chica, pegada arriba de la hoja. Acá vive el color de la hoja. */
+  .strip { display: flex; align-items: center; gap: var(--gap); padding: 8px var(--gap); color: var(--muted); font-size: .85em; }
+  .swatches { display: flex; gap: 6px; }
+  .swatch { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); }
+  .swatch[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sheet-wrap { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--gap) var(--gap); display: grid; place-items: start center; }
+  .sheet { width: min(100%, 720px); aspect-ratio: 3 / 4; border-radius: var(--r-s); box-shadow: var(--shadow); background: var(--sheet-bg);
+    background-image: linear-gradient(#d7e3ea55 1px, transparent 1px), linear-gradient(90deg, #d7e3ea55 1px, transparent 1px); background-size: 22px 22px; transition: background-color .2s; }
+
+  /* Chat: columna con cabecera propia (nombre de la charla + historial + nueva). */
+  .chat-pane { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--surface); position: relative; }
+  .chat-head { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px var(--gap); border-bottom: 1px solid var(--line); }
+  .chat-head .name { flex: 1; min-width: 0; font-weight: 600; font-size: .9em; }
+  .chat-head .when { color: var(--muted); font-weight: 400; }
+  .chat { flex: 1; overflow: auto; padding: var(--gap); display: flex; flex-direction: column; gap: var(--gap); }
+  .msg { max-width: 92%; padding: 10px 14px; border-radius: var(--r-m); }
+  .msg.tutor { background: transparent; padding-left: 0; }
+  .msg.me { align-self: flex-end; background: var(--me); border-bottom-right-radius: 4px; }
+  .verdict { margin-top: 8px; padding: 10px 12px; border-radius: var(--r-s); background: var(--bad-bg); color: var(--bad-fg); font-size: .92em; }
+  .verdict b { display: block; }
+  .quick { display: flex; gap: 6px; padding: 0 var(--gap) 8px; overflow-x: auto; }
+  .quick .pill { height: 30px; font-size: .85em; white-space: nowrap; }
+  .composer { margin: 0 var(--gap) var(--gap); display: flex; align-items: flex-end; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: var(--r-l); background: var(--bg); }
+  .composer:focus-within { border-color: var(--accent); }
+  .composer textarea { flex: 1; resize: none; border: 0; outline: 0; background: none; color: inherit; font: inherit; padding: 9px 4px; }
+  .send { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+
+  /* Historial: cajón que tapa el chat (no la hoja). Una fila por charla: fecha, primer mensaje, cantidad. */
+  .history { position: absolute; inset: 0; background: var(--surface); display: flex; flex-direction: column; }
+  .history[hidden] { display: none; }
+  .history ul { list-style: none; margin: 0; padding: 6px; overflow: auto; flex: 1; }
+  .history li button { width: 100%; text-align: left; padding: 10px 12px; border-radius: var(--r-m); display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
+  .history li button:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+  .history .h-when { font-weight: 600; font-size: .9em; }
+  .history .h-count { color: var(--muted); font-size: .8em; }
+  .history .h-text { grid-column: 1 / -1; color: var(--muted); font-size: .88em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .history li[aria-current="true"] button { background: var(--me); }
+  .history .empty { padding: 32px var(--gap); text-align: center; color: var(--muted); }
+
+  /* Teléfono: una sola columna; la hoja y el chat se cambian con las pestañas de la barra (como hoy). */
+  @media (max-width: 899px) { .panes { grid-template-columns: 1fr; } .page-pane { display: none; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="logo"></div>
+  <div class="titles">
+    <div class="title">TP 13 Integrales Indefinidas : Cálculo · hoja 5</div>
+    <div class="status"><span class="dot"></span>Conectado</div>
+  </div>
+  <!-- Solo se ve si el navegador puede instalar o hay pasos para mostrar; ya instalada, no aparece. -->
+  <button class="pill primary">⤓ Instalar</button>
+  <button class="icon" aria-label="Más opciones">⋮</button>
+</header>
+
+<main class="panes">
+  <section class="page-pane">
+    <div class="strip">
+      <span>Hoja</span>
+      <div class="swatches" role="group" aria-label="Color de la hoja">
+        <button class="swatch" style="background:#fbfaf5" aria-pressed="true" aria-label="Clara" onclick="paper(this,'#fbfaf5')"></button>
+        <button class="swatch" style="background:#f3e9d2" aria-pressed="false" aria-label="Crema" onclick="paper(this,'#f3e9d2')"></button>
+        <button class="swatch" style="background:#e6eaee" aria-pressed="false" aria-label="Gris" onclick="paper(this,'#e6eaee')"></button>
+        <button class="swatch" style="background:#1a1b20" aria-pressed="false" aria-label="Oscura" onclick="paper(this,'#1a1b20')"></button>
+        <button class="swatch" style="background:#000" aria-pressed="false" aria-label="Negra" onclick="paper(this,'#000')"></button>
+      </div>
+      <span style="flex:1"></span>
+      <button class="pill" style="height:28px">Agrandar</button>
+    </div>
+    <div class="sheet-wrap"><div class="sheet" id="sheet"></div></div>
+  </section>
+
+  <section class="chat-pane">
+    <div class="chat-head">
+      <div class="name">Charla actual <span class="when">· hoy 21:14</span></div>
+      <button class="icon" aria-label="Historial de charlas" onclick="hist(true)">🕘</button>
+      <button class="icon" aria-label="Nueva charla">＋</button>
+    </div>
+    <div class="chat">
+      <div class="msg tutor">Tu idea de descomponer en fracciones simples <b>sí es adecuada</b>, pero conviene aplicarla a la integral original.
+        <div class="verdict"><b>Primer error · renglón 5</b>Escribiste el factor x−2, pero corresponde x+2.</div>
+      </div>
+      <div class="msg me">¿Y cómo sigo después de hallar A, B y C?</div>
+    </div>
+    <div class="quick"><button class="pill">Explicá más</button><button class="pill">Otro método</button><button class="pill">Dame una pista</button></div>
+    <div class="composer">
+      <button class="icon" aria-label="Adjuntar una foto">🖼</button>
+      <textarea rows="1" placeholder="Preguntá algo…"></textarea>
+      <button class="send" aria-label="Enviar">➤</button>
+    </div>
+
+    <div class="history" id="history" hidden>
+      <div class="chat-head">
+        <button class="icon" aria-label="Volver al chat" onclick="hist(false)">←</button>
+        <div class="name">Charlas de esta hoja</div>
+      </div>
+      <ul>
+        <li aria-current="true"><button><span class="h-when">Hoy 21:14</span><span class="h-count">6 mensajes</span><span class="h-text">Tu idea de descomponer en fracciones simples sí es…</span></button></li>
+        <li><button><span class="h-when">Ayer 18:02</span><span class="h-count">11 mensajes</span><span class="h-text">El cambio u = x² + 4x + 1 no simplifica porque…</span></button></li>
+        <li><button><span class="h-when">8 nov 10:40</span><span class="h-count">3 mensajes</span><span class="h-text">Está bien resuelta. Solo falta la constante.</span></button></li>
+      </ul>
+      <!-- Sin charlas guardadas: <p class="empty">Todavía no hay charlas guardadas de esta hoja.</p> -->
+    </div>
+  </section>
+</main>
+<script>
+  function paper(btn, color) {
+    document.querySelectorAll('.swatch').forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); });
+    document.getElementById('sheet').style.backgroundColor = color;
+  }
+  function hist(open) { document.getElementById('history').hidden = !open; }
+</script>
+</body>
+</html>

@@ -1,0 +1,1593 @@
+TRAZO - AUTO-ALINEADO: CÓDIGO FUENTE
+Generado con docs/alineado/generar_fuente.sh desde el commit 34a4932.
+Las reglas en texto plano están en REGLAS.txt. No editar este archivo: se regenera.
+
+ÍNDICE
+ 1. AutoAlign.kt            el alineado (reglas 2 a 6)
+ 2. PaperRows.kt            renglones del papel (regla 7)
+ 3. InkController.kt        dónde se llama al convertir (regla 1)
+ 4. Patterns.kt             datos del patrón, núcleo y dibujo de la salida (regla 8)
+ 5. RootFit.kt              la raíz sigue el trazo (regla 8.6)
+ 6. Otros que usan floor() y los signos: TexInk.kt, MathNotes.kt (regla 9)
+ 7. La app: interruptor, ajuste guardado y línea de piso del editor de patrones (regla 9)
+ 8. Pruebas: AutoAlignTest.kt, AutoAlignBracketTest.kt
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/AutoAlign.kt  (completo)
+====================================================================================================
+     1	package io.trazo.core
+     2	
+     3	import kotlin.math.abs
+     4	import kotlin.math.max
+     5	import kotlin.math.min
+     6	
+     7	/**
+     8	 * Auto-alineado: al convertir un gesto, ajusta el rectángulo donde va la salida para que quede en
+     9	 * el mismo renglón que las formas ya reconocidas.
+    10	 *
+    11	 * - Un cierre de paréntesis, corchete o llave toma la altura y la posición vertical de su apertura:
+    12	 *   la última sin cerrar de su misma expresión (formas encadenadas a menos de [MAX_GAP] altos; la
+    13	 *   escritura a mano del renglón también encadena), en su línea (a menos de [BRACKET_OFFSET] del alto)
+    14	 *   y no más de [MAX_RESIZE] veces más alta o más baja que él.
+    15	 * - Una apertura (o un cierre sin pareja) se centra en lo que tiene al lado (no encima ni debajo: a lo
+    16	 *   sumo [BESIDE_OVERLAP] de solape), en su línea y a menos de [MAX_GAP] altos; junto a una fracción,
+    17	 *   en su barra; junto a una integral, en su medio. Solo toma la altura de otro signo de agrupación
+    18	 *   parecido.
+    19	 * - Un número o una letra toma la escala (el alto sobre la línea) de la letra o el número más cercano
+    20	 *   del renglón y se apoya en su piso; solo si está a menos de [MAX_GAP] altos, así no toma el de otra
+    21	 *   cuenta del otro lado de la hoja. Un número prefiere otro número a su alcance. Las integrales,
+    22	 *   raíces y sumatorias solo se centran en su línea.
+    23	 * - Los "contenedores" (paréntesis, integrales, raíz, fracción, sumatoria) no sirven de referencia
+    24	 *   para las demás formas: un número dentro de una matriz no se centra en el corchete.
+    25	 * - Los signos de operación (+, −, ×, ÷, =, <…) tampoco: no marcan la altura del renglón. Ellos se
+    26	 *   centran en la línea de las letras y números más cercanos, sin cambiar de tamaño.
+    27	 * - Lo escrito claramente más arriba o más abajo que la referencia (más de [OFFSET] de su alto: un
+    28	 *   exponente, un numerador, un denominador) queda donde se escribió. Una raya con algo justo encima
+    29	 *   (la barra de una fracción) tampoco se mueve.
+    30	 * - Un exponente o subíndice (más chico que la forma de al lado y corrido hacia arriba o abajo de su
+    31	 *   renglón) queda donde se escribió, y uno ya escrito no sirve de referencia: lo que sigue a x² se
+    32	 *   alinea con la x, no con el 2. Un signo arriba del renglón (el − de x⁻¹) tampoco baja.
+    33	 * - Una forma lejos de todas (más de [MAX_GAP] altos de separación) no se alinea con nada.
+    34	 *
+    35	 * Solo mira la tinta que salió de un patrón; la escritura a mano nunca es referencia, solo une la
+    36	 * expresión de un paréntesis ([bridges]).
+    37	 */
+    38	object AutoAlign {
+    39	    /** Una forma ya reconocida en la página: los trazos de un mismo grupo. */
+    40	    data class Item(val patternId: String, val bounds: Bounds)
+    41	
+    42	    /** Parecido mínimo de tamaño (alto) para igualar la altura en vez de solo centrar. */
+    43	    const val SIMILAR_RATIO = 2f
+    44	
+    45	    /** Fracción del menor alto que deben solaparse en vertical dos formas para estar en el mismo renglón. */
+    46	    const val ROW_OVERLAP = 0.3f
+    47	
+    48	    /** Desplazamiento vertical (en altos de la referencia) a partir del cual la forma se escribió a propósito más arriba o abajo. */
+    49	    const val OFFSET = 0.5f
+    50	
+    51	    /** Desvío vertical máximo (en altos del mayor de los dos) para que un paréntesis se centre en algo o copie su apertura. */
+    52	    const val BRACKET_OFFSET = 0.35f
+    53	
+    54	    /** Un cierre no copia la altura de una apertura más de [MAX_RESIZE] veces más alta o más baja que él. */
+    55	    const val MAX_RESIZE = 3f
+    56	
+    57	    /** Solape horizontal máximo (fracción del más angosto) con la referencia: lo que está encima o debajo no cuenta. */
+    58	    const val BESIDE_OVERLAP = 0.5f
+    59	
+    60	    private val PAIRS = mapOf(
+    61	        "parentesis-abre" to "parentesis-cierra",
+    62	        "corchete-abre" to "corchete-cierra",
+    63	        "llave-abre" to "llave-cierra",
+    64	    )
+    65	
+    66	    /**
+    67	     * Patrones propios del usuario que se llaman como el signo («(», «Abre paréntesis», «Corchete
+    68	     * cierra»…). Las claves van ya pasadas por [fold]: sin tildes ni mayúsculas.
+    69	     */
+    70	    private val NAMES: Map<String, String> = buildMap {
+    71	        put("(", "parentesis-abre"); put(")", "parentesis-cierra")
+    72	        put("[", "corchete-abre"); put("]", "corchete-cierra")
+    73	        put("{", "llave-abre"); put("}", "llave-cierra")
+    74	        for (k in listOf("parentesis", "corchete", "llave")) {
+    75	            for (v in listOf("abre", "abrir")) { put("$v $k", "$k-abre"); put("$k $v", "$k-abre") }
+    76	            for (v in listOf("cierra", "cerrar")) { put("$v $k", "$k-cierra"); put("$k $v", "$k-cierra") }
+    77	        }
+    78	    }
+    79	
+    80	    /** Formas reconocidas de [strokes] (agrupadas por grupo), sin los trazos de [exclude]. */
+    81	    fun items(strokes: List<InkStroke>, exclude: Set<String> = emptySet()): List<Item> =
+    82	        strokes.filter { it.patternId != null && it.id !in exclude }
+    83	            .groupBy { it.groupId ?: it.id }
+    84	            .map { (_, g) -> Item(g.first().patternId!!, g.bounds()) }
+    85	
+    86	    /**
+    87	     * Trazos escritos a mano ([InkStroke.isHandwriting]) de [strokes], sin [exclude]: nunca son
+    88	     * referencia, solo unen la expresión de un paréntesis con su apertura.
+    89	     */
+    90	    fun bridges(strokes: List<InkStroke>, exclude: Set<String> = emptySet()): List<Bounds> =
+    91	        strokes.filter { it.isHandwriting && it.id !in exclude }.map { it.bounds }
+    92	
+    93	    /**
+    94	     * Rectángulo ajustado para la salida de [pattern] escrita en [gesture].
+    95	     * Devuelve [gesture] sin cambios si no hay con qué alinear.
+    96	     */
+    97	    fun anchor(pattern: InkPattern, gesture: Bounds, items: List<Item>, lookup: (String) -> InkPattern?): Bounds =
+    98	        anchor(pattern, gesture, items, emptyList(), lookup)
+    99	
+   100	    /**
+   101	     * Como el otro [anchor], con los trazos escritos a mano de la página ([bridges]): un cierre los usa
+   102	     * para encadenar su expresión hasta la apertura, pero nunca como referencia.
+   103	     *
+   104	     * Si el patrón tiene piso elegido a mano y no hay con qué alinear, lo escrito es la parte de arriba
+   105	     * del piso: la salida apoya su piso en el borde de abajo del trazo (el "lim" de "lim→" queda en la
+   106	     * línea y la flecha debajo), en vez de achicarse entera dentro del trazo.
+   107	     */
+   108	    fun anchor(
+   109	        pattern: InkPattern,
+   110	        gesture: Bounds,
+   111	        items: List<Item>,
+   112	        bridges: List<Bounds>,
+   113	        lookup: (String) -> InkPattern?,
+   114	    ): Bounds {
+   115	        // Con núcleo, lo escrito ya es el núcleo: la salida lo reemplaza en el mismo lugar y tamaño.
+   116	        if (PatternCore.isPartial(pattern)) return gesture
+   117	        val out = rowAnchor(pattern, gesture, items, bridges, lookup)
+   118	        if (out !== gesture || pattern.floor == null || pattern.stretch != null || gesture.height <= 0.5f) return out
+   119	        val scale = pattern.outputScale.coerceAtLeast(0.01f)
+   120	        val f = floor(pattern)
+   121	        val h = gesture.height * scale / f
+   122	        val ah = h / scale
+   123	        val aw = gesture.width * ah / gesture.height
+   124	        val cy = gesture.bottom - h * f + h / 2f
+   125	        return Bounds(gesture.centerX - aw / 2f, cy - ah / 2f, gesture.centerX + aw / 2f, cy + ah / 2f)
+   126	    }
+   127	
+   128	    private fun rowAnchor(
+   129	        pattern: InkPattern,
+   130	        gesture: Bounds,
+   131	        items: List<Item>,
+   132	        bridges: List<Bounds>,
+   133	        lookup: (String) -> InkPattern?,
+   134	    ): Bounds {
+   135	        if (pattern.stretch != null || gesture.height <= 0.5f || items.isEmpty()) return gesture
+   136	        val row = items.filter { sameRow(it.bounds, gesture) }
+   137	        if (row.isEmpty()) return gesture
+   138	        val scale = pattern.outputScale.coerceAtLeast(0.01f)
+   139	
+   140	        if (gesture.height < gesture.width * 0.4f && items.any { stacked(it.bounds, gesture) }) return gesture
+   141	        kindOf(pattern)?.let { kind ->
+   142	            return bracketAnchor(kind, gesture, items, row, bridges.filter { sameRow(it, gesture) }, lookup, scale)
+   143	        }
+   144	        val sign = isSign(pattern)
+   145	        val variable = isVariable(pattern)
+   146	        // Los exponentes y subíndices ya escritos no marcan el renglón: lo que sigue a x² se alinea con la x.
+   147	        val bases = row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
+   148	        val plain = row.filter { r -> bases.none { b -> b !== r && isScript(r.bounds, r.bounds.height, b.bounds) } }
+   149	        val predicted = gesture.height * scale
+   150	        fun near(r: Item) = horizontalGap(r.bounds, gesture) <= MAX_GAP * max(r.bounds.height, predicted)
+   151	        // Un número prefiere otro número a su alcance; si no hay, toma la letra o el número más cercano.
+   152	        val refs = if (isContainer(pattern)) plain else plain.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
+   153	            .let { all -> if (variable) all else all.filter { r -> near(r) && lookup(r.patternId)?.let(::isVariable) != true }.ifEmpty { all } }
+   154	        // Un signo sin letras ni números al lado se centra en otro signo; lo demás nunca toma su altura.
+   155	        val ref = (refs.takeIf { it.isNotEmpty() || !sign } ?: plain.filter { r -> lookup(r.patternId)?.let(::isSign) == true })
+   156	            .minByOrNull { horizontalGap(it.bounds, gesture) } ?: return gesture
+   157	        // Lejos de todo (otra cuenta en la misma altura de la hoja): queda donde se escribió.
+   158	        if (horizontalGap(ref.bounds, gesture) > MAX_GAP * max(ref.bounds.height, predicted)) return gesture
+   159	        if (ref in refs) {
+   160	            val out = Bounds(gesture.left, gesture.centerY - predicted / 2f, gesture.right, gesture.centerY + predicted / 2f)
+   161	            if (sign) {
+   162	                // Un signo claramente arriba (x⁻¹) o debajo del renglón se escribió así a propósito.
+   163	                val h = ref.bounds.height
+   164	                if (out.centerY < ref.bounds.top + SIGN_RAISED * h || out.centerY > ref.bounds.bottom + SIGN_LOWERED * h) return gesture
+   165	            } else if (isScript(out, predicted, ref.bounds)) {
+   166	                return gesture
+   167	            }
+   168	        }
+   169	        val refPattern = lookup(ref.patternId)
+   170	        // Números y letras se apoyan en el piso de la forma de al lado y toman su escala.
+   171	        val byFloor = ref in refs && (pattern.floor != null || (!sign && !isContainer(pattern)))
+   172	        // Entre formas de distinto alto, el desvío se mide con la más alta de las dos.
+   173	        val reach = if (sign) ref.bounds.height else max(ref.bounds.height, predicted)
+   174	        if (ref in refs && abs(ref.bounds.centerY - gesture.centerY) > OFFSET * reach) return gesture
+   175	        if (byFloor) {
+   176	            // La salida se dibuja centrada en el anclaje y mide su alto × scale: su piso queda a floor(pattern) de su arriba.
+   177	            val refFrac = refPattern?.let(::floor) ?: 1f
+   178	            val refFloor = ref.bounds.top + ref.bounds.height * refFrac
+   179	            val f = floor(pattern)
+   180	            // Misma escala que la de al lado: igual cuerpo sobre la línea (las colas de g, y… no cuentan).
+   181	            val h = if (refPattern != null && isGlyph(refPattern) && isGlyph(pattern)) ref.bounds.height * refFrac / f else predicted
+   182	            val ah = h / scale
+   183	            val aw = gesture.width * ah / gesture.height
+   184	            val cy = refFloor - h * f + h / 2f
+   185	            return Bounds(gesture.centerX - aw / 2f, cy - ah / 2f, gesture.centerX + aw / 2f, cy + ah / 2f)
+   186	        }
+   187	        val dy = ref.bounds.centerY - gesture.centerY
+   188	        return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
+   189	    }
+   190	
+   191	    /** Letra o número (no signo, contenedor, coma, %, ! ni barra): lo que iguala su escala con el renglón. */
+   192	    private fun isGlyph(p: InkPattern): Boolean {
+   193	        if (p.stretch != null || isSign(p) || isContainer(p)) return false
+   194	        val key = p.id.removePrefix(PresetPatterns.PREFIX)
+   195	        return !(p.builtIn && (key in TALL_OPERATORS || key in BASELINE_MARKS))
+   196	    }
+   197	
+   198	    /** Paréntesis, corchetes y llaves (ver el KDoc del objeto). */
+   199	    private fun bracketAnchor(
+   200	        kind: String, gesture: Bounds, items: List<Item>, row: List<Item>, bridges: List<Bounds>,
+   201	        lookup: (String) -> InkPattern?, scale: Float,
+   202	    ): Bounds {
+   203	        val predicted = gesture.height * scale
+   204	        // 1. Un cierre copia su apertura (misma expresión, en su línea, tamaño a lo sumo MAX_RESIZE veces distinto).
+   205	        partnerFor(kind, gesture, row, bridges, predicted, lookup)?.let { return resized(gesture, it.bounds, scale) }
+   206	        // 2. Si no, se centra en lo que tiene al lado; los exponentes y subíndices no cuentan.
+   207	        val bases = row.filter { r -> lookup(r.patternId)?.let { !isContainer(it) && !isSign(it) } ?: true }
+   208	        val plain = row.filter { r -> bases.none { b -> b !== r && isScript(r.bounds, r.bounds.height, b.bounds) } }
+   209	        // Junto a una fracción, la referencia es su barra (si está en la línea del paréntesis).
+   210	        val bars = fractionBars(items, lookup)
+   211	        val ref = plain
+   212	            .map { r -> barOf(r, bars)?.takeIf { onLine(it.bounds, gesture, predicted) } ?: r }
+   213	            .distinct()
+   214	            .filter {
+   215	                onLine(it.bounds, gesture, predicted) && beside(it.bounds, gesture) &&
+   216	                    horizontalGap(it.bounds, gesture) <= MAX_GAP * max(it.bounds.height, predicted)
+   217	            }
+   218	            .minWithOrNull(compareBy<Item>({ horizontalGap(it.bounds, gesture) }, { abs(it.bounds.centerY - gesture.centerY) }))
+   219	            ?: return gesture
+   220	        // 3. Solo copia la altura de otro signo de agrupación parecido.
+   221	        if (lookup(ref.patternId)?.let(::kindOf) != null) {
+   222	            val ratio = predicted / ref.bounds.height.coerceAtLeast(0.5f)
+   223	            if (ratio in (1f / SIMILAR_RATIO)..SIMILAR_RATIO) return resized(gesture, ref.bounds, scale)
+   224	        }
+   225	        // Junto a un número, una letra, un signo o una integral se centra en su medio, sin cambiar de tamaño.
+   226	        val dy = ref.bounds.centerY - gesture.centerY
+   227	        return Bounds(gesture.left, gesture.top + dy, gesture.right, gesture.bottom + dy)
+   228	    }
+   229	
+   230	    /** Apertura de [kind] si es un cierre: la última sin pareja de su expresión, en su línea y de tamaño parecido. */
+   231	    private fun partnerFor(
+   232	        kind: String, gesture: Bounds, row: List<Item>, bridges: List<Bounds>, predicted: Float,
+   233	        lookup: (String) -> InkPattern?,
+   234	    ): Item? {
+   235	        // Las aperturas no buscan pareja a su derecha.
+   236	        val open = PAIRS.entries.firstOrNull { it.value == kind }?.key ?: return null
+   237	        val stack = ArrayDeque<Item>()
+   238	        val left = sameExpression(gesture, row, bridges, predicted)
+   239	            .filter { it.bounds.centerX < gesture.centerX && onLine(it.bounds, gesture, predicted) }
+   240	            .sortedBy { it.bounds.centerX }
+   241	        for (it in left) {
+   242	            when (lookup(it.patternId)?.let(::kindOf)) {
+   243	                open -> stack.addLast(it)
+   244	                kind -> stack.removeLastOrNull()
+   245	            }
+   246	        }
+   247	        val top = stack.lastOrNull() ?: return null
+   248	        val ratio = predicted / top.bounds.height.coerceAtLeast(0.5f)
+   249	        return top.takeIf { ratio in (1f / MAX_RESIZE)..MAX_RESIZE }
+   250	    }
+   251	
+   252	    /**
+   253	     * Lo del renglón encadenado con el gesto: cada forma a menos de [MAX_GAP] altos de lo ya juntado.
+   254	     * Los trazos a mano del renglón ([bridges]) alargan la cadena (x + y escritos sin convertir entre
+   255	     * los dos paréntesis), pero nunca se devuelven: no son referencia de nada.
+   256	     */
+   257	    private fun sameExpression(gesture: Bounds, row: List<Item>, bridges: List<Bounds>, predicted: Float): List<Item> {
+   258	        val rest = row.toMutableList()
+   259	        val links = bridges.toMutableList()
+   260	        val inside = ArrayList<Item>()
+   261	        var span = gesture
+   262	        while (true) {
+   263	            val next = rest.firstOrNull { horizontalGap(it.bounds, span) <= MAX_GAP * max(it.bounds.height, predicted) }
+   264	            if (next != null) {
+   265	                rest.remove(next); inside += next; span = span.union(next.bounds); continue
+   266	            }
+   267	            val link = links.firstOrNull { horizontalGap(it, span) <= MAX_GAP * max(it.height, predicted) } ?: break
+   268	            links.remove(link); span = span.union(link)
+   269	        }
+   270	        return inside
+   271	    }
+   272	
+   273	    /** [b] está en la línea del paréntesis: su centro a menos de [BRACKET_OFFSET] del mayor de los dos altos. */
+   274	    private fun onLine(b: Bounds, gesture: Bounds, predicted: Float) =
+   275	        abs(b.centerY - gesture.centerY) <= BRACKET_OFFSET * max(b.height, predicted)
+   276	
+   277	    /** [b] está al costado de [g], no encima ni debajo: se solapan en horizontal a lo sumo [BESIDE_OVERLAP] del más angosto. */
+   278	    private fun beside(b: Bounds, g: Bounds): Boolean {
+   279	        val overlap = min(b.right, g.right) - max(b.left, g.left)
+   280	        return overlap <= BESIDE_OVERLAP * min(b.width, g.width)
+   281	    }
+   282	
+   283	    private fun above(i: Item, bar: Item): Boolean {
+   284	        val b = bar.bounds
+   285	        val s = b.width * 0.1f
+   286	        return i !== bar && i.bounds.centerX in (b.left - s)..(b.right + s) &&
+   287	            i.bounds.bottom <= b.centerY && b.top - i.bounds.bottom <= 0.8f * i.bounds.height
+   288	    }
+   289	
+   290	    private fun below(i: Item, bar: Item): Boolean {
+   291	        val b = bar.bounds
+   292	        val s = b.width * 0.1f
+   293	        return i !== bar && i.bounds.centerX in (b.left - s)..(b.right + s) &&
+   294	            i.bounds.top >= b.centerY && i.bounds.top - b.bottom <= 0.8f * i.bounds.height
+   295	    }
+   296	
+   297	    /** Barras de fracción: rayas con algo justo encima y justo debajo (también la de un resultado, de alto 0). */
+   298	    private fun fractionBars(items: List<Item>, lookup: (String) -> InkPattern?): List<Item> =
+   299	        items.filter { isBar(it, lookup) }.filter { bar -> items.any { above(it, bar) } && items.any { below(it, bar) } }
+   300	
+   301	    /** La barra (la más ancha) de la fracción de la que [item] es numerador o denominador. */
+   302	    private fun barOf(item: Item, bars: List<Item>): Item? =
+   303	        bars.filter { above(item, it) || below(item, it) }.maxByOrNull { it.bounds.width }
+   304	
+   305	    private val BAR_IDS = setOf(DefaultPatterns.FRACTION, PresetPatterns.PREFIX + "menos", PresetPatterns.PREFIX + "barra")
+   306	
+   307	    private fun isBar(i: Item, lookup: (String) -> InkPattern?): Boolean {
+   308	        if (i.bounds.height >= 0.4f * i.bounds.width) return false
+   309	        if (i.patternId in BAR_IDS) return true
+   310	        val p = lookup(i.patternId) ?: return false
+   311	        return MathNotes.label(p.name) in MathNotes.BAR_LABELS
+   312	    }
+   313	
+   314	    /** "parentesis-abre", "corchete-cierra"… o null si no es un signo de agrupación con pareja. */
+   315	    private fun kindOf(p: InkPattern): String? {
+   316	        val key = p.id.removePrefix(PresetPatterns.PREFIX)
+   317	        if (key in PAIRS.keys || key in PAIRS.values) return key
+   318	        return NAMES[fold(p.name)]
+   319	    }
+   320	
+   321	    /**
+   322	     * Signo de operación que va centrado en la línea (+, −, ×, ÷, =, <, ≈…): no marca la altura del
+   323	     * renglón. Los de la biblioteca por su sección; los propios del usuario por su nombre.
+   324	     */
+   325	    fun isSign(p: InkPattern): Boolean {
+   326	        if (p.stretch != null) return false
+   327	        val key = p.id.removePrefix(PresetPatterns.PREFIX)
+   328	        if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) return p.category == PatternCategory.OPERATORS && key !in TALL_OPERATORS && key !in BASELINE_MARKS
+   329	        return isSignName(p.name)
+   330	    }
+   331	
+   332	    /**
+   333	     * Variable: una letra que se usa como incógnita (x, y, a…) o una letra de la biblioteca (griegas,
+   334	     * letras y funciones). No cambia de tamaño al alinearse.
+   335	     */
+   336	    fun isVariable(p: InkPattern): Boolean {
+   337	        if (p.stretch != null) return false
+   338	        val u = p.unknown?.trim()
+   339	        if (u != null) return u.isNotEmpty()
+   340	        if (p.builtIn && p.id.removePrefix(PresetPatterns.PREFIX) in BASELINE_MARKS) return true
+   341	        if (p.category == PatternCategory.GREEK || p.category == PatternCategory.LETTERS) return true
+   342	        return letterOf(p) != null
+   343	    }
+   344	
+   345	    private fun letterOf(p: InkPattern): Char? =
+   346	        (p.unknown?.trim()?.takeIf { it.isNotEmpty() } ?: MathNotes.label(p.name)).singleOrNull()?.takeIf { it.isLetter() && it != 'π' }
+   347	
+   348	    /**
+   349	     * Dónde está el piso (la línea de escritura) de la salida de [p], en fracción de su alto desde arriba.
+   350	     * Los patrones de la biblioteca se dibujan con la línea en y = 100; los del usuario apoyan su borde de
+   351	     * abajo, salvo las minúsculas con cola (g, j, p, q, y…), que bajan [DESCENDER] de su alto.
+   352	     */
+   353	    fun floor(p: InkPattern): Float {
+   354	        p.floor?.let { return it.coerceIn(MIN_USER_FLOOR, 1f) }
+   355	        if (p.builtIn && p.id.startsWith(PresetPatterns.PREFIX)) {
+   356	            val src = p.outputInk.bounds()
+   357	            // Si el usuario la redibujó, ya no está en el marco de la biblioteca.
+   358	            if (src.height > 0.5f && src.top >= -10f && src.bottom in 95f..150f) {
+   359	                return ((PresetPatterns.BASELINE - src.top) / src.height).coerceIn(0.3f, 1f)
+   360	            }
+   361	        }
+   362	        return if (letterOf(p)?.let { it in DESCENDERS } == true) 1f - DESCENDER else 1f
+   363	    }
+   364	
+   365	    /** Parte del alto de una minúscula con cola que queda debajo de la línea. */
+   366	    const val DESCENDER = 0.35f
+   367	    /** Piso más alto que puede elegir el usuario (fracción desde arriba). */
+   368	    const val MIN_USER_FLOOR = 0.05f
+   369	    private const val DESCENDERS = "gjpqyβγζημξρφχψ"
+   370	
+   371	    /** Un nombre de signo centrado («Más», «+», «igual»…), sin importar tildes ni mayúsculas. */
+   372	    fun isSignName(name: String): Boolean = fold(name) in SIGN_NAMES
+   373	
+   374	    /** Operadores de la biblioteca con alto de letra: sí sirven de referencia. */
+   375	    private val TALL_OPERATORS = setOf("porcentaje", "factorial", "barra")
+   376	
+   377	    /** Signos que se apoyan en la línea como una letra (la coma cuelga de ella), no centrados como un «+». */
+   378	    private val BASELINE_MARKS = setOf("coma")
+   379	
+   380	    private val SIGN_NAMES = listOf(
+   381	        "Más", "Menos", "Por", "Multiplicación", "Dividido", "División", "Igual", "Más o menos", "Distinto",
+   382	        "Aproximado", "Equivalente", "Menor", "Mayor", "Menor o igual", "Mayor o igual",
+   383	        "+", "-", "−", "×", "·", "*", "÷", "=", "±", "≠", "≈", "≡", "<", ">", "≤", "≥",
+   384	    ).map(::fold).toSet()
+   385	
+   386	    private fun fold(name: String) = java.text.Normalizer.normalize(name.trim().lowercase(), java.text.Normalizer.Form.NFD)
+   387	        .replace(Regex("\\p{M}+"), "")
+   388	
+   389	    /** Formas que abarcan a otras: no sirven de referencia de tamaño para una forma suelta. */
+   390	    fun isContainer(p: InkPattern): Boolean {
+   391	        if (p.category == PatternCategory.GROUPING || p.stretch != null) return true
+   392	        val key = p.id.removePrefix(PresetPatterns.PREFIX)
+   393	        return key == DefaultPatterns.INTEGRAL || key == DefaultPatterns.ROOT || key == DefaultPatterns.FRACTION ||
+   394	            key.startsWith("integral") || key == "sumatoria" || key == "productoria" || kindOf(p) != null
+   395	    }
+   396	
+   397	    private fun sameRow(a: Bounds, b: Bounds): Boolean {
+   398	        val overlap = min(a.bottom, b.bottom) - max(a.top, b.top)
+   399	        return overlap >= ROW_OVERLAP * min(a.height, b.height).coerceAtLeast(1f)
+   400	    }
+   401	
+   402	    /** [item] está justo encima de la raya [bar], dentro de su ancho: es el numerador de una fracción. */
+   403	    private fun stacked(item: Bounds, bar: Bounds): Boolean =
+   404	        item.centerX in bar.left..bar.right && item.bottom <= bar.centerY && bar.top - item.bottom <= item.height * 0.8f
+   405	
+   406	    /** Alto máximo (en altos de la base) de un exponente o subíndice. */
+   407	    const val SCRIPT_SIZE = 0.8f
+   408	
+   409	    /** Separación horizontal máxima (en altos) con la forma de referencia: más lejos ya no es el mismo renglón. */
+   410	    const val MAX_GAP = 3f
+   411	
+   412	    /** Un signo cuyo centro queda en la franja de arriba de la referencia (esta fracción de su alto) no se baja. */
+   413	    const val SIGN_RAISED = 0.25f
+   414	
+   415	    /** Un signo cuyo centro queda debajo del piso de la referencia (más de esta fracción de su alto) no se sube. */
+   416	    const val SIGN_LOWERED = 0.1f
+   417	
+   418	    /**
+   419	     * [a] (de alto [height]) es un exponente o un subíndice de [base]: claramente más chico y corrido hacia
+   420	     * arriba (no llega al piso del renglón) o hacia abajo (empieza debajo de la mitad y cuelga del piso).
+   421	     */
+   422	    private fun isScript(a: Bounds, height: Float, base: Bounds): Boolean {
+   423	        val h = base.height
+   424	        if (h <= 0.5f || height > SCRIPT_SIZE * h) return false
+   425	        val raised = a.bottom < base.bottom - 0.3f * h && a.centerY < base.centerY - 0.15f * h
+   426	        val lowered = a.top > base.centerY && a.bottom > base.bottom + 0.1f * h
+   427	        return raised || lowered
+   428	    }
+   429	
+   430	    private fun horizontalGap(a: Bounds, b: Bounds): Float = max(0f, max(a.left - b.right, b.left - a.right))
+   431	
+   432	    /**
+   433	     * El gesto llevado a la altura y la línea de [ref]: como la salida mide su alto × [scale], el
+   434	     * anclaje mide ref/scale. Mismo centro horizontal; el ancho crece en proporción para los patrones
+   435	     * que miden por ancho.
+   436	     */
+   437	    private fun resized(gesture: Bounds, ref: Bounds, scale: Float): Bounds {
+   438	        val h = (ref.height / scale).coerceAtLeast(0.5f)
+   439	        val w = gesture.width * h / gesture.height
+   440	        return Bounds(gesture.centerX - w / 2f, ref.centerY - h / 2f, gesture.centerX + w / 2f, ref.centerY + h / 2f)
+   441	    }
+   442	}
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/PaperRows.kt  (completo)
+====================================================================================================
+     1	package io.trazo.core
+     2	
+     3	import kotlin.math.roundToInt
+     4	
+     5	/**
+     6	 * Renglones del papel: con 1, 2 o 3 renglones elegidos, las formas que salen del renglón (paréntesis,
+     7	 * corchetes, ∫, Σ, √, fracciones…) se convierten ocupando justo esa cantidad, con las puntas en las líneas.
+     8	 * Las medidas son las del dibujo del papel (unidades de documento).
+     9	 */
+    10	object PaperRows {
+    11	    const val MAX_ROWS = 3
+    12	
+    13	    /** Alto de un renglón del papel; null si no tiene líneas. */
+    14	    fun step(paper: Paper): Float? = when (paper) {
+    15	        Paper.LINES -> 64f
+    16	        Paper.GRID, Paper.DOTS -> 32f
+    17	        Paper.PLAIN -> null
+    18	    }
+    19	
+    20	    /** Altura de la primera línea (las demás cada [step]). */
+    21	    fun offset(paper: Paper): Float = if (paper == Paper.LINES) 120f else 0f
+    22	
+    23	    /** De fábrica: las formas que abarcan a otras salen del renglón. */
+    24	    fun exceedsRow(p: InkPattern): Boolean = p.exceedsRow ?: AutoAlign.isContainer(p)
+    25	
+    26	    /**
+    27	     * Rectángulo para [InkReplacement.place] que deja [p] ocupando [rows] renglones, los más cercanos al
+    28	     * gesto; null si no corresponde (sin renglones, papel liso, tamaño fijo o por ancho, o el patrón no sale del renglón).
+    29	     */
+    30	    fun snap(p: InkPattern, gesture: Bounds, paper: Paper, rows: Int): Bounds? {
+    31	        if (rows !in 1..MAX_ROWS || !exceedsRow(p)) return null
+    32	        if (p.sizing == OutputSizing.FIXED || p.sizing == OutputSizing.MATCH_WIDTH) return null
+    33	        val step = step(paper) ?: return null
+    34	        val span = rows * step
+    35	        val off = offset(paper)
+    36	        val k = ((gesture.centerY - off - span / 2f) / step).roundToInt()
+    37	        val top = off + k * step
+    38	        val scale = p.outputScale.takeIf { it > 0f } ?: 1f
+    39	        val h = span / scale
+    40	        val cy = top + span / 2f
+    41	        // Sin zona elástica, el ancho acompaña al alto (así «ajustar al gesto» no lo achica); con zona, el largo es el del gesto.
+    42	        val w = if (p.stretch != null) gesture.width else {
+    43	            val core = PatternCore.bounds(p)
+    44	            if (core.height > 0.5f) core.width * h / core.height else gesture.width
+    45	        }
+    46	        return Bounds(gesture.centerX - w / 2f, cy - h / 2f, gesture.centerX + w / 2f, cy + h / 2f)
+    47	    }
+    48	}
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/InkController.kt  ·  líneas que nombran el alineado
+====================================================================================================
+69:    /** Al convertir, alinear la salida con las formas reconocidas del mismo renglón ([AutoAlign]). */
+70:    var autoAlign: Boolean = true
+71:    /** Renglones que ocupan las formas que salen del renglón (1–3); 0 = como siempre ([PaperRows]). */
+267:    private fun outputFor(pattern: InkPattern, anchor: Bounds, gesture: List<InkStroke>, start: Long, style: InkStyle?): List<InkStroke> {
+660:        val anchor = alignedAnchor(pattern, gesture.bounds(), gestureIds.toSet())
+661:        val output = outputFor(pattern, anchor, gesture, start, gesture.last().style)
+1040:    /** Rectángulo de la salida: el del gesto, o alineado con el renglón si [autoAlign] ([AutoAlign]). */
+1041:    private fun alignedAnchor(pattern: InkPattern, gesture: Bounds, exclude: Set<String>): Bounds {
+1042:        PaperRows.snap(pattern, gesture, paperOf(), rows)?.let { return it }
+1043:        if (!autoAlign) return gesture
+1045:        return AutoAlign.anchor(pattern, gesture, AutoAlign.items(page.strokes, exclude), AutoAlign.bridges(page.strokes, exclude)) { byId[it] }
+1069:        val anchor = alignedAnchor(r.match.pattern, anchorGesture.bounds(), r.gesture.map { it.id }.toSet())
+1070:        val output = outputFor(r.match.pattern, anchor, anchorGesture, strokeClock(downTime), contactStyle)
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/InkController.kt  líneas 267-276  ·  outputFor: raíz o plantilla
+====================================================================================================
+   267	    private fun outputFor(pattern: InkPattern, anchor: Bounds, gesture: List<InkStroke>, start: Long, style: InkStyle?): List<InkStroke> {
+   268	        if (pattern.id == DefaultPatterns.ROOT) {
+   269	            val dy = anchor.centerY - gesture.bounds().centerY
+   270	            RootFit.fit(pattern, gesture, ids, start, style, dy)?.let { out ->
+   271	                val c = symbolColors[pattern.id] ?: return out
+   272	                return out.map { it.copy(color = c) }
+   273	            }
+   274	        }
+   275	        return InkReplacement.place(pattern, anchor, ids, start, style = style, presetColor = symbolColors[pattern.id])
+   276	    }
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/InkController.kt  líneas 652-669  ·  convertWith: conversión elegida a mano
+====================================================================================================
+   652	    fun convertWith(pattern: InkPattern, gestureIds: List<String>, nowMs: Long = 0L): List<InkStroke>? {
+   653	        if (mode != Mode.NONE || gestureIds.isEmpty()) return null
+   654	        val gesture = strokesById(gestureIds.distinct()) ?: return null
+   655	        shapeFor(pattern, gesture.bounds(), gesture.last().style)?.let { shape ->
+   656	            if (selection.any { it in gestureIds }) clearSelection()
+   657	            return convertToShape(pattern, 1f, gesture, shape)
+   658	        }
+   659	        val start = strokeClock(if (nowMs != 0L) nowMs else gesture.last().endTime)
+   660	        val anchor = alignedAnchor(pattern, gesture.bounds(), gestureIds.toSet())
+   661	        val output = outputFor(pattern, anchor, gesture, start, gesture.last().style)
+   662	        history.perform(page, StrokeEdit(gesture, output, StrokeEdit.Kind.CONVERT))
+   663	        refreshCalcs(output)
+   664	        showHalosFor(output)
+   665	        if (selection.any { it in gestureIds }) clearSelection()
+   666	        emit(InkEvent.Converted(pattern, 1f, gesture, output))
+   667	        emit(InkEvent.PageChanged)
+   668	        return output
+   669	    }
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/InkController.kt  líneas 1041-1046  ·  alignedAnchor: el orden de decisión
+====================================================================================================
+  1041	    private fun alignedAnchor(pattern: InkPattern, gesture: Bounds, exclude: Set<String>): Bounds {
+  1042	        PaperRows.snap(pattern, gesture, paperOf(), rows)?.let { return it }
+  1043	        if (!autoAlign) return gesture
+  1044	        val byId = patterns().associateBy { it.id }
+  1045	        return AutoAlign.anchor(pattern, gesture, AutoAlign.items(page.strokes, exclude), AutoAlign.bridges(page.strokes, exclude)) { byId[it] }
+  1046	    }
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/InkController.kt  líneas 1060-1080  ·  convert: conversión automática
+====================================================================================================
+  1060	    private fun convert(r: Recognition.Convert) {
+  1061	        val anchorGesture = r.gesture.map { if (it.id == currentId) trimHold(it) else it }
+  1062	        val shape = shapeFor(r.match.pattern, anchorGesture.bounds(), contactStyle)
+  1063	        if (shape != null) {
+  1064	            convertToShape(r.match.pattern, r.match.score, r.gesture, shape)
+  1065	            mode = Mode.CONSUMED
+  1066	            points.clear()
+  1067	            return
+  1068	        }
+  1069	        val anchor = alignedAnchor(r.match.pattern, anchorGesture.bounds(), r.gesture.map { it.id }.toSet())
+  1070	        val output = outputFor(r.match.pattern, anchor, anchorGesture, strokeClock(downTime), contactStyle)
+  1071	        // Un solo comando: deshacer restaura todo el gesto (incluido el trazo en curso).
+  1072	        val edit = StrokeEdit(r.gesture, output, StrokeEdit.Kind.CONVERT)
+  1073	        history.perform(page, edit)
+  1074	        refreshCalcs(output)
+  1075	        showHalosFor(output)
+  1076	        mode = Mode.CONSUMED
+  1077	        points.clear()
+  1078	        emit(InkEvent.Converted(r.match.pattern, r.match.score, r.gesture, output))
+  1079	        emit(InkEvent.PageChanged)
+  1080	    }
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/Patterns.kt  líneas 89-126  ·  InkPattern: los datos de un patrón
+====================================================================================================
+    89	data class InkPattern(
+    90	    val id: String,
+    91	    val name: String,
+    92	    val gestureExamples: List<List<InkStroke>>,
+    93	    val outputInk: List<InkStroke>,
+    94	    val sizing: OutputSizing = OutputSizing.MATCH_HEIGHT,
+    95	    val outputScale: Float = 1f,
+    96	    val fixedWidth: Float = 120f,
+    97	    val fixedHeight: Float = 160f,
+    98	    val minScore: Float = DEFAULT_MIN_SCORE,
+    99	    /** Pausa propia del patrón; null = usar la global. */
+   100	    val holdMillis: Long? = null,
+   101	    val enabled: Boolean = true,
+   102	    val builtIn: Boolean = false,
+   103	    val updatedAt: Long = 0L,
+   104	    /** Sección de la biblioteca ([PatternCategory]); null = patrones propios del usuario. */
+   105	    val category: String? = null,
+   106	    /** Barra elástica de la salida ([Stretch]); null = la salida se escala sin deformarse. */
+   107	    val stretch: Stretch? = null,
+   108	    /**
+   109	     * Uso en las cuentas: null = automático (por el nombre), "" = no se usa en cuentas,
+   110	     * una letra = incógnita con esa letra (por ejemplo «x»), sin importar el nombre.
+   111	     */
+   112	    val unknown: String? = null,
+   113	    /** Piso (línea de escritura) de la salida, en fracción de su alto desde arriba; null = automático ([AutoAlign.floor]). */
+   114	    val floor: Float? = null,
+   115	    /**
+   116	     * Núcleo de la salida: índices de los trazos de [outputInk] que se escalan al alto del gesto y se ponen
+   117	     * donde se escribió; el resto (la flecha y la variable de un lim…) acompaña en proporción.
+   118	     * null = automático ([PatternCore]); vacío o inválido = automático.
+   119	     */
+   120	    val core: List<Int>? = null,
+   121	    /**
+   122	     * Puede salir del renglón: con renglones activos ([PaperRows]) ocupa los renglones elegidos (paréntesis,
+   123	     * corchetes, ∫, Σ, √, fracciones…). null = de fábrica ([PaperRows.exceedsRow]).
+   124	     */
+   125	    val exceedsRow: Boolean? = null,
+   126	) {
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/Patterns.kt  líneas 192-236  ·  PatternCore: el núcleo
+====================================================================================================
+   192	object PatternCore {
+   193	    /** Índices de los trazos del núcleo (siempre al menos uno). */
+   194	    fun indices(p: InkPattern): List<Int> {
+   195	        val all = p.outputInk.indices.toList()
+   196	        p.core?.filter { it in all }?.distinct()?.sorted()?.takeIf { it.isNotEmpty() }?.let { return it }
+   197	        // Los símbolos de fábrica traen el núcleo marcado; sin marca son enteros.
+   198	        if (p.builtIn || p.stretch != null || p.outputInk.size < 2) return all
+   199	        val whole = p.outputInk.bounds()
+   200	        if (whole.height <= 0.5f || whole.width <= 0.5f) return all
+   201	        val bands = bands(p.outputInk).sortedByDescending { it.second.height }
+   202	        if (bands.size < 2) return all
+   203	        val (top, topBounds) = bands[0]
+   204	        if (topBounds.height < 0.2f * whole.height || topBounds.height < BAND_LEAD * bands[1].second.height) return all
+   205	        val gesture = p.gestureExamples.map { it.bounds() }.filter { it.height > 0.5f && it.width > 0.5f }
+   206	        if (gesture.isEmpty()) return all
+   207	        val target = gesture.map { ln((it.width / it.height).toDouble()) }.average()
+   208	        fun dist(b: Bounds) = abs(ln((b.width.coerceAtLeast(0.5f) / b.height).toDouble()) - target)
+   209	        return if (dist(topBounds) + MARGIN < dist(whole)) top else all
+   210	    }
+   211	
+   212	    fun bounds(p: InkPattern): Bounds = indices(p).map { p.outputInk[it].bounds }.reduce(Bounds::union)
+   213	
+   214	    /** true si el núcleo es solo una parte de la salida. */
+   215	    fun isPartial(p: InkPattern): Boolean = indices(p).size < p.outputInk.size
+   216	
+   217	    /** Franjas horizontales: grupos de trazos cuyo intervalo vertical se solapa. */
+   218	    private fun bands(ink: List<InkStroke>): List<Pair<List<Int>, Bounds>> {
+   219	        val order = ink.indices.sortedBy { ink[it].bounds.top }
+   220	        val out = mutableListOf<Pair<MutableList<Int>, Bounds>>()
+   221	        for (i in order) {
+   222	            val b = ink[i].bounds
+   223	            val last = out.lastOrNull()
+   224	            if (last != null && b.top <= last.second.bottom) {
+   225	                last.first += i
+   226	                out[out.lastIndex] = last.first to last.second.union(b)
+   227	            } else {
+   228	                out += mutableListOf(i) to b
+   229	            }
+   230	        }
+   231	        return out.map { (idx, b) -> idx.sorted() to b }
+   232	    }
+   233	
+   234	    private const val BAND_LEAD = 1.2f
+   235	    private const val MARGIN = 0.15
+   236	}
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/Patterns.kt  líneas 239-362  ·  InkReplacement: dibujo de la salida en el anclaje
+====================================================================================================
+   239	object InkReplacement {
+   240	    /**
+   241	     * @param anchor rectángulo del gesto; la salida se centra en él. Si el patrón tiene una [InkPattern.stretch]
+   242	     *  y [elastic] es true, la salida se alinea a la izquierda (o arriba) del gesto y su zona elástica se
+   243	     *  estira o se encoge para terminar justo donde terminó el gesto.
+   244	     * @param style estilo con que se escribió el gesto: los trazos de salida con el color por defecto
+   245	     *  adoptan su color, su grosor (proporcional) y su punta; los que se enseñaron con otro color lo
+   246	     *  conservan. Un estilo de resaltador no se adopta.
+   247	     * @param presetColor color fijo del símbolo (ver `SymbolColors`): si no es null, todos los trazos de salida
+   248	     *  lo toman sin importar la pluma (el grosor y la punta siguen adoptándose de [style]); null = sin cambios.
+   249	     * @param elastic false = escala uniforme aunque haya zona elástica (inserción desde la biblioteca).
+   250	     * @return trazos nuevos (ids nuevos, mismo [InkStroke.groupId], [InkStroke.patternId] = patrón).
+   251	     */
+   252	    fun place(
+   253	        pattern: InkPattern,
+   254	        anchor: Bounds,
+   255	        ids: IdGenerator,
+   256	        startTime: Long = 0L,
+   257	        groupId: String = ids.next(),
+   258	        style: InkStyle? = null,
+   259	        elastic: Boolean = true,
+   260	        presetColor: Int? = null,
+   261	    ): List<InkStroke> {
+   262	        val src = pattern.outputInk.bounds()
+   263	        // Sin zona elástica, lo que se mide y se centra en el gesto es el núcleo (la salida entera si no tiene).
+   264	        val core = PatternCore.bounds(pattern)
+   265	        val eps = 0.5f
+   266	        val zone = pattern.stretch?.takeIf { elastic }?.sanitized()
+   267	            ?.takeIf { (if (it.axis == Axis.HORIZONTAL) src.width else src.height) > eps }
+   268	        val ref = if (zone == null) core else src
+   269	        val scaleH = if (ref.height > eps) anchor.height / ref.height else Float.NaN
+   270	        val scaleW = if (ref.width > eps) anchor.width / ref.width else Float.NaN
+   271	        val s = when (pattern.sizing) {
+   272	            OutputSizing.MATCH_HEIGHT -> scaleH.orElse(scaleW)
+   273	            OutputSizing.MATCH_WIDTH -> scaleW.orElse(scaleH)
+   274	            OutputSizing.FIT_GESTURE -> minOf(scaleW.orElse(scaleH), scaleH.orElse(scaleW))
+   275	            OutputSizing.FIXED -> listOfNotNull(
+   276	                if (src.width > eps) pattern.fixedWidth / src.width else null,
+   277	                if (src.height > eps) pattern.fixedHeight / src.height else null,
+   278	            ).minOrNull() ?: 1f
+   279	        }.let { raw ->
+   280	            when {
+   281	                raw.isNaN() || raw <= 0f -> 1f
+   282	                // Un gesto casi plano (p. ej. una línea) no debe encoger la salida hasta desaparecer.
+   283	                // Con zona elástica no hace falta: el largo lo pone la zona, no la escala.
+   284	                zone == null && pattern.sizing != OutputSizing.FIXED && raw * ref.maxSide < 0.25f * anchor.maxSide ->
+   285	                    anchor.maxSide / ref.maxSide.coerceAtLeast(eps)
+   286	                else -> raw
+   287	            }
+   288	        } * pattern.outputScale
+   289	        val placed = if (zone != null) {
+   290	            stretched(pattern.outputInk, src, anchor, s, zone)
+   291	        } else {
+   292	            val t = Affine.translate(-core.centerX, -core.centerY)
+   293	                .then(Affine(a = s, d = s))
+   294	                .then(Affine.translate(anchor.centerX, anchor.centerY))
+   295	            pattern.outputInk.map { it.transformed(t, scaleWidth = false) }
+   296	        }
+   297	        return placed.map { stroke ->
+   298	            stroke.adopting(style).let { if (presetColor != null) it.copy(color = presetColor) else it }.copy(
+   299	                id = ids.next(),
+   300	                startTime = startTime,
+   301	                groupId = groupId,
+   302	                patternId = pattern.id,
+   303	            )
+   304	        }
+   305	    }
+   306	
+   307	    /**
+   308	     * Escala uniforme [s] salvo en la zona elástica, que absorbe la diferencia hasta el borde del gesto:
+   309	     * la salida empieza en el borde izquierdo (o superior) de [anchor] y termina en el opuesto, salvo que la
+   310	     * zona ya no pueda encogerse más ([Stretch.minFactor]). En el otro eje se centra como siempre.
+   311	     */
+   312	    private fun stretched(ink: List<InkStroke>, src: Bounds, anchor: Bounds, s: Float, zone: Stretch): List<InkStroke> {
+   313	        val horizontal = zone.axis == Axis.HORIZONTAL
+   314	        val start = if (horizontal) src.left else src.top
+   315	        val natural = (if (horizontal) src.width else src.height) * s
+   316	        val target = if (horizontal) anchor.width else anchor.height
+   317	        val za = zone.from * natural
+   318	        val zb = zone.to * natural
+   319	        val len = zb - za
+   320	        val newLen = maxOf(len + target - natural, zone.minFactor * len)
+   321	        val k = if (len > 0f) newLen / len else 1f
+   322	        val delta = newLen - len
+   323	        fun along(v: Float): Float {
+   324	            val u = (v - start) * s
+   325	            return when {
+   326	                u <= za -> u
+   327	                u >= zb -> u + delta
+   328	                else -> za + (u - za) * k
+   329	            }
+   330	        }
+   331	        val origin = if (horizontal) anchor.left else anchor.top
+   332	        val crossFrom = if (horizontal) src.centerY else src.centerX
+   333	        val crossTo = if (horizontal) anchor.centerY else anchor.centerX
+   334	        return ink.map { stroke ->
+   335	            stroke.copy(points = stroke.points.map { p ->
+   336	                if (horizontal) p.copy(x = origin + along(p.x), y = (p.y - crossFrom) * s + crossTo)
+   337	                else p.copy(x = (p.x - crossFrom) * s + crossTo, y = origin + along(p.y))
+   338	            })
+   339	        }
+   340	    }
+   341	
+   342	    /** Zona saneada (finita, dentro de [0, 1] y con largo); null si no sirve. */
+   343	    private fun Stretch.sanitized(): Stretch? {
+   344	        if (!from.isFinite() || !to.isFinite() || !minFactor.isFinite()) return null
+   345	        val a = from.coerceIn(0f, 1f)
+   346	        val b = to.coerceIn(0f, 1f)
+   347	        if (b - a < 0.01f) return null
+   348	        return copy(from = a, to = b, minFactor = minFactor.coerceIn(0f, 1f))
+   349	    }
+   350	
+   351	    internal fun InkStroke.adopting(style: InkStyle?): InkStroke {
+   352	        // El resaltador no se hereda: la salida es tinta.
+   353	        if (style == null || style.brush == Brush.HIGHLIGHTER || color != DEFAULT_INK_COLOR) return this
+   354	        return copy(
+   355	            color = style.color,
+   356	            width = (width * style.width / DEFAULT_INK_WIDTH).coerceIn(0.5f, 60f),
+   357	            brush = if (brush == Brush.PEN) style.brush else brush,
+   358	        )
+   359	    }
+   360	
+   361	    private fun Float.orElse(other: Float) = if (isNaN()) other else this
+   362	}
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/RootFit.kt  (completo)
+====================================================================================================
+     1	package io.trazo.core
+     2	
+     3	import io.trazo.core.InkReplacement.adopting
+     4	import kotlin.math.max
+     5	import kotlin.math.min
+     6	
+     7	/**
+     8	 * Raíz que sigue el trazo de la mano: el ✓ conserva la forma, el tamaño y el lugar que dibujó el usuario
+     9	 * (solo se suaviza), y la barra sale recta desde la punta del ✓ hasta donde terminó el gesto. Así la raíz no
+    10	 * se agranda ni tapa los números que tiene al lado, como pasaba al escalar la plantilla.
+    11	 */
+    12	object RootFit {
+    13	
+    14	    /**
+    15	     * @param gesture trazos del gesto en orden.
+    16	     * @param dy corrimiento vertical del alineado automático (0 = donde se dibujó).
+    17	     * @return trazos de salida (✓ y barra) o null si el gesto no tiene forma de raíz (se usa la plantilla).
+    18	     */
+    19	    fun fit(
+    20	        pattern: InkPattern,
+    21	        gesture: List<InkStroke>,
+    22	        ids: IdGenerator,
+    23	        startTime: Long,
+    24	        style: InkStyle?,
+    25	        dy: Float = 0f,
+    26	    ): List<InkStroke>? {
+    27	        if (pattern.outputInk.size < 2 || gesture.isEmpty()) return null
+    28	        val pts = gesture.flatMap { it.points }
+    29	        if (pts.size < 4) return null
+    30	        val b = Bounds.of(pts)
+    31	        val h = b.height
+    32	        if (h < 1f || b.width < 1f) return null
+    33	        // Punta del ✓: el primer punto que llega arriba después de haber bajado.
+    34	        val top = b.top
+    35	        var wentDown = false
+    36	        var peak = -1
+    37	        for (i in pts.indices) {
+    38	            val y = pts[i].y
+    39	            if (y > top + 0.4f * h) wentDown = true
+    40	            if (wentDown && y <= top + 0.12f * h) { peak = i; break }
+    41	        }
+    42	        if (peak < 2) return null
+    43	        val check = smooth(pts.subList(0, peak + 1)).map { it.copy(y = it.y + dy) }
+    44	        val tip = check.last()
+    45	        val end = max(b.right, tip.x + 0.3f * h)
+    46	        val bar = (0..BAR_POINTS).map { k ->
+    47	            val u = k / BAR_POINTS.toFloat()
+    48	            InkPoint(tip.x + (end - tip.x) * u, tip.y, pressure = taper(u), timeMs = tip.timeMs + k * 8L)
+    49	        }
+    50	        val checkTpl = pattern.outputInk.first()
+    51	        val barTpl = pattern.outputInk.last()
+    52	        val group = ids.next()
+    53	        return listOf(checkTpl.copy(points = check), barTpl.copy(points = bar)).map { s ->
+    54	            s.adopting(style).copy(id = ids.next(), startTime = startTime, groupId = group, patternId = pattern.id)
+    55	        }
+    56	    }
+    57	
+    58	    /** Media móvil de 3 puntos (los extremos quedan fijos); afina la presión en las puntas. */
+    59	    private fun smooth(src: List<InkPoint>): List<InkPoint> {
+    60	        val n = src.size
+    61	        return src.mapIndexed { i, p ->
+    62	            val u = if (n > 1) i / (n - 1f) else 0f
+    63	            val pr = min(p.pressure.coerceIn(0.2f, 1f), taper(u))
+    64	            if (i == 0 || i == n - 1) p.copy(pressure = pr)
+    65	            else p.copy(
+    66	                x = (src[i - 1].x + p.x + src[i + 1].x) / 3f,
+    67	                y = (src[i - 1].y + p.y + src[i + 1].y) / 3f,
+    68	                pressure = pr,
+    69	            )
+    70	        }
+    71	    }
+    72	
+    73	    private fun taper(u: Float): Float = (0.45f + 0.55f * min(1f, min(u, 1f - u) * 6f)).coerceIn(0.3f, 1f)
+    74	
+    75	    /** El trazo más plano y más a la derecha de una raíz: su barra. */
+    76	    fun barOf(group: List<InkStroke>): InkStroke? =
+    77	        group.filter { val b = it.bounds; b.height < 0.2f * b.width.coerceAtLeast(1f) }.maxByOrNull { it.bounds.right }
+    78	
+    79	    private const val BAR_POINTS = 12
+    80	}
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/math/tex/TexInk.kt  ·  líneas que nombran el alineado
+====================================================================================================
+4:import io.trazo.core.AutoAlign
+169:        kind == TexNode.Kind.BIN || kind == TexNode.Kind.REL || AutoAlign.isSignName(p.name)
+188:        val floor = AutoAlign.floor(p)
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/math/tex/TexInk.kt  líneas 171-194  ·  glyph: letras y cifras en las fórmulas del tutor
+====================================================================================================
+   171	    private fun glyph(p: InkPattern, kind: TexNode.Kind, size: Float): TexBox? {
+   172	        if (p.outputInk.isEmpty()) return null
+   173	        val src = p.outputInk.bounds()
+   174	        if (framed(p)) {
+   175	            val k = size / 100f
+   176	            return place(p, Affine.translate(-src.left, -PresetPatterns.BASELINE).then(Affine(a = k, d = k)), size)
+   177	        }
+   178	        if (isSign(p, kind)) {
+   179	            // Signo propio: del alto de media cifra (o de media cifra de ancho si es plano), centrado en el eje.
+   180	            val k = when {
+   181	                src.height > src.width * 0.4f && src.height > 0.5f -> size * 0.55f / src.height
+   182	                src.width > 0.5f -> size * 0.5f / src.width
+   183	                else -> 1f
+   184	            }
+   185	            return place(p, Affine.translate(-src.left, -src.centerY).then(Affine(a = k, d = k)).then(Affine.translate(0f, -size / 2f)), size)
+   186	        }
+   187	        // Letra o cifra propia: apoyada en la línea, las letras un poco más bajas que las cifras.
+   188	        val floor = AutoAlign.floor(p)
+   189	        val letter = MathNotes.patternSymbol(p)?.let { MathLayoutConverter.spelling(it) ?: it }?.any { it.isLetter() } == true
+   190	        val h = (if (letter) size * 0.8f else size) / floor
+   191	        if (src.height <= 0.5f) return null
+   192	        val k = h / src.height
+   193	        return place(p, Affine.translate(-src.left, -src.top).then(Affine(a = k, d = k)).then(Affine.translate(0f, -h * floor)), size)
+   194	    }
+
+
+====================================================================================================
+== core/src/main/kotlin/io/trazo/core/MathNotes.kt  ·  líneas que nombran el alineado
+====================================================================================================
+1047:    /** Signos centrados (+, ×, =…): no marcan la altura del renglón ([AutoAlign.isSign]). */
+1048:    private fun isSign(g: Glyph) = AutoAlign.isSignName(g.label)
+1424:                        val size = if (preset) h else h * 0.8f / AutoAlign.floor(p)
+1425:                        val center = if (preset) cy else cy + h / 2f - size * AutoAlign.floor(p) + size / 2f
+1507:                        val floor = AutoAlign.floor(p)
+
+
+====================================================================================================
+== app/src/main/kotlin/io/trazo/app/data/SettingsStore.kt  ·  líneas que nombran el alineado
+====================================================================================================
+77:    val autoAlign: Boolean = true,
+146:        autoAlign = prefs.getBoolean("autoAlign", true),
+198:            .putBoolean("autoAlign", s.autoAlign)
+
+
+====================================================================================================
+== app/src/main/kotlin/io/trazo/app/ui/EditorViewModel.kt  ·  líneas que nombran el alineado
+====================================================================================================
+230:        controller.autoAlign = s.autoAlign
+
+
+====================================================================================================
+== app/src/main/kotlin/io/trazo/app/ui/EditorToolbar.kt  ·  líneas que nombran el alineado
+====================================================================================================
+169:                    TrazoIcons.Align, if (settings.autoAlign) "Auto-alineado activado" else "Auto-alineado desactivado",
+170:                    onClick = { update { it.copy(autoAlign = !it.autoAlign) } },
+171:                    selected = settings.autoAlign,
+779:                TrazoIcons.Align, if (settings.autoAlign) "Auto-alineado activado" else "Auto-alineado desactivado",
+780:                onClick = { update { it.copy(autoAlign = !it.autoAlign) } },
+781:                selected = settings.autoAlign,
+
+
+====================================================================================================
+== app/src/main/kotlin/io/trazo/app/ui/EditorScreen.kt  ·  líneas que nombran el alineado
+====================================================================================================
+393:                                        store.update { it.copy(autoAlign = !it.autoAlign) }
+394:                                        val on = store.settings.value.autoAlign
+
+
+====================================================================================================
+== app/src/main/kotlin/io/trazo/app/ui/SettingsScreen.kt  ·  líneas que nombran el alineado
+====================================================================================================
+383:                "Auto-alinear lo reconocido", s.autoAlign, { on -> update { it.copy(autoAlign = on) } },
+
+
+====================================================================================================
+== app/src/main/kotlin/io/trazo/app/ui/PatternScreens.kt  ·  líneas que nombran el alineado
+====================================================================================================
+87:import io.trazo.core.AutoAlign
+398:                            val f = vm.draft()?.let { d -> AutoAlign.floor(d) } ?: if (vm.customFloor) vm.floor else 1f
+404:                                vm.floor = ((y - box.top) / box.height).coerceIn(AutoAlign.MIN_USER_FLOOR, 1f)
+405:                                vm.customFloor = true
+413:                            "Piso a mano", vm.customFloor, { on ->
+414:                                if (on) vm.floor = vm.draft()?.let { AutoAlign.floor(it) } ?: vm.floor
+415:                                vm.customFloor = on
+421:                        if (vm.customFloor) {
+423:                                "Altura del piso", "${"%.0f".format(vm.floor * 100)} % desde arriba", vm.floor,
+424:                                AutoAlign.MIN_USER_FLOOR..1f, onChange = { vm.floor = it },
+
+
+====================================================================================================
+== app/src/main/kotlin/io/trazo/app/ui/PatternEditorViewModel.kt  ·  líneas que nombran el alineado
+====================================================================================================
+12:import io.trazo.core.AutoAlign
+73:    /** Piso elegido a mano ([InkPattern.floor]); si no, el automático. */
+74:    var customFloor by mutableStateOf(original?.floor != null)
+79:    var floor by mutableFloatStateOf(original?.floor ?: (original?.let { AutoAlign.floor(it) } ?: 1f))
+151:            floor = if (customFloor) floor else null,
+
+
+====================================================================================================
+== core/src/test/kotlin/io/trazo/core/AutoAlignTest.kt  (completo)
+====================================================================================================
+     1	package io.trazo.core
+     2	
+     3	import org.junit.Assert.assertEquals
+     4	import org.junit.Assert.assertSame
+     5	import org.junit.Test
+     6	
+     7	/** Auto-alineado: las formas nuevas se igualan con el renglón y los cierres con su apertura. */
+     8	class AutoAlignTest {
+     9	    private val presets = PresetPatterns.all().associateBy { it.id }
+    10	    private fun preset(key: String) = presets.getValue(PresetPatterns.PREFIX + key)
+    11	    private val lookup: (String) -> InkPattern? = { presets[it] }
+    12	
+    13	    private fun item(key: String, l: Float, t: Float, r: Float, b: Float) =
+    14	        AutoAlign.Item(PresetPatterns.PREFIX + key, Bounds(l, t, r, b))
+    15	
+    16	    private fun align(key: String, gesture: Bounds, vararg items: AutoAlign.Item) =
+    17	        AutoAlign.anchor(preset(key), gesture, items.toList(), lookup)
+    18	
+    19	    /** Piso (línea de escritura) de la salida de [key] anclada en [out]. */
+    20	    private fun floorOf(key: String, out: Bounds): Float {
+    21	        val p = preset(key)
+    22	        val h = out.height * p.outputScale
+    23	        return out.centerY - h / 2f + h * AutoAlign.floor(p)
+    24	    }
+    25	
+    26	    private fun refFloor(key: String, top: Float, bottom: Float) = top + (bottom - top) * AutoAlign.floor(preset(key))
+    27	
+    28	    /** Alto sobre la línea (la escala) de la salida de [p] anclada en [out]. */
+    29	    private fun body(p: InkPattern, out: Bounds) = out.height * p.outputScale * AutoAlign.floor(p)
+    30	    private fun body(key: String, out: Bounds) = body(preset(key), out)
+    31	    private fun refBody(key: String, top: Float, bottom: Float) = (bottom - top) * AutoAlign.floor(preset(key))
+    32	
+    33	    @Test fun `un numero toma la escala del mas cercano y se apoya en su piso`() {
+    34	        val g = Bounds(300f, 130f, 340f, 200f)
+    35	        val out = align("2", g, item("1", 100f, 100f, 140f, 180f), item("3", 900f, 0f, 940f, 60f))
+    36	        assertEquals(refBody("1", 100f, 180f), body("2", out), 0.5f)
+    37	        assertEquals(g.width / g.height, out.width / out.height, 0.01f)
+    38	        assertEquals(refFloor("1", 100f, 180f), floorOf("2", out), 0.5f)
+    39	        assertEquals(320f, out.centerX, 0.5f)
+    40	    }
+    41	
+    42	    @Test fun `a much smaller sign is only centered on the line`() {
+    43	        val g = Bounds(200f, 170f, 260f, 200f)
+    44	        val out = align("igual", g, item("1", 100f, 100f, 140f, 200f))
+    45	        assertEquals(g.height, out.height, 0.01f)
+    46	        assertEquals(150f, out.centerY, 0.5f)
+    47	    }
+    48	
+    49	    @Test fun `un signo no marca la altura del renglon para el numero siguiente`() {
+    50	        // «5 + 3»: el 3 toma la altura del 5 aunque el + esté más cerca.
+    51	        val out = align("3", Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), item("mas", 170f, 125f, 210f, 165f))
+    52	        assertEquals(refBody("5", 100f, 180f), body("3", out), 0.5f)
+    53	        assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
+    54	        // Solo un signo al lado: el número queda como se escribió.
+    55	        val g = Bounds(260f, 120f, 290f, 170f)
+    56	        assertSame(g, align("3", g, item("mas", 170f, 125f, 210f, 165f)))
+    57	    }
+    58	
+    59	    @Test fun `un signo se centra en la linea de los numeros sin cambiar de tamano`() {
+    60	        // Un + casi del alto del número: antes tomaba su altura; ahora solo se centra.
+    61	        val g = Bounds(170f, 150f, 230f, 210f)
+    62	        val out = align("mas", g, item("5", 100f, 100f, 140f, 180f), item("menos", 240f, 150f, 280f, 160f))
+    63	        assertEquals(g.height, out.height, 0.01f)
+    64	        assertEquals(140f, out.centerY, 0.5f)
+    65	        // Sin números al lado, se centra en otro signo.
+    66	        val alone = align("igual", Bounds(300f, 128f, 340f, 146f), item("mas", 200f, 120f, 240f, 160f))
+    67	        assertEquals(140f, alone.centerY, 0.5f)
+    68	    }
+    69	
+    70	    @Test fun `lo escrito a proposito mas arriba queda donde se escribio`() {
+    71	        // Un numerador sobre el renglón del 3 no baja a su línea.
+    72	        val num = Bounds(300f, 70f, 330f, 125f)
+    73	        assertSame(num, align("1", num, item("3", 100f, 100f, 140f, 180f)))
+    74	        // La barra de la fracción, debajo del numerador, tampoco se mueve.
+    75	        val bar = Bounds(290f, 137f, 345f, 143f)
+    76	        val fraction = presets.getValue(DefaultPatterns.FRACTION)
+    77	        assertSame(bar, AutoAlign.anchor(fraction, bar, listOf(item("3", 100f, 100f, 140f, 180f), item("1", 300f, 70f, 330f, 125f)), lookup))
+    78	    }
+    79	
+    80	    private fun letter(name: String, unknown: String? = null): InkPattern {
+    81	        val ink = listOf(InkStroke("$name-o", listOf(InkPoint(0f, 0f), InkPoint(40f, 40f))))
+    82	        return InkPattern("user-$name", name, listOf(ink), ink, unknown = unknown)
+    83	    }
+    84	
+    85	    private fun alignUser(p: InkPattern, gesture: Bounds, vararg items: AutoAlign.Item) =
+    86	        AutoAlign.anchor(p, gesture, items.toList()) { presets[it] ?: if (it == "user-x") letter("x") else null }
+    87	
+    88	    @Test fun `una variable toma la escala del numero de al lado y baja a su piso`() {
+    89	        // «5x»: la x toma la escala del 5 y se apoya en su piso.
+    90	        val g = Bounds(160f, 130f, 190f, 165f)
+    91	        val out = alignUser(letter("x"), g, item("5", 100f, 100f, 140f, 180f))
+    92	        assertEquals(refBody("5", 100f, 180f), body(letter("x"), out), 0.5f)
+    93	        assertEquals(180f, out.bottom, 0.5f)
+    94	        // «Equis» y una incógnita con otro nombre también son variables.
+    95	        assertEquals(180f, alignUser(letter("Equis"), g, item("5", 100f, 100f, 140f, 180f)).bottom, 0.5f)
+    96	        assertEquals(180f, alignUser(letter("Mi letra", unknown = "a"), g, item("5", 100f, 100f, 140f, 180f)).bottom, 0.5f)
+    97	    }
+    98	
+    99	    @Test fun `el piso elegido por el usuario manda sobre el automatico`() {
+   100	        // «lim» con «x→k» debajo: el usuario pone el piso a mitad de la salida.
+   101	        val lim = letter("lim").copy(floor = 0.5f)
+   102	        assertEquals(0.5f, AutoAlign.floor(lim), 1e-6f)
+   103	        val g = Bounds(160f, 130f, 200f, 210f)
+   104	        val out = alignUser(lim, g, item("5", 100f, 100f, 140f, 180f))
+   105	        assertEquals(refFloor("5", 100f, 180f), out.top + out.height * 0.5f, 0.5f)
+   106	        // Un valor fuera de rango se acota.
+   107	        assertEquals(AutoAlign.MIN_USER_FLOOR, AutoAlign.floor(lim.copy(floor = -1f)), 1e-6f)
+   108	        assertEquals(1f, AutoAlign.floor(lim.copy(floor = 3f)), 1e-6f)
+   109	    }
+   110	
+   111	    @Test fun `el piso a mano se respeta aunque no haya nada al lado`() {
+   112	        // «lim» escrito solo: lo escrito es lo de arriba del piso, la flecha queda debajo de la línea.
+   113	        val lim = letter("lim").copy(floor = 0.5f, outputScale = 1.2f)
+   114	        val g = Bounds(160f, 130f, 220f, 170f)
+   115	        for (items in listOf(emptyList(), listOf(item("5", 900f, 100f, 940f, 180f)))) {
+   116	            val out = AutoAlign.anchor(lim, g, items) { presets[it] }
+   117	            val h = out.height * lim.outputScale
+   118	            assertEquals(g.bottom, out.centerY - h / 2f + h * 0.5f, 0.5f)
+   119	            assertEquals(g.height * lim.outputScale, h * 0.5f, 0.5f)
+   120	            assertEquals(g.centerX, out.centerX, 0.5f)
+   121	        }
+   122	        // Sin piso a mano no cambia nada.
+   123	        assertSame(g, AutoAlign.anchor(letter("lim"), g, emptyList()) { presets[it] })
+   124	    }
+   125	
+   126	    @Test fun `la cola de la y baja del piso`() {
+   127	        val g = Bounds(160f, 130f, 190f, 190f)
+   128	        val out = alignUser(letter("y"), g, item("5", 100f, 100f, 140f, 180f))
+   129	        // El cuerpo (sin la cola) mide lo del 5.
+   130	        assertEquals(refBody("5", 100f, 180f), body(letter("y"), out), 0.5f)
+   131	        assertEquals(180f, out.top + out.height * (1f - AutoAlign.DESCENDER), 0.5f)
+   132	    }
+   133	
+   134	    @Test fun `una letra griega de la biblioteca toma la escala del numero y se apoya en su linea`() {
+   135	        val g = Bounds(160f, 120f, 200f, 160f)
+   136	        val out = align("pi", g, item("5", 100f, 100f, 140f, 180f))
+   137	        assertEquals(refBody("5", 100f, 180f), body("pi", out), 0.5f)
+   138	        assertEquals(180f, out.top + out.height * AutoAlign.floor(preset("pi")), 0.5f)
+   139	    }
+   140	
+   141	    @Test fun `un numero se apoya en otro numero, no en una letra`() {
+   142	        // «5x + 3»: el 3 iguala al 5 aunque la x esté más cerca.
+   143	        val out = alignUser(preset("3"), Bounds(260f, 120f, 290f, 170f), item("5", 100f, 100f, 140f, 180f), AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
+   144	        assertEquals(refBody("5", 100f, 180f), body("3", out), 0.5f)
+   145	        assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
+   146	        // Solo una letra al lado: toma su escala y apoya en su piso.
+   147	        val g = Bounds(260f, 120f, 290f, 170f)
+   148	        val alone = alignUser(preset("3"), g, AutoAlign.Item("user-x", Bounds(150f, 150f, 180f, 180f)))
+   149	        assertEquals(30f, body("3", alone), 0.5f)
+   150	        assertEquals(180f, alone.top + alone.height * AutoAlign.floor(preset("3")), 0.5f)
+   151	    }
+   152	
+   153	    @Test fun `una variable de exponente queda donde se escribio`() {
+   154	        val g = Bounds(145f, 60f, 165f, 85f)
+   155	        assertSame(g, alignUser(letter("x"), g, item("2", 100f, 100f, 140f, 180f)))
+   156	    }
+   157	
+   158	    @Test fun `un exponente escrito sobre la mitad de arriba del numero queda donde se escribio`() {
+   159	        // El 2 de «5²» toca la mitad de arriba del 5: antes bajaba al renglón y tomaba su altura.
+   160	        val s = preset("2").outputScale
+   161	        val g = Bounds(145f, 140f - 35f / s, 165f, 140f - 5f / s)
+   162	        assertSame(g, align("2", g, item("5", 100f, 100f, 140f, 180f)))
+   163	        // Lo mismo con una letra de base y un subíndice.
+   164	        val sub = Bounds(145f, 160f - 10f / s, 165f, 160f + 30f / s)
+   165	        assertSame(sub, align("2", sub, item("5", 100f, 100f, 140f, 180f)))
+   166	    }
+   167	
+   168	    @Test fun `lo que sigue a una potencia se alinea con la base y no con el exponente`() {
+   169	        // «5² + 3»: el 3 iguala al 5, aunque el exponente esté más cerca.
+   170	        val out = align(
+   171	            "3", Bounds(260f, 115f, 290f, 175f),
+   172	            item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f), item("mas", 180f, 125f, 220f, 165f),
+   173	        )
+   174	        assertEquals(refBody("5", 100f, 180f), body("3", out), 0.5f)
+   175	        assertEquals(refFloor("5", 100f, 180f), floorOf("3", out), 0.5f)
+   176	        // El + de «x² + 1» se centra en el 5, no en el exponente.
+   177	        val plus = align("mas", Bounds(180f, 110f, 210f, 140f), item("5", 100f, 100f, 140f, 180f), item("2", 145f, 80f, 165f, 120f))
+   178	        assertEquals(140f, plus.centerY, 0.5f)
+   179	    }
+   180	
+   181	    @Test fun `un menos de exponente no baja al renglon`() {
+   182	        val g = Bounds(145f, 108f, 170f, 114f)
+   183	        assertSame(g, align("menos", g, item("5", 100f, 100f, 140f, 180f)))
+   184	    }
+   185	
+   186	    @Test fun `lo escrito lejos de todo no se alinea`() {
+   187	        val g = Bounds(600f, 130f, 640f, 200f)
+   188	        assertSame(g, align("2", g, item("1", 100f, 100f, 140f, 180f)))
+   189	    }
+   190	
+   191	    @Test fun `solo toma la escala de lo que esta a menos de tres veces el tamano`() {
+   192	        // A 2,9 altos del 1 todavía la toma; a 3,1 ya es otra cuenta y queda como se escribió.
+   193	        val s = preset("2").outputScale
+   194	        val h = 70f / s
+   195	        val near = Bounds(140f + 2.9f * 80f, 130f, 140f + 2.9f * 80f + 40f, 130f + h)
+   196	        assertEquals(refBody("1", 100f, 180f), body("2", align("2", near, item("1", 100f, 100f, 140f, 180f))), 0.5f)
+   197	        val far = Bounds(140f + 3.1f * 80f, 130f, 140f + 3.1f * 80f + 40f, 130f + h)
+   198	        assertSame(far, align("2", far, item("1", 100f, 100f, 140f, 180f)))
+   199	    }
+   200	
+   201	    @Test fun `toma la escala del mas cercano de dos`() {
+   202	        // «1 … 4  2»: el 2 iguala al 4, que está más cerca, y no al 1.
+   203	        val out = align("2", Bounds(300f, 120f, 330f, 170f), item("1", 100f, 100f, 140f, 180f), item("4", 240f, 125f, 265f, 165f))
+   204	        assertEquals(refBody("4", 125f, 165f), body("2", out), 0.5f)
+   205	        assertEquals(refFloor("4", 125f, 165f), floorOf("2", out), 0.5f)
+   206	    }
+   207	
+   208	    @Test fun `una coma no le cambia la escala al numero siguiente`() {
+   209	        val g = Bounds(200f, 120f, 230f, 170f)
+   210	        val out = align("3", g, item("coma", 160f, 170f, 168f, 190f))
+   211	        assertEquals(g.height, out.height, 0.01f)
+   212	    }
+   213	
+   214	    @Test fun `closing bracket copies the height and level of its opening`() {
+   215	        val p = preset("parentesis-cierra")
+   216	        val out = align(
+   217	            "parentesis-cierra", Bounds(600f, 150f, 630f, 260f),
+   218	            item("parentesis-abre", 100f, 80f, 130f, 320f),
+   219	            item("2", 300f, 160f, 340f, 240f),
+   220	        )
+   221	        assertEquals(240f / p.outputScale, out.height, 0.5f)
+   222	        assertEquals(200f, out.centerY, 0.5f)
+   223	    }
+   224	
+   225	    @Test fun `un parentesis junto a un numero, una x, un mas o un menos se centra sin cambiar de tamano`() {
+   226	        val g = Bounds(200f, 140f, 230f, 240f)
+   227	        for (next in listOf(item("2", 100f, 120f, 140f, 200f), item("letra-x", 100f, 130f, 140f, 190f), item("mas", 100f, 140f, 140f, 180f), item("menos", 100f, 158f, 140f, 162f))) {
+   228	            val out = align("parentesis-abre", g, next)
+   229	            assertEquals("junto a ${next.patternId}", 100f, out.height, 0.5f)
+   230	            assertEquals("junto a ${next.patternId}", next.bounds.centerY, out.centerY, 0.5f)
+   231	        }
+   232	    }
+   233	
+   234	    @Test fun `un parentesis junto a una integral se centra en su medio sin cambiar de tamano`() {
+   235	        val g = Bounds(160f, 120f, 180f, 200f)
+   236	        for (side in listOf(AutoAlign.Item(DefaultPatterns.INTEGRAL, Bounds(100f, 50f, 140f, 250f)), AutoAlign.Item(DefaultPatterns.INTEGRAL, Bounds(200f, 50f, 240f, 250f)))) {
+   237	            val out = align("parentesis-abre", g, side)
+   238	            assertEquals(80f, out.height, 0.01f)
+   239	            assertEquals(150f, out.centerY, 0.5f)
+   240	        }
+   241	    }
+   242	
+   243	    @Test fun `un corchete toma la altura de otro signo de agrupacion parecido`() {
+   244	        val p = preset("parentesis-abre")
+   245	        val out = align("parentesis-abre", Bounds(200f, 140f, 230f, 240f), item("corchete-abre", 150f, 110f, 175f, 250f))
+   246	        assertEquals(140f / p.outputScale, out.height, 0.5f)
+   247	        assertEquals(180f, out.centerY, 0.5f)
+   248	    }
+   249	
+   250	    @Test fun `nested brackets close the innermost open one`() {
+   251	        val out = align(
+   252	            "corchete-cierra", Bounds(600f, 180f, 620f, 260f),
+   253	            item("corchete-abre", 100f, 50f, 120f, 350f),
+   254	            item("corchete-abre", 200f, 160f, 220f, 280f),
+   255	        )
+   256	        assertEquals(220f, out.centerY, 0.5f)
+   257	        assertEquals(120f / preset("corchete-cierra").outputScale, out.height, 0.5f)
+   258	    }
+   259	
+   260	    @Test fun `a number inside a matrix is not centered on the bracket`() {
+   261	        val g = Bounds(150f, 100f, 180f, 150f)
+   262	        val out = align("2", g, item("corchete-abre", 100f, 80f, 120f, 320f))
+   263	        assertSame(g, out)
+   264	    }
+   265	
+   266	    @Test fun `shapes on another line are ignored`() {
+   267	        val g = Bounds(150f, 400f, 180f, 450f)
+   268	        assertSame(g, align("2", g, item("1", 100f, 100f, 140f, 180f)))
+   269	    }
+   270	
+   271	    @Test fun `the controller aligns a manual conversion and can be turned off`() {
+   272	        val open = preset("parentesis-abre")
+   273	        val close = preset("parentesis-cierra")
+   274	        val opener = InkReplacement.place(open, Bounds(100f, 100f, 140f, 300f), IdGenerator.sequential())
+   275	        val gesture = InkStroke("g", listOf(InkPoint(500f, 160f), InkPoint(520f, 200f), InkPoint(500f, 240f)))
+   276	        fun run(on: Boolean): Bounds {
+   277	            val c = InkController(PageState(opener + gesture), History(), { listOf(open, close) }, IdGenerator.sequential())
+   278	            c.autoAlign = on
+   279	            return c.convertWith(close, listOf("g"))!!.bounds()
+   280	        }
+   281	        val ob = opener.bounds()
+   282	        val aligned = run(true)
+   283	        assertEquals(ob.height, aligned.height, 1f)
+   284	        assertEquals(ob.centerY, aligned.centerY, 1f)
+   285	        val free = run(false)
+   286	        assertEquals(200f, free.centerY, 1f)
+   287	    }
+   288	}
+
+
+====================================================================================================
+== core/src/test/kotlin/io/trazo/core/AutoAlignBracketTest.kt  (completo)
+====================================================================================================
+     1	package io.trazo.core
+     2	
+     3	import org.junit.Assert.assertEquals
+     4	import org.junit.Assert.assertSame
+     5	import org.junit.Assert.assertTrue
+     6	import org.junit.Test
+     7	
+     8	/**
+     9	 * Auto-alineado de paréntesis, corchetes y llaves: con qué se empareja un cierre, en qué se centra una
+    10	 * apertura y qué nunca toma de referencia (otro renglón, lo de encima o debajo, otra cuenta lejana).
+    11	 */
+    12	class AutoAlignBracketTest {
+    13	    private val presets = PresetPatterns.all().associateBy { it.id }
+    14	    private fun preset(key: String) = presets.getValue(PresetPatterns.PREFIX + key)
+    15	    private val ink = listOf(InkStroke("o", listOf(InkPoint(0f, 0f), InkPoint(10f, 50f), InkPoint(0f, 100f))))
+    16	    private val userOpen = InkPattern("user-paren", "Abre paréntesis", listOf(ink), ink)
+    17	    private val userClose = InkPattern("user-paren-c", "Cierra paréntesis", listOf(ink), ink)
+    18	    private val lookup: (String) -> InkPattern? = { presets[it] ?: when (it) { userOpen.id -> userOpen; userClose.id -> userClose; else -> null } }
+    19	
+    20	    private fun item(key: String, l: Float, t: Float, r: Float, b: Float) = AutoAlign.Item(PresetPatterns.PREFIX + key, Bounds(l, t, r, b))
+    21	    private fun align(p: InkPattern, g: Bounds, vararg items: AutoAlign.Item) = AutoAlign.anchor(p, g, items.toList(), lookup)
+    22	
+    23	    // ---------- No se alinea con algo que no tiene que ver ----------
+    24	
+    25	    @Test fun `a tall opener does not climb to a digit on the row above`() {
+    26	        val open = preset("parentesis-abre")
+    27	        val g = Bounds(200f, 100f, 230f, 300f)
+    28	        val c = align(open, g, item("5", 205f, 70f, 245f, 150f), item("3", 100f, 160f, 140f, 240f))
+    29	        assertEquals(200f, c.centerY, 0.5f)
+    30	        assertEquals(200f, c.height, 0.5f)
+    31	    }
+    32	
+    33	    @Test fun `an opener between neighbours above and below stays put whatever their order`() {
+    34	        val open = preset("parentesis-abre")
+    35	        val g = Bounds(200f, 100f, 230f, 300f)
+    36	        val up = item("5", 205f, 70f, 245f, 150f)
+    37	        val down = item("7", 205f, 250f, 245f, 330f)
+    38	        assertSame(g, align(open, g, up, down))
+    39	        assertSame(g, align(open, g, down, up))
+    40	    }
+    41	
+    42	    @Test fun `an opener ignores a digit almost on top of it and centres on the one beside it`() {
+    43	        val open = preset("parentesis-abre")
+    44	        val g = Bounds(200f, 100f, 230f, 300f)
+    45	        val c = align(open, g, item("5", 205f, 95f, 245f, 175f), item("3", 100f, 160f, 140f, 240f))
+    46	        assertEquals(200f, c.centerY, 0.5f)
+    47	    }
+    48	
+    49	    @Test fun `an opener before a fraction centres on its bar`() {
+    50	        val open = preset("parentesis-abre")
+    51	        val g = Bounds(110f, 50f, 140f, 240f)
+    52	        val num = item("1", 150f, 60f, 180f, 130f)
+    53	        val den = item("2", 170f, 160f, 200f, 230f)
+    54	        val bar = AutoAlign.Item(DefaultPatterns.FRACTION, Bounds(160f, 140f, 260f, 150f))
+    55	        assertEquals(145f, align(open, g, num, bar, den).centerY, 0.5f)
+    56	        // La raya de un resultado (alto 0) nunca entra en el renglón, pero sigue siendo la barra.
+    57	        val flat = item("barra", 160f, 145f, 260f, 145f)
+    58	        assertEquals(145f, align(open, g, num, flat, den).centerY, 0.5f)
+    59	    }
+    60	
+    61	    @Test fun `a closer does not pair with an opener of another expression far away`() {
+    62	        val close = preset("parentesis-cierra")
+    63	        val g = Bounds(900f, 120f, 925f, 170f)
+    64	        val c = align(close, g, item("parentesis-abre", 100f, 100f, 130f, 200f), item("2", 850f, 120f, 880f, 170f))
+    65	        assertEquals(50f, c.height, 0.5f)
+    66	        assertEquals(145f, c.centerY, 0.5f)
+    67	    }
+    68	
+    69	    @Test fun `a closer on the lower row does not copy an opener spanning two rows`() {
+    70	        val close = preset("parentesis-cierra")
+    71	        val g = Bounds(400f, 310f, 420f, 370f)
+    72	        assertSame(g, align(close, g, item("parentesis-abre", 100f, 50f, 140f, 350f)))
+    73	    }
+    74	
+    75	    @Test fun `an opener does not copy a tall bracket shifted off its line`() {
+    76	        val open = preset("parentesis-abre")
+    77	        val g = Bounds(360f, 120f, 380f, 220f)
+    78	        assertSame(g, align(open, g, item("corchete-cierra", 300f, 0f, 320f, 180f)))
+    79	    }
+    80	
+    81	    @Test fun `a closer copies its own opener and not the big one of the row above`() {
+    82	        val close = preset("parentesis-cierra")
+    83	        val g = Bounds(350f, 285f, 375f, 375f)
+    84	        val big = item("parentesis-abre", 300f, 40f, 330f, 320f)
+    85	        val own = item("parentesis-abre", 100f, 280f, 130f, 380f)
+    86	        val c = align(close, g, big, own)
+    87	        assertEquals(100f, c.height, 0.5f)
+    88	        assertEquals(330f, c.centerY, 0.5f)
+    89	    }
+    90	
+    91	    @Test fun `a user opener named Abre parentesis keeps its size next to a digit`() {
+    92	        val g = Bounds(200f, 80f, 230f, 280f)
+    93	        val c = align(userOpen, g, item("2", 100f, 120f, 140f, 200f))
+    94	        assertEquals(200f, c.height, 0.5f)
+    95	        assertEquals(160f, c.centerY, 0.5f)
+    96	    }
+    97	
+    98	    @Test fun `a digit does not grow next to a user parenthesis`() {
+    99	        val g = Bounds(150f, 120f, 180f, 170f)
+   100	        val paren = AutoAlign.Item(userOpen.id, Bounds(100f, 40f, 130f, 240f))
+   101	        assertSame(g, align(preset("2"), g, paren))
+   102	    }
+   103	
+   104	    @Test fun `a user closer pairs with the user opener`() {
+   105	        val g = Bounds(600f, 150f, 630f, 260f)
+   106	        val open = AutoAlign.Item(userOpen.id, Bounds(100f, 80f, 130f, 320f))
+   107	        val c = align(userClose, g, open, item("2", 300f, 160f, 340f, 240f))
+   108	        assertEquals(240f, c.height, 0.5f)
+   109	        assertEquals(200f, c.centerY, 0.5f)
+   110	    }
+   111	
+   112	    @Test fun `a closer does not copy an opener six times taller`() {
+   113	        val close = preset("parentesis-cierra")
+   114	        val g = Bounds(200f, 125f, 215f, 175f)
+   115	        val c = align(close, g, item("parentesis-abre", 100f, 0f, 130f, 300f), item("2", 150f, 120f, 180f, 180f))
+   116	        assertEquals(50f, c.height, 0.5f)
+   117	        assertEquals(150f, c.centerY, 0.5f)
+   118	    }
+   119	
+   120	    // ---------- Lo que sí se alinea ----------
+   121	
+   122	    @Test fun `the closer after a fraction copies its opener`() {
+   123	        val close = preset("parentesis-cierra")
+   124	        val g = Bounds(280f, 70f, 310f, 230f)
+   125	        val c = align(
+   126	            close, g,
+   127	            item("parentesis-abre", 100f, 50f, 130f, 240f), item("1", 150f, 60f, 180f, 130f),
+   128	            AutoAlign.Item(DefaultPatterns.FRACTION, Bounds(140f, 140f, 260f, 150f)), item("2", 170f, 160f, 200f, 230f),
+   129	        )
+   130	        assertEquals(190f, c.height, 0.5f)
+   131	        assertEquals(145f, c.centerY, 0.5f)
+   132	    }
+   133	
+   134	    @Test fun `a long expression chains the closer to a far opener`() {
+   135	        val close = preset("parentesis-cierra")
+   136	        val g = Bounds(600f, 105f, 625f, 195f)
+   137	        val items = buildList {
+   138	            add(item("parentesis-abre", 100f, 100f, 130f, 200f))
+   139	            for ((i, x) in listOf(150f, 250f, 350f, 450f, 550f).withIndex()) add(item("${i + 1}", x, 120f, x + 30f, 180f))
+   140	            for (x in listOf(200f, 300f, 400f, 500f)) add(item("mas", x, 135f, x + 30f, 165f))
+   141	        }.toTypedArray()
+   142	        val c = align(close, g, *items)
+   143	        assertEquals(100f, c.height, 0.5f)
+   144	        assertEquals(150f, c.centerY, 0.5f)
+   145	    }
+   146	
+   147	    @Test fun `an opener after a closer takes its height`() {
+   148	        val open = preset("parentesis-abre")
+   149	        val g = Bounds(225f, 110f, 250f, 190f)
+   150	        val c = align(open, g, item("parentesis-abre", 100f, 100f, 125f, 200f), item("2", 140f, 120f, 170f, 180f), item("parentesis-cierra", 185f, 100f, 210f, 200f))
+   151	        assertEquals(100f, c.height, 0.5f)
+   152	        assertEquals(150f, c.centerY, 0.5f)
+   153	    }
+   154	
+   155	    @Test fun `a square bracket does not close a parenthesis`() {
+   156	        val close = preset("corchete-cierra")
+   157	        val g = Bounds(200f, 110f, 220f, 190f)
+   158	        val c = align(close, g, item("parentesis-abre", 100f, 100f, 130f, 200f), item("2", 150f, 120f, 180f, 180f))
+   159	        assertEquals(80f, c.height, 0.5f)
+   160	        assertEquals(150f, c.centerY, 0.5f)
+   161	    }
+   162	
+   163	    @Test fun `an opener far from everything stays where it was written`() {
+   164	        val open = preset("parentesis-abre")
+   165	        val g = Bounds(500f, 100f, 530f, 200f)
+   166	        assertSame(g, align(open, g, item("2", 100f, 120f, 140f, 180f)))
+   167	    }
+   168	
+   169	    @Test fun `a parenthesis inside a numerator centres on the numerator, not on the bar`() {
+   170	        val open = preset("parentesis-abre")
+   171	        val g = Bounds(125f, 55f, 140f, 125f)
+   172	        val c = align(open, g, item("2", 150f, 60f, 180f, 120f), AutoAlign.Item(DefaultPatterns.FRACTION, Bounds(100f, 130f, 300f, 136f)), item("3", 180f, 145f, 210f, 205f))
+   173	        assertEquals(90f, c.centerY, 0.5f)
+   174	        assertEquals(70f, c.height, 0.5f)
+   175	    }
+   176	
+   177	    // ---------- Apertura lejana: solo la escritura a mano del renglón la une ----------
+   178	
+   179	    @Test fun `a closer six heights from its opener with nothing recognised between stays put`() {
+   180	        val close = preset("parentesis-cierra")
+   181	        val g = Bounds(700f, 120f, 720f, 180f)
+   182	        assertSame(g, align(close, g, item("parentesis-abre", 100f, 100f, 130f, 200f)))
+   183	    }
+   184	
+   185	    @Test fun `handwriting between the brackets links the closer to its opener`() {
+   186	        val close = preset("parentesis-cierra")
+   187	        val g = Bounds(700f, 120f, 720f, 180f)
+   188	        val open = item("parentesis-abre", 100f, 100f, 130f, 200f)
+   189	        val hand = listOf(Bounds(200f, 110f, 260f, 190f), Bounds(350f, 110f, 410f, 190f), Bounds(500f, 110f, 560f, 190f))
+   190	        val c = AutoAlign.anchor(close, g, listOf(open), hand) { lookup(it) }
+   191	        assertEquals(100f, c.height, 0.5f)
+   192	        assertEquals(150f, c.centerY, 0.5f)
+   193	    }
+   194	
+   195	    @Test fun `handwriting on another row links nothing`() {
+   196	        val close = preset("parentesis-cierra")
+   197	        val g = Bounds(700f, 120f, 720f, 180f)
+   198	        val open = item("parentesis-abre", 100f, 100f, 130f, 200f)
+   199	        val hand = listOf(Bounds(200f, 300f, 260f, 380f), Bounds(350f, 300f, 410f, 380f), Bounds(500f, 300f, 560f, 380f))
+   200	        assertSame(g, AutoAlign.anchor(close, g, listOf(open), hand) { lookup(it) })
+   201	    }
+   202	
+   203	    @Test fun `bridges are only handwritten strokes, without the gesture`() {
+   204	        val hand = InkStroke("h", listOf(InkPoint(0f, 0f), InkPoint(10f, 20f)))
+   205	        val gesture = InkStroke("g", listOf(InkPoint(50f, 0f), InkPoint(60f, 20f)))
+   206	        val converted = InkStroke("c", listOf(InkPoint(100f, 0f), InkPoint(110f, 20f)), patternId = "preset-2")
+   207	        assertEquals(listOf(hand.bounds), AutoAlign.bridges(listOf(hand, gesture, converted), setOf("g")))
+   208	    }
+   209	
+   210	    // ---------- Nombres de los paréntesis del usuario ----------
+   211	
+   212	    private fun user(id: String, name: String) = InkPattern(id, name, listOf(ink), ink)
+   213	
+   214	    @Test fun `user brackets pair whatever the word order, accents or case`() {
+   215	        val pairs = listOf(
+   216	            "Abrir corchete" to "Cerrar corchete",
+   217	            "Llave abre" to "Llave cierra",
+   218	            "ABRE PARENTESIS" to "cierra Paréntesis",
+   219	            "  paréntesis abrir " to "Paréntesis cerrar",
+   220	        )
+   221	        for ((o, cl) in pairs) {
+   222	            val open = user("u-open", o)
+   223	            val close = user("u-close", cl)
+   224	            val byId = mapOf(open.id to open, close.id to close)
+   225	            val g = Bounds(600f, 150f, 630f, 260f)
+   226	            val c = AutoAlign.anchor(close, g, listOf(AutoAlign.Item(open.id, Bounds(100f, 80f, 130f, 320f)), AutoAlign.Item(PresetPatterns.PREFIX + "2", Bounds(300f, 160f, 340f, 240f)))) { byId[it] ?: presets[it] }
+   227	            assertEquals("$o / $cl", 240f, c.height, 0.5f)
+   228	            assertEquals("$o / $cl", 200f, c.centerY, 0.5f)
+   229	        }
+   230	    }
+   231	
+   232	    @Test fun `a bare Parentesis name is not a bracket`() {
+   233	        val p = user("u-p", "Paréntesis")
+   234	        val g = Bounds(150f, 120f, 180f, 170f)
+   235	        // Un '2' junto a él lo toma de base como a cualquier forma (no es contenedor): crece.
+   236	        val c = AutoAlign.anchor(preset("2"), g, listOf(AutoAlign.Item(p.id, Bounds(100f, 40f, 130f, 240f)))) { if (it == p.id) p else presets[it] }
+   237	        assertTrue("alto ${c.height}", c.height > 150f)
+   238	    }
+   239	
+   240	    // ---------- Controlador: los trazos a mano de la página unen la expresión ----------
+   241	
+   242	    private fun closeAfterHand(handTop: Float, brush: Brush? = null): Pair<Bounds, Bounds> {
+   243	        val open = preset("parentesis-abre")
+   244	        val close = preset("parentesis-cierra")
+   245	        val opener = InkReplacement.place(open, Bounds(100f, 100f, 140f, 300f), IdGenerator.sequential())
+   246	        val hand = listOf(300f, 500f, 700f).mapIndexed { i, x ->
+   247	            val s = InkStroke("h$i", listOf(InkPoint(x, handTop), InkPoint(x + 60f, handTop + 100f)))
+   248	            if (brush == null) s else s.copy(brush = brush)
+   249	        }
+   250	        val gesture = InkStroke("g", listOf(InkPoint(900f, 160f), InkPoint(920f, 200f), InkPoint(900f, 240f)))
+   251	        val c = InkController(PageState(opener + hand + gesture), History(), { listOf(open, close) }, IdGenerator.sequential())
+   252	        return opener.bounds() to c.convertWith(close, listOf("g"))!!.bounds()
+   253	    }
+   254	
+   255	    @Test fun `the controller links a closer to a far opener through handwriting on its line`() {
+   256	        val (ob, aligned) = closeAfterHand(150f)
+   257	        assertEquals(ob.height, aligned.height, 1f)
+   258	        assertEquals(ob.centerY, aligned.centerY, 1f)
+   259	    }
+   260	
+   261	    @Test fun `the controller ignores handwriting on another line`() {
+   262	        val (ob, aligned) = closeAfterHand(400f)
+   263	        assertTrue("alto ${aligned.height}", aligned.height < ob.height * 0.6f)
+   264	        assertEquals(200f, aligned.centerY, 1f)
+   265	    }
+   266	
+   267	    @Test fun `the controller does not use highlighter strokes as bridges`() {
+   268	        val (ob, aligned) = closeAfterHand(150f, Brush.HIGHLIGHTER)
+   269	        assertTrue("alto ${aligned.height}", aligned.height < ob.height * 0.6f)
+   270	        assertEquals(200f, aligned.centerY, 1f)
+   271	    }
+   272	}

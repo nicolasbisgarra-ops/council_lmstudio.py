@@ -1,0 +1,272 @@
+TRAZO - AUTO-ALINEADO: CÓMO FUNCIONA HOY
+=========================================
+Escrito leyendo el código tal como está (no como debería ser).
+El código completo de esta sección está en CODIGO_FUENTE.txt, en esta misma carpeta.
+Cada regla dice entre corchetes dónde está: [archivo: función].
+
+Unidades: las de la hoja. "Alto" = alto del rectángulo que encierra una forma.
+"Gesto" = lo que se acaba de escribir y se va a convertir.
+"Salida" = el símbolo prolijo que reemplaza al gesto.
+"Forma" = un símbolo ya convertido que está en la hoja.
+
+
+0. QUÉ HACE Y QUÉ NO
+--------------------
+0.1  El alineado actúa UNA sola vez: en el momento de convertir un gesto.
+     Decide un rectángulo ("anclaje") y la salida se dibuja centrada en él.
+     Después no vuelve a mover nada: si se borra o mueve la referencia, lo ya
+     alineado queda como estaba.
+0.2  Solo sirven de referencia las formas ya convertidas. La escritura a mano
+     sin convertir nunca es referencia (solo sirve de "puente", regla 4.2).
+0.3  Nunca mueve en horizontal: el centro horizontal del gesto se conserva.
+     Solo cambia la posición vertical y, en algunos casos, el tamaño.
+0.4  La referencia es siempre UNA sola forma (la más cercana que cumpla las
+     reglas). No se calcula una línea de base del renglón entero.
+
+
+1. ORDEN DE DECISIÓN AL CONVERTIR      [InkController.kt: alignedAnchor]
+----------------------------------
+1.1  Primero, "Renglones del papel" (regla 7). Si corresponde, gana y no se
+     mira nada más. Ojo: esto pasa aunque el auto-alineado esté apagado.
+1.2  Si el auto-alineado está apagado: la salida va donde se escribió.
+1.3  Si no, se aplica AutoAlign (reglas 2 a 6) contra todas las formas de la
+     página, menos los trazos del propio gesto.
+1.4  Con el anclaje decidido se dibuja la salida (regla 8).
+
+
+2. CASOS EN QUE NO SE TOCA NADA        [AutoAlign.kt: anchor, rowAnchor]
+-------------------------------
+La salida queda exactamente donde se escribió si pasa cualquiera de estas:
+2.1  El patrón tiene "núcleo parcial" (ej.: "lim" con "x→a" debajo): lo escrito
+     ya es el núcleo y la salida lo reemplaza en el mismo lugar y tamaño.
+2.2  El patrón tiene zona elástica (raya de fracción, barra de raíz elástica…).
+2.3  El gesto mide menos de 0,5 de alto.
+2.4  No hay ninguna forma en la página.
+2.5  No hay ninguna forma "en el mismo renglón" que el gesto (regla 3.1).
+2.6  El gesto es una raya (alto < 0,4 × ancho) y hay alguna forma justo encima
+     (su centro horizontal cae dentro de la raya, está por encima del medio de
+     la raya y a menos de 0,8 de su propio alto): es la barra de una fracción.
+Excepción a 2.4/2.5: regla 6 (piso elegido a mano).
+
+
+3. NÚMEROS, LETRAS, SIGNOS, INTEGRALES (todo lo que no es paréntesis)
+---------------------------------------------------------------------
+                                                   [AutoAlign.kt: rowAnchor]
+3.1  MISMO RENGLÓN. Una forma está en el renglón del gesto si se solapan en
+     vertical al menos 30 % del alto de la más baja de las dos (ROW_OVERLAP).
+
+3.2  TIPOS DE PATRÓN.
+     - Signo: + − × ÷ = ± ≠ ≈ ≡ < > ≤ ≥ (de la biblioteca: sección Operadores,
+       salvo %, ! y barra; del usuario: por el nombre, "Más", "Igual", "+"…).
+     - Contenedor: paréntesis/corchetes/llaves, integrales, raíz, fracción,
+       sumatoria, productoria, todo lo de la sección Agrupación y todo patrón
+       con zona elástica.
+     - Variable: letra usada como incógnita, griegas y letras de la biblioteca,
+       la coma, o cualquier patrón cuyo nombre sea una sola letra (menos π).
+     - Glifo: lo que no es signo ni contenedor ni %, !, barra o coma.
+       (Números y letras. Es lo único que copia tamaño, regla 3.7.)
+
+3.3  QUIÉNES PUEDEN SER REFERENCIA.
+     a) Del renglón se descartan los exponentes y subíndices ya escritos
+        (regla 5): lo que sigue a x² se alinea con la x, no con el 2.
+     b) Si el gesto es un contenedor (integral, raíz, sumatoria…): sirve
+        cualquier forma que quedó de (a).
+     c) Si no: se descartan además los signos y los contenedores.
+        - Si el gesto es una variable: sirven todas las que quedan.
+        - Si el gesto NO es variable (un número): prefiere las que NO son
+          variables y están a su alcance (3.5). Si no hay ninguna, sirven todas.
+     d) Si el gesto es un signo y no quedó ninguna referencia: se usa otro
+        signo del renglón.
+     e) Si no quedó ninguna: no se toca nada.
+
+3.4  CUÁL SE ELIGE. La de menor separación horizontal con el gesto.
+
+3.5  ALCANCE. Si la elegida está a más de 3 altos (MAX_GAP; se usa el mayor
+     entre el alto de la referencia y el alto previsto de la salida), no se
+     toca nada: es otra cuenta en la misma altura de la hoja.
+     "Alto previsto" = alto del gesto × escala de salida del patrón.
+
+3.6  ESCRITO A PROPÓSITO MÁS ARRIBA O MÁS ABAJO: no se toca nada si…
+     a) Signo: su centro cae en el 25 % de arriba de la referencia o más
+        arriba (SIGN_RAISED), o más de 10 % por debajo de su borde inferior
+        (SIGN_LOWERED). Ej.: el − de x⁻¹.
+     b) No signo: la salida sería un exponente o subíndice de la referencia
+        (regla 5).
+     c) Cualquiera: los centros verticales difieren más de 0,5 altos (OFFSET).
+        El alto que se usa es el de la referencia si el gesto es un signo; si
+        no, el mayor de los dos.
+     (a, b y c solo se aplican cuando la referencia salió de 3.3 a/b/c, no
+      cuando es un signo usado por 3.3 d.)
+
+3.7  QUÉ SE HACE CON LA SALIDA.
+     A) "Por piso" - para números y letras (y cualquier patrón con piso
+        elegido a mano), cuando la referencia no es un signo de 3.3 d:
+        - El piso de la salida se apoya en el piso de la referencia.
+        - Tamaño: si la salida y la referencia son glifos las dos, la salida
+          toma la ESCALA de la referencia: su cuerpo sobre la línea mide lo
+          mismo que el cuerpo de la referencia sobre la línea. Si alguna de
+          las dos no es glifo, conserva su alto previsto.
+        - El ancho cambia en la misma proporción que el alto.
+     B) "Por centro" - para signos e integrales/raíces/sumatorias:
+        - Se corre en vertical hasta que su centro coincide con el centro de
+          la referencia. No cambia de tamaño.
+
+3.8  EL PISO (línea de escritura) DE UN PATRÓN.       [AutoAlign.kt: floor]
+     Es una fracción del alto de la salida, medida desde arriba (1 = el borde
+     de abajo).
+     - Si el usuario lo eligió en el editor de patrones: ese (entre 0,05 y 1).
+     - Símbolo de la biblioteca sin redibujar: sale del dibujo, que tiene la
+       línea en y = 100 (entre 0,3 y 1).
+     - Patrón propio con nombre de letra con cola (g j p q y β γ ζ η μ ξ ρ φ χ
+       ψ): 0,65 (la cola baja 35 % del alto, DESCENDER).
+     - Cualquier otro: 1 (se apoya en su borde de abajo).
+
+
+4. PARÉNTESIS, CORCHETES Y LLAVES      [AutoAlign.kt: bracketAnchor]
+---------------------------------
+Se reconocen por el id de la biblioteca o por el nombre del patrón propio
+("(", "Abre paréntesis", "Corchete cierra"…).
+
+4.1  UN CIERRE COPIA A SU APERTURA. Toma su alto y su centro vertical si la
+     encuentra así:                                           [partnerFor]
+     a) Se arma "la expresión": partiendo del gesto, se van sumando las formas
+        del renglón que estén a menos de 3 altos de lo ya juntado.
+     b) De esas, se miran las que están a la izquierda del gesto y "en su
+        línea" (centros a menos de 0,35 del mayor de los dos altos,
+        BRACKET_OFFSET).
+     c) Se recorren de izquierda a derecha apilando aperturas del mismo tipo
+        y desapilando con cada cierre del mismo tipo. La que queda arriba de
+        la pila es la pareja.
+     d) Solo vale si el alto previsto del cierre no es más de 3 veces mayor ni
+        menor que el de la apertura (MAX_RESIZE).
+4.2  PUENTES. La escritura a mano del renglón alarga la cadena de 4.1 a (lo
+     escrito sin convertir entre los dos paréntesis), pero nunca es pareja ni
+     referencia.                                          [sameExpression]
+4.3  SI NO HAY PAREJA (una apertura, o un cierre suelto): se centra en lo que
+     tiene al lado. Candidatas: las formas del renglón que no sean exponentes
+     ni subíndices y que cumplan las tres:
+        - en su línea (0,35, como 4.1 b),
+        - al costado, no encima ni debajo: se solapan en horizontal a lo sumo
+          50 % de la más angosta (BESIDE_OVERLAP),
+        - a menos de 3 altos.
+     Se elige la de menor separación horizontal; si empatan, la de centro más
+     parecido. Si no hay ninguna, no se toca nada.
+4.4  JUNTO A UNA FRACCIÓN. Si la candidata es numerador o denominador de una
+     fracción, la referencia pasa a ser la barra de esa fracción (si la barra
+     está en la línea del paréntesis).
+     Barra de fracción = raya (alto < 0,4 × ancho) con algo justo encima y
+     algo justo debajo.                           [fractionBars, barOf]
+4.5  QUÉ SE HACE.
+     - Si la referencia es otro paréntesis/corchete/llave y los altos se
+       parecen (no más del doble ni menos de la mitad, SIMILAR_RATIO): copia
+       su alto y su centro.
+     - Si no: solo se corre en vertical hasta el centro de la referencia, sin
+       cambiar de tamaño (junto a un número, una letra, un signo, una
+       integral: queda centrado en su medio).
+
+
+5. QUÉ ES UN EXPONENTE O SUBÍNDICE     [AutoAlign.kt: isScript]
+----------------------------------
+Una forma A es exponente/subíndice de una base B si:
+5.1  A mide a lo sumo 0,8 del alto de B (SCRIPT_SIZE), y además
+5.2  está levantada: su borde de abajo queda más de 0,3 altos de B por encima
+     del borde de abajo de B, y su centro más de 0,15 altos por encima del
+     centro de B;
+     o está bajada: empieza debajo del centro de B y termina más de 0,1 altos
+     por debajo del borde de abajo de B.
+Consecuencias: un exponente/subíndice recién escrito no se mueve (3.6 b) y uno
+ya escrito no sirve de referencia (3.3 a, 4.3).
+
+
+6. PISO ELEGIDO A MANO Y NADA CON QUÉ ALINEAR   [AutoAlign.kt: anchor]
+---------------------------------------------
+Si las reglas 2 a 5 no cambiaron nada y el patrón tiene piso elegido a mano
+(y no tiene zona elástica): se toma lo escrito como "la parte de arriba del
+piso". La salida se agranda para que esa parte mida lo que mide el gesto, y su
+piso queda en el borde de abajo del gesto. (El "lim" de "lim x→a" queda en la
+línea y la flecha, debajo.)
+
+
+7. RENGLONES DEL PAPEL                 [PaperRows.kt: snap]
+----------------------
+7.1  Solo si en la barra se eligieron 1, 2 o 3 renglones, el papel tiene
+     líneas (rayado: renglón de 64, primera línea en 120; cuadriculado y
+     punteado: renglón de 32) y el patrón "sale del renglón" (por defecto,
+     los contenedores de 3.2; se puede cambiar por patrón).
+7.2  No se aplica a patrones de tamaño fijo o que miden por ancho.
+7.3  La salida ocupa exactamente esa cantidad de renglones, los más cercanos
+     al centro del gesto, con las puntas en las líneas.
+7.4  Ancho: en proporción al alto; con zona elástica, el ancho del gesto.
+7.5  Tiene prioridad sobre todo lo anterior (regla 1.1).
+
+
+8. CÓMO SE DIBUJA LA SALIDA EN EL ANCLAJE  [Patterns.kt: InkReplacement.place]
+-----------------------------------------
+8.1  Se mide el "núcleo" del patrón (toda la salida, salvo núcleo parcial).
+8.2  Escala según el ajuste del patrón: igualar alto (lo normal), igualar
+     ancho, entrar en el gesto, o tamaño fijo. Después se multiplica por la
+     "escala de salida" del patrón.
+8.3  El centro del núcleo se pone en el centro del anclaje.
+8.4  Con zona elástica: empieza en el borde izquierdo (o de arriba) del gesto
+     y la zona se estira o encoge para terminar donde terminó el gesto.
+8.5  Un gesto casi plano no encoge la salida hasta desaparecer: se usa su
+     lado mayor.
+8.6  RAÍZ: no usa la plantilla. Conserva el ✓ que dibujó la mano (suavizado)
+     y le agrega la barra recta; del alineado solo toma el corrimiento
+     vertical.                                       [RootFit.kt: fit]
+
+
+9. OTROS LUGARES QUE USAN ESTAS MISMAS DEFINICIONES
+---------------------------------------------------
+9.1  Fórmulas que dibuja el tutor (TexInk.kt): usan floor() y la lista de
+     signos, pero NO estas reglas; arman su propio renglón.
+9.2  Resultados de las cuentas (MathNotes.kt): usan floor() y la lista de
+     signos para medir el alto del renglón y apoyar el resultado.
+9.3  Editor de patrones (PatternScreens.kt, PatternEditorViewModel.kt): la
+     línea de piso que se arrastra es el "piso elegido a mano" (3.8).
+9.4  Interruptor: Ajustes → "Auto-alinear lo reconocido" y el botón de la
+     barra del editor. Se guarda como "autoAlign" (SettingsStore.kt) y llega
+     al motor en EditorViewModel.kt (controller.autoAlign).
+
+
+10. TABLA DE NÚMEROS
+--------------------
+ROW_OVERLAP     0,30   solape vertical mínimo para "mismo renglón"
+MAX_GAP         3      separación horizontal máxima, en altos
+OFFSET          0,50   desvío vertical máximo de centros (números/letras)
+BRACKET_OFFSET  0,35   desvío vertical máximo de centros (paréntesis)
+SIMILAR_RATIO   2      parecido de alto para copiar el de otro paréntesis
+MAX_RESIZE      3      cambio máximo de alto de un cierre hacia su apertura
+BESIDE_OVERLAP  0,50   solape horizontal máximo para estar "al costado"
+SCRIPT_SIZE     0,80   alto máximo de un exponente respecto de su base
+SIGN_RAISED     0,25   franja de arriba donde un signo no se baja
+SIGN_LOWERED    0,10   margen bajo el piso donde un signo no se sube
+DESCENDER       0,35   parte de una letra con cola que baja de la línea
+MIN_USER_FLOOR  0,05   piso más alto que se puede elegir a mano
+
+
+11. COSAS QUE VI AL LEERLO Y PUEDEN EXPLICAR POR QUÉ NO CONVENCE
+----------------------------------------------------------------
+No son arreglos, son observaciones para decidir qué cambiar.
+11.1 Una sola referencia (0.4). Cada símbolo copia al vecino más cercano. Si
+     ese quedó un poco alto o grande, el siguiente lo hereda y el error se
+     arrastra por el renglón. No hay una línea de base común.
+11.2 Letras y números del mismo cuerpo (3.7 A). Una "x" minúscula junto a un
+     "5" queda con el cuerpo tan alto como el 5. En cambio, las fórmulas del
+     tutor (9.1) dibujan las letras al 80 % de las cifras. Son dos criterios
+     distintos en la misma app.
+11.3 El comentario de isVariable dice "no cambia de tamaño al alinearse",
+     pero el código sí le cambia el tamaño (3.7 A). Ser variable solo influye
+     en a quién elige de referencia (3.3 c).
+11.4 Mismo renglón por 30 % de solape (3.1). Un gesto alto puede tomar como
+     renglón formas de dos líneas distintas; después gana la más cercana en
+     horizontal, no la más parecida en vertical.
+11.5 Corte brusco en 0,5 altos (3.6 c). Justo por debajo se alinea del todo;
+     justo por encima no se toca. No hay zona intermedia.
+11.6 Nunca corrige en horizontal (0.3): no empareja la separación entre
+     símbolos.
+11.7 Los renglones del papel ignoran el interruptor de auto-alineado (1.1).
+11.8 Lo escrito a mano no cuenta (0.2): en una hoja mitad convertida y mitad
+     a mano, la referencia puede estar lejos aunque haya tinta al lado.
+11.9 Un patrón propio que el motor no encuentra (lo borraron) se trata como
+     número/letra con piso 1.
