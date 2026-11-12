@@ -103,4 +103,27 @@ class WebStateTest {
         assertEquals("abc", same["v"]!!.jsonPrimitive.content)
         assertEquals("true", same["same"]!!.jsonPrimitive.content)
     }
+
+    @Test fun historyJson() {
+        val history = WebHistory(listOf(
+            WebHistoryItem(id = "1731273240000", at = 1731273240000L, count = 6, preview = "Tu idea de descomponer…"),
+        ))
+        val json = builder.json(history)
+        assertTrue(json.contains("\"id\":\"1731273240000\""))
+        assertTrue(json.contains("\"count\":6"))
+        assertEquals(history, WebStateBuilder.JSON.decodeFromString(WebHistory.serializer(), json))
+        val emptyJson = builder.json(WebHistory())
+        assertEquals(emptyList<WebHistoryItem>(), WebStateBuilder.JSON.decodeFromString(WebHistory.serializer(), emptyJson).items)
+    }
+
+    @Test fun archiveJsonIsSafeHtmlAndMatchesState() {
+        val archive = builder.archive("1731273240000", 1731273240000L, review.messages)
+        assertEquals(builder.state(review).messages, archive.messages)
+        val json = builder.json(archive)
+        assertFalse(json.contains("<script"))
+        val decoded = WebStateBuilder.JSON.decodeFromString(WebArchive.serializer(), json)
+        assertEquals(archive, decoded)
+        assertEquals(3, decoded.messages.size)
+        assertEquals("<p>¿Está bien?<br>&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;</p>", decoded.messages[0].html)
+    }
 }

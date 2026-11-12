@@ -98,6 +98,7 @@ import io.trazo.app.sync.SyncWebServer
 import io.trazo.core.share.SharedMessage
 import io.trazo.core.share.SharedNote
 import io.trazo.core.share.SharedReview
+import io.trazo.core.share.WebHistoryItem
 import java.io.ByteArrayOutputStream
 
 /** Herramienta de la barra. El resaltador es la pluma con su propia punta, color y grosor. */
@@ -711,6 +712,7 @@ class EditorViewModel(
             index < current -> { pageIndex = current - 1; notebook = notebook?.copy(lastPage = pageIndex) }
         }
         reviewGate.contentChanged(ReviewScope(notebookId, deletedPageId, "deleted"))
+        viewModelScope.launch(Dispatchers.IO) { chats.delete(notebookId, deletedPageId) }
         markDirty()
     }
 
@@ -1431,19 +1433,21 @@ class EditorViewModel(
             }
         }
 
-        override fun pagePng(): ByteArray? {
-            val (page, paper, results) = onMain {
+        override fun pagePng(paper: PaperColors): ByteArray? {
+            val (page, pagePaper, results) = onMain {
                 val p = currentPage()
                 val n = notebook
                 if (p == null || n == null || !webAllowed()) null else Triple(p, n.paper, mathResults(p))
             } ?: return null
             val out = ByteArrayOutputStream()
-            PageExporter.writePng(page, paper, out, scale = 1.5f, results = results, includeAi = true)
+            PageExporter.writePng(page, pagePaper, out, scale = 1.5f, results = results, includeAi = true, colors = paper)
             return out.toByteArray()
         }
 
         override fun chatImage(name: String): ByteArray? {
-            val mine = onMain { webAllowed() && chatPage == currentPageId() && chatMessages.any { it.image == name } }
+            val pageId = onMain { if (webAllowed()) currentPageId() else null } ?: return null
+            val mine = onMain { chatPage == pageId && chatMessages.any { it.image == name } } ||
+                chats.hasImage(notebookId, pageId, name)
             return if (mine) runCatching { chatImageFile(name).readBytes() }.getOrNull() else null
         }
 
@@ -1488,6 +1492,43 @@ class EditorViewModel(
                     null
                 }
             }
+        }
+
+        override fun history(): List<WebHistoryItem>? = onMain {
+            val pageId = currentPageId() ?: return@onMain null
+            if (!webAllowed()) return@onMain null
+            chats.archives(notebookId, pageId).map { WebHistoryItem(it.id, it.at, it.count, it.preview) }
+        }
+
+        override fun historyArchive(id: String): Pair<Long, List<SharedMessage>>? = onMain {
+            val pageId = currentPageId() ?: return@onMain null
+            if (!webAllowed()) return@onMain null
+            val messages = chats.loadArchive(notebookId, pageId, id) ?: return@onMain null
+            val at = messages.firstOrNull()?.at ?: id.toLongOrNull() ?: 0L
+            at to messages.map {
+                SharedMessage(it.role == TutorRole.STUDENT, it.text, it.line, it.correct, it.verdict, it.error, it.image)
+            }
+        }
+
+        override fun restoreHistory(id: String): String? = onMain {
+            val pageId = currentPageId() ?: return@onMain SyncWebServer.NO_SHEET
+            if (!webAllowed()) return@onMain EXAM_WEB
+            if (chatBusy) return@onMain "El tutor todavía está contestando."
+            val target = chats.loadArchive(notebookId, pageId, id) ?: return@onMain "No se encontró esa charla guardada."
+            cancelChat()
+            if (chatMessages.isNotEmpty()) {
+                chats.archive(notebookId, pageId, chatMessages)
+            }
+            chats.deleteArchive(notebookId, pageId, id)
+            setChat(pageId, target)
+            null
+        }
+
+        override fun deleteHistory(id: String): String? = onMain {
+            val pageId = currentPageId() ?: return@onMain SyncWebServer.NO_SHEET
+            if (!webAllowed()) return@onMain EXAM_WEB
+            chats.deleteArchive(notebookId, pageId, id)
+            null
         }
     }
 
@@ -1551,10 +1592,13 @@ class EditorViewModel(
         chatStreaming = null
     }
 
-    /** Borra la conversación de la hoja y vuelve a revisarla desde cero. */
+    /** Guarda la conversación actual en el historial y vuelve a revisarla desde cero. */
     fun restartChat() {
         val pageId = chatPage ?: return
         cancelChat()
+        if (chatMessages.isNotEmpty()) {
+            chats.archive(notebookId, pageId, chatMessages)
+        }
         setChat(pageId, emptyList())
         sendChat(null)
     }

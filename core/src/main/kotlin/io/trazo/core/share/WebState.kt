@@ -55,6 +55,29 @@ data class WebMessage(
 @Serializable
 data class WebNote(val line: Int, val kind: String, val short: String, val detail: String = "", val fix: String = "")
 
+/** Una charla guardada en el historial de una hoja. */
+@Serializable
+data class WebHistoryItem(
+    val id: String,
+    val at: Long,
+    val count: Int,
+    val preview: String,
+)
+
+/** Lista de charlas guardadas para la web (`GET /api/history`). */
+@Serializable
+data class WebHistory(
+    val items: List<WebHistoryItem> = emptyList(),
+)
+
+/** Una charla archivada con sus mensajes (`GET /api/history/<id>`). */
+@Serializable
+data class WebArchive(
+    val id: String,
+    val at: Long,
+    val messages: List<WebMessage> = emptyList(),
+)
+
 /** El estado que baja el navegador (`/api/state`); todos los textos ya son HTML seguro ([WebText]). */
 @Serializable
 data class WebState(
@@ -102,6 +125,23 @@ class WebStateBuilder(private val cacheSize: Int = 256) {
         return hex(d.digest(), 12)
     }
 
+    fun message(index: Int, m: SharedMessage): WebMessage = WebMessage(
+        id = "$index-" + id(listOf(m.fromStudent, m.text, m.line, m.correct, m.verdict, m.error, m.image).joinToString("\u0001")),
+        me = m.fromStudent,
+        html = html(m.text),
+        line = m.line,
+        correct = m.correct,
+        verdict = m.verdict?.takeIf { it.isNotBlank() }?.let { WebText.inline(it) },
+        error = m.error,
+        image = m.image,
+    )
+
+    fun messages(messages: List<SharedMessage>): List<WebMessage> =
+        messages.mapIndexed { i, m -> message(i, m) }
+
+    fun archive(id: String, at: Long, messages: List<SharedMessage>): WebArchive =
+        WebArchive(id = id, at = at, messages = messages(messages))
+
     fun state(r: SharedReview, version: String = version(r)): WebState {
         if (!r.open) return WebState(v = version, open = false, hint = r.hint)
         return WebState(
@@ -112,24 +152,17 @@ class WebStateBuilder(private val cacheSize: Int = 256) {
             page = r.pageKey?.let { id(it) },
             busy = r.busy,
             streaming = r.streaming?.takeIf { it.isNotBlank() }?.let { WebText.html(it) },
-            messages = r.messages.mapIndexed { i, m ->
-                WebMessage(
-                    id = "$i-" + id(listOf(m.fromStudent, m.text, m.line, m.correct, m.verdict, m.error, m.image).joinToString("\u0001")),
-                    me = m.fromStudent,
-                    html = html(m.text),
-                    line = m.line,
-                    correct = m.correct,
-                    verdict = m.verdict?.takeIf { it.isNotBlank() }?.let { WebText.inline(it) },
-                    error = m.error,
-                    image = m.image,
-                )
-            },
+            messages = messages(r.messages),
             notes = r.notes.map { WebNote(it.line, WebText.escape(it.kind), WebText.inline(it.short), WebText.inline(it.detail), WebText.inline(it.fix)) },
             quick = r.quick,
         )
     }
 
     fun json(state: WebState): String = JSON.encodeToString(WebState.serializer(), state)
+
+    fun json(archive: WebArchive): String = JSON.encodeToString(WebArchive.serializer(), archive)
+
+    fun json(history: WebHistory): String = JSON.encodeToString(WebHistory.serializer(), history)
 
     private fun id(s: String): String = hex(MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8)), 8)
 

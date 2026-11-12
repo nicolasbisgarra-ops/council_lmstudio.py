@@ -1,10 +1,12 @@
 package io.trazo.app.sync
 
+import io.trazo.app.ink.PaperColors
 import io.trazo.core.share.SharedMessage
 import io.trazo.core.share.SharedNote
 import io.trazo.core.share.SharedReview
 import io.trazo.core.share.WebAccess
 import io.trazo.core.share.WebAccessConfig
+import io.trazo.core.share.WebHistoryItem
 import io.trazo.core.share.WebState
 import io.trazo.core.share.WebStateBuilder
 import java.io.ByteArrayOutputStream
@@ -26,6 +28,7 @@ class SyncWebServerTest {
 
     private class FakeHost(var review: SharedReview, private val png: ByteArray) : SyncWebHost {
         var renders = 0
+        var lastPaper: PaperColors? = null
         var sent: Pair<String, ByteArray?>? = null
         var restarts = ArrayList<Boolean>()
         var problem: String? = null
@@ -35,13 +38,38 @@ class SyncWebServerTest {
             "a", "medium", listOf("low" to "Baja", "medium" to "Media", "high" to "Alta"),
         )
         var picked: Pair<String?, String?>? = null
+        var historyList: List<WebHistoryItem>? = listOf(
+            WebHistoryItem("1731273240000", 1731273240000L, 6, "Tu idea de descomponer…")
+        )
+        var archives = mutableMapOf<String, Pair<Long, List<SharedMessage>>>(
+            "1731273240000" to (1731273240000L to listOf(
+                SharedMessage(fromStudent = true, text = "hola"),
+                SharedMessage(fromStudent = false, text = "chau"),
+            ))
+        )
+        var restored: String? = null
+        var deleted: String? = null
+
         override fun ai(): WebAi? = models
         override fun chooseAi(profileId: String?, quality: String?): String? { if (problem == null) picked = profileId to quality; return problem }
         override fun review(): SharedReview = if (broken) error("ocupado") else review
-        override fun pagePng(): ByteArray? { renders++; return png }
-        override fun chatImage(name: String): ByteArray? = if (name == "foto.jpg") byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1) else null
+        override fun pagePng(paper: PaperColors): ByteArray? { renders++; lastPaper = paper; return png }
+        override fun chatImage(name: String): ByteArray? = if (name == "foto.jpg" || name == "vieja.jpg") byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1) else null
         override fun send(text: String, image: ByteArray?): String? { if (problem == null) sent = text to image; return problem }
         override fun restart(fresh: Boolean): String? { if (problem == null) restarts += fresh; return problem }
+        override fun history(): List<WebHistoryItem>? = if (broken) error("ocupado") else historyList
+        override fun historyArchive(id: String): Pair<Long, List<SharedMessage>>? = if (broken) error("ocupado") else archives[id]
+        override fun restoreHistory(id: String): String? {
+            if (problem != null) return problem
+            restored = id
+            return if (archives.containsKey(id)) null else "No se encontró esa charla guardada."
+        }
+        override fun deleteHistory(id: String): String? {
+            if (problem != null) return problem
+            deleted = id
+            archives.remove(id)
+            return null
+        }
     }
 
     private val review = SharedReview(
@@ -61,6 +89,7 @@ class SyncWebServerTest {
         "index.html" to "<!doctype html><title>Trazo</title>",
         "app.js" to "console.log(1)",
         "app.css" to "body{}",
+        "sw.js" to "self.addEventListener('fetch', function(){})",
         "manifest.webmanifest" to "{}",
         "icon-192.png" to "PNG",
         "vendor/math/fonts/a.woff2" to "F",
@@ -183,11 +212,28 @@ class SyncWebServerTest {
         assertEquals(200, first.code)
         assertEquals("image/png", first.type)
         assertTrue(first.body.contentEquals(png))
+        assertEquals(PaperColors.LIGHT, h.lastPaper)
         get("/api/page.png", cookie)
         assertEquals(1, h.renders)
+        // Pedido con color: se dibuja con ese color y se guarda por separado.
+        val crema = get("/api/page.png", cookie, query = mapOf("paper" to "crema"))
+        assertEquals(200, crema.code)
+        assertEquals(2, h.renders)
+        assertEquals(SyncWebServer.webPaper("crema"), h.lastPaper)
+        get("/api/page.png", cookie, query = mapOf("paper" to "crema"))
+        assertEquals(2, h.renders)
+        val oscuro = get("/api/page.png", cookie, query = mapOf("paper" to "oscuro"))
+        assertEquals(200, oscuro.code)
+        assertEquals(PaperColors.DARK, h.lastPaper)
+        assertEquals(3, h.renders)
+        val negro = get("/api/page.png", cookie, query = mapOf("paper" to "negro"))
+        assertEquals(200, negro.code)
+        assertEquals(PaperColors.BLACK, h.lastPaper)
+        assertEquals(4, h.renders)
+        assertEquals(400, get("/api/page.png", cookie, query = mapOf("paper" to "desconocido")).code)
         h.review = review.copy(pageKey = "p:2")
         get("/api/page.png", cookie)
-        assertEquals(2, h.renders)
+        assertEquals(5, h.renders)
         h.review = review.copy(pageKey = null)
         assertEquals(404, get("/api/page.png", cookie).code)
         h.review = SharedReview(open = false, pageKey = "p:2")
@@ -199,6 +245,8 @@ class SyncWebServerTest {
         val ok = get("/api/image/foto.jpg", cookie)
         assertEquals(200, ok.code)
         assertEquals("image/jpeg", ok.type)
+        val old = get("/api/image/vieja.jpg", cookie)
+        assertEquals(200, old.code)
         for (bad in listOf("otra.jpg", "", ".foto.jpg", "a/b.jpg", "a b.jpg", "x".repeat(200))) assertEquals(bad, 404, get("/api/image/$bad", cookie).code)
     }
 
@@ -404,5 +452,54 @@ class SyncWebServerTest {
         assertEquals("image/gif", SyncWebServer.imageType("GIF89a".toByteArray()))
         assertNull(SyncWebServer.imageType("<svg onload=alert(1)>".toByteArray()))
         assertNull(SyncWebServer.imageType(ByteArray(0)))
+    }
+
+    @Test fun historyEndpoints() {
+        val cookie = link()
+        val h = host!!
+        // GET /api/history
+        val list = get("/api/history", cookie)
+        assertEquals(200, list.code)
+        assertTrue(list.text.contains("\"items\""))
+        assertTrue(list.text.contains("\"1731273240000\""))
+        assertTrue(list.text.contains("Tu idea de descomponer…"))
+        // GET /api/history/<id>
+        val one = get("/api/history/1731273240000", cookie)
+        assertEquals(200, one.code)
+        assertTrue(one.text.contains("\"messages\""))
+        assertTrue(one.text.contains("hola"))
+        assertEquals(404, get("/api/history/99999999", cookie).code)
+        // ID inválido: 400
+        for (badId in listOf("abc", "12a", "12345678901234567", "../1", "-1")) {
+            assertEquals(badId, 400, get("/api/history/$badId", cookie).code)
+            assertEquals(badId, 400, post("/api/history/restore", "{\"id\":\"$badId\"}", cookie).code)
+            assertEquals(badId, 400, post("/api/history/delete", "{\"id\":\"$badId\"}", cookie).code)
+        }
+        // POST /api/history/restore
+        assertEquals(200, post("/api/history/restore", "{\"id\":\"1731273240000\"}", cookie).code)
+        assertEquals("1731273240000", h.restored)
+        // POST /api/history/delete
+        assertEquals(200, post("/api/history/delete", "{\"id\":\"1731273240000\"}", cookie).code)
+        assertEquals("1731273240000", h.deleted)
+        assertFalse(h.archives.containsKey("1731273240000"))
+        assertEquals(404, get("/api/history/1731273240000", cookie).code)
+        // Sin hoja
+        host = null
+        assertEquals(409, get("/api/history", cookie).code)
+        assertEquals(404, get("/api/history/1731273240000", cookie).code)
+        assertEquals(409, post("/api/history/restore", "{\"id\":\"1731273240000\"}", cookie).code)
+        assertEquals(409, post("/api/history/delete", "{\"id\":\"1731273240000\"}", cookie).code)
+    }
+
+    @Test fun servesSwWithAllowedHeaderAndWorkerCsp() {
+        val sw = get("/sw.js")
+        assertEquals(200, sw.code)
+        assertEquals("text/javascript; charset=utf-8", sw.type)
+        assertEquals("/", header(sw, "Service-Worker-Allowed"))
+        val csp = header(sw, "Content-Security-Policy")!!
+        assertTrue(csp.contains("worker-src 'self'"))
+        val manifest = get("/manifest.webmanifest")
+        assertEquals(200, manifest.code)
+        assertEquals("application/manifest+json", manifest.type)
     }
 }

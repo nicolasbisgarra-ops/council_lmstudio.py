@@ -4,7 +4,75 @@
   'use strict';
 
   var $ = function (id) { return document.getElementById(id); };
+  var root = document.documentElement;
   var app = $('app');
+  var chatPane = $('pane-chat');
+  var pagePane = $('pane-page');
+  var grip = $('grip');
+  var rz = $('rz');
+  var pgrip = $('pgrip');
+  var prz = $('prz');
+
+  var KEY_CHAT = 'trazo_chat_box';
+  var KEY_PAGE = 'trazo_page_box';
+  var KEY_DOCK = 'trazo_chat_dock';
+  var KEY_TEXT = 'trazo_text';
+  var KEY_LOOK = 'trazo_look';
+  var KEY_INSTALL_DISMISSED = 'trazo_install_dismissed';
+
+  var THEMES = [
+    ['sistema', 'Sistema'], ['claro', 'Claro'], ['oscuro', 'Oscuro'], ['neon', 'Neón'],
+    ['matrix', 'Matrix'], ['oled', 'OLED'], ['vintage', 'Vintage'],
+    ['papel-viejo', 'Papel viejo'], ['papel-nuevo', 'Papel nuevo']
+  ];
+  var TEX = [
+    ['', 'Automático'], ['#111111', 'Negro'], ['#1d4ed8', 'Azul'],
+    ['#b91c1c', 'Rojo'], ['#15803d', 'Verde'], ['#7c3aed', 'Violeta']
+  ];
+  var VIEWS = [
+    ['chat-libre', 'Chat libre'], ['ambos', 'Las dos'], ['hoja-libre', 'Hoja libre'],
+    ['chat', 'Solo chat'], ['hoja', 'Solo hoja']
+  ];
+  var SIDES = [['right', 'Derecha'], ['left', 'Izquierda']];
+  var PAPERS = [
+    ['claro', 'Clara'], ['crema', 'Crema'], ['gris', 'Gris'],
+    ['oscuro', 'Oscura'], ['negro', 'Negra']
+  ];
+  var VIEW_HELP = {
+    'chat-libre': 'El chat flota libre sobre la hoja, que ocupa toda la pantalla.',
+    'ambos': 'La hoja y el chat, uno al lado del otro. Arrastrá el borde del chat para cambiar su ancho.',
+    'hoja-libre': 'La hoja flota libre sobre el chat, que ocupa toda la pantalla.',
+    'chat': 'Solo el chat, a pantalla completa.',
+    'hoja': 'Solo la hoja, a pantalla completa.'
+  };
+
+  var wide = window.matchMedia('(min-width: 900px)');
+
+  function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin guardado */ } }
+  function has(list, v) { return list.some(function (it) { return it[0] === v; }); }
+  function assign(target, src) {
+    if (!src) return target;
+    for (var k in src) {
+      if (Object.prototype.hasOwnProperty.call(src, k)) target[k] = src[k];
+    }
+    return target;
+  }
+
+  var saved = load(KEY_LOOK) || {};
+  var look = { theme: saved.theme, tex: saved.tex, side: saved.side, view: saved.view, paper: saved.paper };
+  if (!look.view) look.view = saved.layout === 'dock' ? 'ambos' : 'chat-libre';
+  if (!has(THEMES, look.theme)) look.theme = 'sistema';
+  if (!has(TEX, look.tex)) look.tex = '';
+  if (!has(VIEWS, look.view)) look.view = 'chat-libre';
+  if (!has(SIDES, look.side)) look.side = 'right';
+  if (!has(PAPERS, look.paper)) look.paper = 'claro';
+
+  var chatBox = load(KEY_CHAT) || {};
+  var pageBox = load(KEY_PAGE) || {};
+  var dock = load(KEY_DOCK) || {};
+  var scale = Number(load(KEY_TEXT)) || 1;
+
   var S = {
     v: null,          // versión del estado que ya tenemos
     data: null,       // último estado
@@ -27,7 +95,35 @@
     pairing: false,   // se está vinculando con el código del QR
     install: null,
     toastTimer: 0,
+    noPaper: false,   // la app no soporta el parámetro paper
+    historySupported: null,
+    viewingArchive: null
   };
+
+  // ---------------------------------------------------------------- formato de fecha
+
+  function when(at) {
+    var d = new Date(at);
+    var now = new Date();
+    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+    var time = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var targetDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    var diffDays = Math.round((today - targetDay) / 86400000);
+    if (diffDays === 0) return 'Hoy ' + time;
+    if (diffDays === 1) return 'Ayer ' + time;
+    var months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    var str = d.getDate() + ' ' + months[d.getMonth()];
+    if (d.getFullYear() !== now.getFullYear()) str += ' ' + d.getFullYear();
+    return str + ' ' + time;
+  }
+
+  function span(cls, text) {
+    var s = document.createElement('span');
+    s.className = cls;
+    s.textContent = text;
+    return s;
+  }
 
   // ---------------------------------------------------------------- pedidos
 
@@ -71,7 +167,7 @@
       S.fails = 0;
       S.hashCode = null;
       setOnline(true);
-      if (!r.json.same) apply(r.json);
+      if (!r.json.same) applyState(r.json);
     }).catch(function (e) {
       if (window.console) console.warn('Trazo: no se pudo leer el estado', e);
       S.fails++;
@@ -88,10 +184,15 @@
     if (app.dataset.view === view) return;
     app.dataset.view = view;
     closeMenu();
-    if (view !== 'main') $('dialog').hidden = true;
+    if (view !== 'main') {
+      $('dialog').hidden = true;
+      $('history').hidden = true;
+      if (S.viewingArchive) exitArchive();
+    }
     if (view === 'pair' || view === 'loading') { $('title').textContent = 'Trazo'; document.title = 'Trazo Side Chat'; }
     if (view === 'pair') setTimeout(function () { $('code').focus(); }, 50);
     updateStatus();
+    updateInstallButton();
   }
 
   function setOnline(on) {
@@ -131,7 +232,7 @@
 
   // ---------------------------------------------------------------- dibujar el estado
 
-  function apply(d) {
+  function applyState(d) {
     d.messages = d.messages || [];
     d.notes = d.notes || [];
     d.quick = d.quick || [];
@@ -150,35 +251,37 @@
     document.title = d.title ? d.title + ' · Trazo Side Chat' : 'Trazo Side Chat';
     renderPage(d);
     renderNotes(d);
-    renderChat(d);
-    renderQuick(d);
+    if (!S.viewingArchive) {
+      renderChat(d);
+      renderQuick(d);
+      updateComposer();
+    }
     updateStatus();
-    updateComposer();
+    checkHistory();
   }
 
-  function typeset(root) {
+  function typeset(rootEl) {
     if (!window.katex) return;
-    var list = root.querySelectorAll('span.tex:not(.done)');
+    var list = rootEl.querySelectorAll('span.tex:not(.done)');
     for (var i = 0; i < list.length; i++) {
-      var el = list[i];
-      var src = el.textContent;
+      var node = list[i];
+      var src = node.textContent;
       try {
-        window.katex.render(src, el, {
-          displayMode: el.classList.contains('display'),
+        window.katex.render(src, node, {
+          displayMode: node.classList.contains('display'),
           throwOnError: false,
           strict: 'ignore',
           trust: false,
           output: 'htmlAndMathml',
           maxSize: 20,
         });
-        el.classList.add('done');
+        node.classList.add('done');
       } catch (e) {
-        el.textContent = src; // queda la fuente, legible
+        node.textContent = src;
       }
     }
   }
 
-  /** Un trozo de HTML que armó Trazo (ya escapado) con sus fórmulas dibujadas. */
   function rich(html, cls) {
     var el = document.createElement('div');
     el.className = cls || 'body';
@@ -223,6 +326,7 @@
   }
 
   function renderChat(d) {
+    if (S.viewingArchive) return;
     var stick = S.stick || nearBottom();
     var box = $('msgs');
     var before = S.nodes.length;
@@ -248,6 +352,11 @@
 
     if (d.messages.length > before && app.dataset.tab !== 'chat') $('tab-chat').classList.add('new');
     if (stick) { scrollDown(); S.stick = false; }
+
+    $('chat-head-title').textContent = 'Charla actual';
+    $('chat-when').textContent = (d.messages.length && d.messages[0].at)
+      ? ' · ' + when(d.messages[0].at).toLowerCase()
+      : '';
   }
 
   function renderNotes(d) {
@@ -271,6 +380,7 @@
   }
 
   function renderQuick(d) {
+    if (S.viewingArchive) { $('quick').hidden = true; return; }
     var box = $('quick');
     var show = !d.busy && (d.quick || []).length > 0 && d.messages.some(function (m) { return !m.error && !m.me; });
     box.hidden = !show;
@@ -289,6 +399,14 @@
 
   // ---------------------------------------------------------------- la hoja
 
+  function pageUrl(v, omitPaper) {
+    var url = '/api/page.png?v=' + encodeURIComponent(v);
+    if (!omitPaper && !S.noPaper && look.paper) {
+      url += '&paper=' + encodeURIComponent(look.paper);
+    }
+    return url;
+  }
+
   function renderPage(d) {
     if (!d.page) {
       S.pageV = null; S.pageWant = null;
@@ -300,30 +418,53 @@
     if (d.page === S.pageV || d.page === S.pageWant) return;
     S.pageWant = d.page;
     clearTimeout(S.pageTimer);
-    // Mientras se escribe en la tablet la hoja cambia todo el tiempo: se vuelve a pedir, como mucho, cada 2,5 s.
     var wait = S.pageV ? Math.max(0, 2500 - (Date.now() - S.pageAt)) : 0;
     S.pageTimer = setTimeout(function () { loadPage(d.page); }, wait);
   }
 
   function loadPage(v) {
     S.pageAt = Date.now();
-    fetch('/api/page.png?v=' + encodeURIComponent(v), { cache: 'no-store', credentials: 'same-origin' }).then(function (res) {
+    var url = pageUrl(v);
+    fetch(url, { cache: 'no-store', credentials: 'same-origin' }).then(function (res) {
+      if (res.status === 400 && !S.noPaper) {
+        S.noPaper = true;
+        return fetch(pageUrl(v, true), { cache: 'no-store', credentials: 'same-origin' }).then(function (r2) {
+          if (!r2.ok) throw new Error('hoja ' + r2.status);
+          return r2.blob();
+        });
+      }
       if (!res.ok) throw new Error('hoja ' + res.status);
       return res.blob();
     }).then(function (blob) {
-      var url = URL.createObjectURL(blob);
+      var blobUrl = URL.createObjectURL(blob);
       var old = S.pageUrl;
-      $('sheet').src = url;
-      S.pageUrl = url;
+      $('sheet').src = blobUrl;
+      S.pageUrl = blobUrl;
       S.pageV = v;
-      if (!$('viewer').hidden && $('viewer-img').dataset.sheet === '1') $('viewer-img').src = url;
+      if (!$('viewer').hidden && $('viewer-img').dataset.sheet === '1') $('viewer-img').src = blobUrl;
       if (old) setTimeout(function () { URL.revokeObjectURL(old); }, 2000);
     }).catch(function () {
-      // Se prueba de nuevo en un rato, si la hoja sigue siendo esa.
       setTimeout(function () {
         if (S.pageWant === v) { S.pageWant = null; if (S.data && S.data.open) renderPage(S.data); }
       }, 3000);
     });
+  }
+
+  function setPaper(id) {
+    if (!has(PAPERS, id) || id === look.paper) return;
+    setLook({ paper: id });
+    S.pageV = null;
+    if (S.data && S.data.page) loadPage(S.data.page);
+  }
+
+  function updateSwatches() {
+    var swatches = document.querySelectorAll('.swatch');
+    for (var i = 0; i < swatches.length; i++) {
+      var b = swatches[i];
+      b.setAttribute('aria-pressed', b.dataset.paper === look.paper ? 'true' : 'false');
+    }
+    var sheetBtn = $('sheet-btn');
+    if (sheetBtn) sheetBtn.dataset.paper = look.paper;
   }
 
   function openViewer(src, isSheet) {
@@ -340,6 +481,179 @@
     $('viewer-img').removeAttribute('src');
   }
 
+  // ---------------------------------------------------------------- historial
+
+  function checkHistory() {
+    if (!S.online || !S.data || !S.data.open || S.data.exam) {
+      $('hist-btn').hidden = true;
+      return;
+    }
+    request('GET', '/api/history').then(function (r) {
+      if (r.status === 404) {
+        S.historySupported = false;
+        $('hist-btn').hidden = true;
+      } else if (r.status === 200) {
+        S.historySupported = true;
+        if (!S.viewingArchive) $('hist-btn').hidden = false;
+      }
+    }).catch(function () {});
+  }
+
+  function historyRow(item, current) {
+    var li = document.createElement('li');
+    if (current) li.setAttribute('aria-current', 'true');
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.appendChild(span('h-when', when(item.at)));
+    b.appendChild(span('h-count', item.count + (item.count === 1 ? ' mensaje' : ' mensajes')));
+    b.appendChild(span('h-text', item.preview || ''));
+    b.addEventListener('click', function () { openArchive(item.id); });
+    li.appendChild(b);
+    return li;
+  }
+
+  function openHistory() {
+    if (S.historySupported === false) {
+      toast('Esta versión de Trazo no tiene historial.');
+      return;
+    }
+    $('history').hidden = false;
+    request('GET', '/api/history').then(function (r) {
+      if (r.status === 404) {
+        S.historySupported = false;
+        $('hist-btn').hidden = true;
+        $('history').hidden = true;
+        toast('Esta versión de Trazo no tiene historial.');
+        return;
+      }
+      if (r.status !== 200 || !r.json) {
+        toast('No se pudo leer el historial.');
+        return;
+      }
+      var items = r.json.items || [];
+      var list = $('hist-list');
+      list.textContent = '';
+      $('hist-empty').hidden = items.length > 0;
+      items.forEach(function (it) {
+        list.appendChild(historyRow(it, S.viewingArchive && S.viewingArchive.id === it.id));
+      });
+    }).catch(function () {
+      toast('No se pudo hablar con Trazo. Probá de nuevo.');
+    });
+  }
+
+  function closeHistory() {
+    $('history').hidden = true;
+  }
+
+  function openArchive(id) {
+    request('GET', '/api/history/' + encodeURIComponent(id)).then(function (r) {
+      if (r.status === 404) {
+        toast('Esa charla ya no existe.');
+        openHistory();
+        return;
+      }
+      if (r.status !== 200 || !r.json) {
+        toast('No se pudo abrir esa charla.');
+        return;
+      }
+      $('history').hidden = true;
+      showArchive(r.json);
+    }).catch(function () {
+      toast('No se pudo hablar con Trazo. Probá de nuevo.');
+    });
+  }
+
+  function showArchive(archive) {
+    S.viewingArchive = archive;
+    var box = $('msgs');
+    box.textContent = '';
+    S.nodes = [];
+    (archive.messages || []).forEach(function (m) {
+      var el = messageNode(m);
+      box.appendChild(el);
+      S.nodes.push({ id: m.id, el: el });
+    });
+    $('empty-chat').hidden = true;
+    $('stream').hidden = true;
+    $('quick').hidden = true;
+    $('composer').hidden = true;
+    $('archive-bar').hidden = false;
+    $('archive-back').hidden = false;
+    $('hist-btn').hidden = true;
+    $('new-chat-btn').hidden = true;
+    $('chat-head-title').textContent = 'Charla guardada';
+    $('chat-when').textContent = archive.at ? ' · ' + when(archive.at).toLowerCase() : '';
+    scrollDown();
+  }
+
+  function exitArchive() {
+    S.viewingArchive = null;
+    $('archive-bar').hidden = true;
+    $('archive-back').hidden = true;
+    $('composer').hidden = false;
+    $('chat-head-title').textContent = 'Charla actual';
+    if (S.historySupported !== false) $('hist-btn').hidden = false;
+    $('new-chat-btn').hidden = false;
+    if (S.data) {
+      S.nodes = [];
+      $('msgs').textContent = '';
+      renderChat(S.data);
+      renderQuick(S.data);
+      updateComposer();
+      $('chat-when').textContent = (S.data.messages && S.data.messages.length && S.data.messages[0].at)
+        ? ' · ' + when(S.data.messages[0].at).toLowerCase()
+        : '';
+    }
+  }
+
+  function restoreArchive() {
+    if (!S.viewingArchive) return;
+    var id = S.viewingArchive.id;
+    request('POST', '/api/history/restore', { id: id }).then(function (r) {
+      if (r.status === 200 && r.json && r.json.ok) {
+        exitArchive();
+        toast('Se retomó la charla.');
+        tick();
+      } else {
+        toast((r.json && r.json.error) || 'No se pudo retomar la charla.');
+      }
+    }).catch(function () {
+      toast('No se pudo hablar con Trazo. Probá de nuevo.');
+    });
+  }
+
+  function deleteArchive() {
+    if (!S.viewingArchive) return;
+    var id = S.viewingArchive.id;
+    dialog('Borrar charla guardada', paragraph('Esta charla se borra del historial de esta hoja y no se puede recuperar.'), 'Borrar', function () {
+      request('POST', '/api/history/delete', { id: id }).then(function (r) {
+        if (r.status === 200 && r.json && r.json.ok) {
+          exitArchive();
+          toast('Charla borrada.');
+          tick();
+        } else {
+          toast((r.json && r.json.error) || 'No se pudo borrar la charla.');
+        }
+      }).catch(function () {
+        toast('No se pudo hablar con Trazo. Probá de nuevo.');
+      });
+    });
+  }
+
+  function askNewChat() {
+    closeMenu();
+    dialog(
+      'Nueva charla',
+      paragraph('La charla actual queda guardada en el historial y se empieza una nueva desde cero.'),
+      'Nueva charla',
+      function () {
+        if (S.viewingArchive) exitArchive();
+        review(true);
+      }
+    );
+  }
+
   // ---------------------------------------------------------------- escribir y mandar
 
   function autosize() {
@@ -350,19 +664,19 @@
 
   function updateComposer() {
     var d = S.data;
-    var can = S.online && !!d && d.open && !d.busy && !S.sending;
+    var can = S.online && !!d && d.open && !d.busy && !S.sending && !S.viewingArchive;
     $('send').disabled = !(can && ($('text').value.trim() || S.photo));
     var quick = $('quick').querySelectorAll('button');
     for (var i = 0; i < quick.length; i++) quick[i].disabled = !can;
-    var review = $('review-btn');
-    if (review) review.disabled = !can;
+    var reviewBtn = $('review-btn');
+    if (reviewBtn) reviewBtn.disabled = !can;
   }
 
   function send(given) {
     var fromBox = given == null;
     var text = (fromBox ? $('text').value : given).trim();
     var d = S.data;
-    if (S.sending || !d || !d.open || d.busy || (!text && !S.photo)) return;
+    if (S.sending || !d || !d.open || d.busy || (!text && !S.photo) || S.viewingArchive) return;
     S.sending = true;
     updateComposer();
     request('POST', '/api/chat', { text: text, image: S.photo || undefined }, 90000).then(function (r) {
@@ -399,7 +713,6 @@
     updateComposer();
   }
 
-  /** Achica la foto y la pasa a JPEG en el navegador: viaja liviana y sin los datos de la cámara (lugar, fecha). */
   function shrink(file) {
     return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(function () {
       return createImageBitmap(file);
@@ -459,8 +772,6 @@
 
   function closeMenu() { $('menu').hidden = true; }
 
-  // ---- el modelo de IA: elige el mismo que usa Trazo en la tableta. Las claves y las direcciones quedan allá.
-  // Si el navegador ya no está vinculado, se vuelve a la pantalla de vinculación (como en el resto de la app).
   function modelUnpaired() {
     $('dialog').hidden = true;
     S.v = null; S.data = null;
@@ -468,7 +779,6 @@
     pairError('Este navegador ya no está vinculado. Escaneá el QR o escribí un código nuevo.');
   }
 
-  // Abre el diálogo de modelo; con [refresh] solo redibuja si sigue abierto en ese diálogo (no lo reabre).
   function modelOpen() {
     return !$('dialog').hidden && $('dialog-title').textContent === 'Modelo de IA';
   }
@@ -482,7 +792,6 @@
     }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); });
   }
 
-  // Al redibujar, el foco vuelve a la opción que se tocó (no al botón «Listo»).
   var modelFocus = null;
 
   function pickModel(payload, key) {
@@ -549,16 +858,20 @@
     if (!fresh && again && !again.disabled) again.focus(); else $('dialog-yes').focus();
   }
 
-  function dialog(title, body, yes, onYes) {
+  function dialog(title, body, yes, onYes, noText, onNo) {
     $('dialog-title').textContent = title;
     var box = $('dialog-body');
     box.textContent = '';
     box.appendChild(body);
-    $('dialog-yes').textContent = yes || 'Entendido';
-    $('dialog-no').hidden = !onYes;
-    $('dialog-yes').onclick = function () { $('dialog').hidden = true; if (onYes) onYes(); };
+    var yesBtn = $('dialog-yes');
+    var noBtn = $('dialog-no');
+    yesBtn.textContent = yes || 'Entendido';
+    noBtn.textContent = noText || 'Cancelar';
+    noBtn.hidden = !onYes && !noText;
+    yesBtn.onclick = function () { $('dialog').hidden = true; if (onYes) onYes(); };
+    noBtn.onclick = function () { $('dialog').hidden = true; if (onNo) onNo(); };
     $('dialog').hidden = false;
-    $('dialog-yes').focus();
+    yesBtn.focus();
   }
 
   function paragraph(text) {
@@ -567,23 +880,60 @@
     return p;
   }
 
-  function installHelp() {
-    if (S.install) { var e = S.install; S.install = null; e.prompt(); return; }
+  // ---------------------------------------------------------------- instalar
+
+  function installStepText() {
+    var ua = navigator.userAgent || '';
+    var isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOS) {
+      return '1. En Safari, tocá el botón Compartir y elegí «Agregar a inicio».';
+    }
+    if (/Android/.test(ua)) {
+      return '1. En Chrome, tocá el menú ⋮ y elegí «Agregar a la pantalla principal».';
+    }
+    return '1. En la computadora (Chrome o Edge), abrí el menú ⋮ y elegí «Transmitir, guardar y compartir» → «Instalar página como app».';
+  }
+
+  function installHelp(fromBar) {
+    if (S.install) {
+      var e = S.install;
+      S.install = null;
+      e.prompt();
+      return;
+    }
+    var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
     var box = document.createElement('div');
-    if (window.matchMedia('(display-mode: standalone)').matches) {
+    if (isStandalone) {
       box.appendChild(paragraph('Ya estás usando Trazo como app en este equipo.'));
       dialog('Instalar como app', box);
+      updateInstallButton();
       return;
     }
     box.appendChild(paragraph('Queda un ícono de Trazo que entra directo, sin QR, mientras Trazo esté abierto en la tablet y en la misma red.'));
-    var ul = document.createElement('ul');
-    [
-      'En la computadora (Chrome o Edge): menú ⋮ → «Transmitir, guardar y compartir» → «Instalar página como app».',
-      'En Android (Chrome): menú ⋮ → «Agregar a la pantalla principal».',
-      'En iPhone o iPad (Safari): Compartir → «Agregar a inicio».',
-    ].forEach(function (t) { var li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
-    box.appendChild(ul);
-    dialog('Instalar como app', box);
+    var ol = document.createElement('ol');
+    ol.className = 'steps';
+    var li = document.createElement('li');
+    li.textContent = installStepText().replace(/^\d+\.\s*/, '');
+    ol.appendChild(li);
+    box.appendChild(ol);
+
+    if (fromBar) {
+      dialog('Instalar como app', box, 'Entendido', null, 'Ahora no', function () {
+        save(KEY_INSTALL_DISMISSED, 1);
+        updateInstallButton();
+      });
+    } else {
+      dialog('Instalar como app', box);
+    }
+  }
+
+  function updateInstallButton() {
+    var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    var dismissed = !!load(KEY_INSTALL_DISMISSED);
+    var btn = $('bar-install');
+    if (btn) {
+      btn.hidden = isStandalone || dismissed;
+    }
   }
 
   // ---------------------------------------------------------------- arranque
@@ -622,7 +972,7 @@
     var btn = document.createElement('button');
     btn.id = 'review-btn';
     btn.type = 'button';
-    btn.className = 'primary';
+    btn.className = 'primary pill';
     btn.textContent = 'Revisar esta hoja';
     btn.addEventListener('click', function () { review(false); });
     empty.appendChild(btn);
@@ -636,7 +986,6 @@
     $('composer').addEventListener('submit', function (e) { e.preventDefault(); send(); });
     $('text').addEventListener('input', function () { autosize(); updateComposer(); });
     $('text').addEventListener('keydown', function (e) {
-      // Con teclado de verdad, Enter manda y Mayús+Enter baja de renglón; en el teléfono Enter baja de renglón.
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !window.matchMedia('(pointer: coarse)').matches) {
         e.preventDefault();
         send();
@@ -659,6 +1008,7 @@
     });
 
     $('sheet-btn').addEventListener('click', function () { openViewer($('sheet').getAttribute('src'), true); });
+    $('zoom-sheet').addEventListener('click', function () { openViewer($('sheet').getAttribute('src'), true); });
     $('msgs').addEventListener('click', function (e) {
       if (e.target && e.target.classList && e.target.classList.contains('photo')) openViewer(e.target.src, false);
     });
@@ -672,12 +1022,9 @@
       $('menu').hidden = !$('menu').hidden;
     });
     document.addEventListener('click', function (e) { if (!$('menu').hidden && !$('menu').contains(e.target)) closeMenu(); });
-    $('m-review').addEventListener('click', function () {
-      closeMenu();
-      dialog('Nueva revisión', paragraph('Se borra la conversación de esta hoja y el tutor la revisa de nuevo desde cero.'), 'Revisar de nuevo', function () { review(true); });
-    });
+    $('m-review').addEventListener('click', askNewChat);
     $('m-model').addEventListener('click', function () { closeMenu(); loadModel(); });
-    $('m-install').addEventListener('click', function () { closeMenu(); installHelp(); });
+    $('m-install').addEventListener('click', function () { closeMenu(); installHelp(false); });
     $('m-unpair').addEventListener('click', function () {
       closeMenu();
       dialog('Desvincular este navegador', paragraph('Para volver a entrar vas a tener que escanear el QR o escribir un código nuevo.'), 'Desvincular', function () {
@@ -686,8 +1033,23 @@
         });
       });
     });
-    $('dialog-no').addEventListener('click', function () { $('dialog').hidden = true; });
-    $('dialog').addEventListener('click', function (e) { if (e.target === $('dialog')) $('dialog').hidden = true; });
+
+    $('bar-install').addEventListener('click', function () { installHelp(true); });
+    $('hist-btn').addEventListener('click', openHistory);
+    $('hist-back').addEventListener('click', closeHistory);
+    $('new-chat-btn').addEventListener('click', askNewChat);
+    $('archive-back').addEventListener('click', exitArchive);
+    $('archive-restore').addEventListener('click', restoreArchive);
+    $('archive-delete').addEventListener('click', deleteArchive);
+
+    var swatches = document.querySelectorAll('.swatch');
+    for (var i = 0; i < swatches.length; i++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          setPaper(btn.dataset.paper);
+        });
+      })(swatches[i]);
+    }
 
     $('pair-form').addEventListener('submit', function (e) { e.preventDefault(); pair($('code').value); });
     $('code').addEventListener('input', function () {
@@ -701,98 +1063,63 @@
       if (e.key !== 'Escape') return;
       if (!$('viewer').hidden) closeViewer();
       else if (!$('dialog').hidden) $('dialog').hidden = true;
+      else if (!$('history').hidden) closeHistory();
+      else if (S.viewingArchive) exitArchive();
       else closeMenu();
     });
     document.addEventListener('visibilitychange', function () { if (!document.hidden && app.dataset.view !== 'pair') tick(); });
     window.addEventListener('online', function () { if (app.dataset.view !== 'pair') tick(); });
-    window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); S.install = e; });
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      S.install = e;
+      var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+      if (!isStandalone) $('bar-install').hidden = false;
+    });
+
+    grip.addEventListener('pointerdown', function (e) { startDrag(e, chatPane, 'move'); });
+    rz.addEventListener('pointerdown', function (e) { startDrag(e, chatPane, 'size'); });
+    pgrip.addEventListener('pointerdown', function (e) { startDrag(e, pagePane, 'move'); });
+    prz.addEventListener('pointerdown', function (e) { startDrag(e, pagePane, 'size'); });
+    $('fs-down').addEventListener('click', function () { setText(scale - 0.1); });
+    $('fs-up').addEventListener('click', function () { setText(scale + 0.1); });
+    $('m-look').addEventListener('click', function () {
+      closeMenu();
+      renderLook();
+    });
+    window.addEventListener('resize', place);
+    if (wide.addEventListener) wide.addEventListener('change', place);
   }
 
-  /** El código del QR viene después del «#»: se usa una vez y se saca de la barra de direcciones. */
   function codeFromLink() {
     var m = /[#&]c=(\d{8})\b/.exec(location.hash || '');
     if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* sin historial */ } }
     return m ? m[1] : null;
   }
 
-  S.hashCode = codeFromLink();
-  window.addEventListener('hashchange', function () {
-    var code = codeFromLink();
-    if (code && app.dataset.view === 'pair') pair(code, true);
-  });
-
-  build();
-  listen();
-  setTab('chat');
-  tick();
-})();
-
-// Chrome solo instala la app con un service worker, y solo en un origen seguro (HTTPS o localhost).
-if ('serviceWorker' in navigator && window.isSecureContext) {
-  navigator.serviceWorker.register('/sw.js').catch(function () {});
-}
-
-// Apariencia (tema, color de las fórmulas, lado del chat) y vista en PC: el chat y la hoja pueden verse las dos
-// (una al lado de la otra, o una libre sobre la otra), o solo una a pantalla completa. Son preferencias de este
-// navegador (localStorage); si no se pueden guardar, da igual.
-(function () {
-  var KEY_CHAT = 'trazo_chat_box', KEY_PAGE = 'trazo_page_box', KEY_DOCK = 'trazo_chat_dock', KEY_TEXT = 'trazo_text', KEY_LOOK = 'trazo_look';
-  var THEMES = [['sistema', 'Sistema'], ['claro', 'Claro'], ['oscuro', 'Oscuro'], ['neon', 'Neón'], ['matrix', 'Matrix'],
-    ['oled', 'OLED'], ['vintage', 'Vintage'], ['papel-viejo', 'Papel viejo'], ['papel-nuevo', 'Papel nuevo']];
-  var TEX = [['', 'Automático'], ['#111111', 'Negro'], ['#1d4ed8', 'Azul'], ['#b91c1c', 'Rojo'], ['#15803d', 'Verde'], ['#7c3aed', 'Violeta']];
-  var VIEWS = [['chat-libre', 'Chat libre'], ['ambos', 'Las dos'], ['hoja-libre', 'Hoja libre'], ['chat', 'Solo chat'], ['hoja', 'Solo hoja']];
-  var SIDES = [['right', 'Derecha'], ['left', 'Izquierda']];
-  var VIEW_HELP = {
-    'chat-libre': 'El chat flota libre sobre la hoja, que ocupa toda la pantalla.',
-    'ambos': 'La hoja y el chat, uno al lado del otro. Arrastrá el borde del chat para cambiar su ancho.',
-    'hoja-libre': 'La hoja flota libre sobre el chat, que ocupa toda la pantalla.',
-    'chat': 'Solo el chat, a pantalla completa.',
-    'hoja': 'Solo la hoja, a pantalla completa.'
-  };
-  var wide = window.matchMedia('(min-width: 900px)');
-  var root = document.documentElement;
-  var app = document.getElementById('app');
-  var chatPane = document.getElementById('pane-chat');
-  var pagePane = document.getElementById('pane-page');
-  var grip = document.getElementById('grip');
-  var rz = document.getElementById('rz');
-  var pgrip = document.getElementById('pgrip');
-  var prz = document.getElementById('prz');
-  function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
-  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin guardado */ } }
-  function has(list, v) { return list.some(function (it) { return it[0] === v; }); }
-
-  var saved = load(KEY_LOOK) || {};
-  var look = { theme: saved.theme, tex: saved.tex, side: saved.side, view: saved.view };
-  if (!look.view) look.view = saved.layout === 'dock' ? 'ambos' : 'chat-libre';
-  if (!has(THEMES, look.theme)) look.theme = 'sistema';
-  if (!has(TEX, look.tex)) look.tex = '';
-  if (!has(VIEWS, look.view)) look.view = 'chat-libre';
-  if (!has(SIDES, look.side)) look.side = 'right';
-  var chatBox = load(KEY_CHAT) || {};
-  var pageBox = load(KEY_PAGE) || {};
-  var dock = load(KEY_DOCK) || {};
-  var scale = Number(load(KEY_TEXT)) || 1;
+  // ---------------------------------------------------------------- apariencia y vistas en PC
 
   function applyLook() {
     if (look.theme === 'sistema') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', look.theme);
     if (look.tex) root.style.setProperty('--tex', look.tex); else root.style.removeProperty('--tex');
     app.setAttribute('data-side', look.side);
   }
+
   function applyText() { app.style.fontSize = (16 * scale).toFixed(1) + 'px'; }
+
   function setText(next) {
     scale = Math.min(1.6, Math.max(0.8, Math.round(next * 10) / 10));
     save(KEY_TEXT, scale);
     applyText();
   }
+
   function setLook(partial) {
-    look = Object.assign({}, look, partial);
+    look = assign(assign({}, look), partial);
     save(KEY_LOOK, look);
     applyLook();
+    updateSwatches();
     place();
   }
 
-  // Un panel libre: su caja (x, y, w, h) queda dentro de la pantalla, y se corrige en el mismo objeto.
   function clampBox(b) {
     var vw = window.innerWidth, vh = window.innerHeight;
     b.w = Math.max(280, Math.min(b.w, vw - 8));
@@ -801,21 +1128,21 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     b.x = Math.max(4, Math.min(b.x, vw - b.w - 4));
     return b;
   }
+
   function floatDefaults(which, b) {
     var vw = window.innerWidth, vh = window.innerHeight;
     if (typeof b.w !== 'number') b.w = which === 'chat' ? 440 : Math.min(760, Math.round(vw * 0.5));
     if (typeof b.h !== 'number') b.h = vh - 100;
     if (typeof b.y !== 'number') b.y = 72;
     if (typeof b.x !== 'number') {
-      // El chat va del lado elegido; la hoja libre, del lado contrario.
       var chatLeft = look.side === 'left';
       var left = which === 'chat' ? chatLeft : !chatLeft;
       b.x = left ? 12 : vw - b.w - 12;
     }
     return b;
   }
-  // Pone un panel en su modo: 'off' (oculto), 'full' (ocupa el espacio), 'float' (libre) o 'dock' (pegado al costado).
-  function apply(el, mode, which, b) {
+
+  function applyPaneMode(el, mode, which, b) {
     el.classList.remove('float', 'docked', 'full', 'off');
     el.removeAttribute('style');
     if (mode === 'none') return;
@@ -838,6 +1165,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
       el.style.width = dock.w + 'px';
     }
   }
+
   function place() {
     var modes;
     if (!wide.matches) modes = { chat: 'none', page: 'none' };
@@ -846,11 +1174,10 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     else if (look.view === 'hoja-libre') modes = { chat: 'full', page: 'float' };
     else if (look.view === 'chat') modes = { chat: 'full', page: 'off' };
     else modes = { chat: 'off', page: 'full' };
-    apply(chatPane, modes.chat, 'chat', chatBox);
-    apply(pagePane, modes.page, 'page', pageBox);
+    applyPaneMode(chatPane, modes.chat, 'chat', chatBox);
+    applyPaneMode(pagePane, modes.page, 'page', pageBox);
   }
 
-  // Arrastrar la barra mueve un panel libre; arrastrar el borde o la esquina cambia su tamaño.
   function startDrag(e, pane, kind) {
     if (e.button !== undefined && e.button !== 0) return;
     if (e.target.closest && e.target.closest('button')) return;
@@ -884,13 +1211,13 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     target.addEventListener('pointercancel', up);
   }
 
-  // ---- el menú «Apariencia»
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
     if (text != null) n.textContent = text;
     return n;
   }
+
   function choices(list, current, pick) {
     var wrap = el('div', 'choices');
     list.forEach(function (it) {
@@ -902,12 +1229,14 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     });
     return wrap;
   }
+
   function section(title, node) {
     var s = el('div', 'look-part');
     s.appendChild(el('h3', null, title));
     s.appendChild(node);
     return s;
   }
+
   function renderLook() {
     var body = el('div', 'look');
     body.appendChild(section('Tema', choices(THEMES, look.theme, function (v) { setLook({ theme: v }); })));
@@ -920,31 +1249,37 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
       setLook({ side: v });
     })));
     body.appendChild(el('p', 'fine', 'En el teléfono no cambia nada. Las vistas libres se mueven arrastrando su barra y se agrandan desde la esquina.'));
-    document.getElementById('dialog-title').textContent = 'Apariencia';
-    var box = document.getElementById('dialog-body');
+    $('dialog-title').textContent = 'Apariencia';
+    var box = $('dialog-body');
     box.textContent = '';
     box.appendChild(body);
-    var yes = document.getElementById('dialog-yes');
+    var yes = $('dialog-yes');
     yes.textContent = 'Listo';
-    yes.onclick = function () { document.getElementById('dialog').hidden = true; };
-    document.getElementById('dialog-no').hidden = true;
-    document.getElementById('dialog').hidden = false;
+    yes.onclick = function () { $('dialog').hidden = true; };
+    $('dialog-no').hidden = true;
+    $('dialog').hidden = false;
     yes.focus();
   }
 
-  grip.addEventListener('pointerdown', function (e) { startDrag(e, chatPane, 'move'); });
-  rz.addEventListener('pointerdown', function (e) { startDrag(e, chatPane, 'size'); });
-  pgrip.addEventListener('pointerdown', function (e) { startDrag(e, pagePane, 'move'); });
-  prz.addEventListener('pointerdown', function (e) { startDrag(e, pagePane, 'size'); });
-  document.getElementById('fs-down').addEventListener('click', function () { setText(scale - 0.1); });
-  document.getElementById('fs-up').addEventListener('click', function () { setText(scale + 0.1); });
-  document.getElementById('m-look').addEventListener('click', function () {
-    document.getElementById('menu').hidden = true;
-    renderLook();
+  // ---------------------------------------------------------------- inicio
+
+  S.hashCode = codeFromLink();
+  window.addEventListener('hashchange', function () {
+    var code = codeFromLink();
+    if (code && app.dataset.view === 'pair') pair(code, true);
   });
-  window.addEventListener('resize', place);
-  if (wide.addEventListener) wide.addEventListener('change', place);
+
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  }
+
+  build();
+  listen();
   applyLook();
   applyText();
+  updateSwatches();
+  updateInstallButton();
+  setTab('chat');
   place();
+  tick();
 })();

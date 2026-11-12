@@ -1,7 +1,12 @@
 package io.trazo.app.sync
 
+import io.trazo.app.ink.PaperColors
+import io.trazo.core.share.SharedMessage
 import io.trazo.core.share.SharedReview
 import io.trazo.core.share.WebAccess
+import io.trazo.core.share.WebArchive
+import io.trazo.core.share.WebHistory
+import io.trazo.core.share.WebHistoryItem
 import io.trazo.core.share.WebStateBuilder
 import io.trazo.core.sync.SyncAddresses
 import java.io.ByteArrayOutputStream
@@ -45,7 +50,7 @@ interface SyncWebHost {
     fun chooseAi(profileId: String?, quality: String?): String? = "Los modelos no están disponibles."
 
     /** La hoja con las marcas de la IA, como PNG; null si no hay hoja. */
-    fun pagePng(): ByteArray?
+    fun pagePng(paper: PaperColors = PaperColors.LIGHT): ByteArray?
 
     /** Una imagen adjunta del chat de esta hoja; null si [name] no es de este chat. */
     fun chatImage(name: String): ByteArray?
@@ -55,6 +60,18 @@ interface SyncWebHost {
 
     /** Pide la revisión de la hoja; con [fresh] borra antes la conversación. Devuelve null si salió. */
     fun restart(fresh: Boolean): String?
+
+    /** Lista de charlas guardadas de esta hoja; null si no hay hoja o el modo está bloqueado. */
+    fun history(): List<WebHistoryItem>? = null
+
+    /** Una charla guardada (momento y mensajes); null si no existe o no hay hoja. */
+    fun historyArchive(id: String): Pair<Long, List<SharedMessage>>? = null
+
+    /** Restaura la charla [id] dejándola como actual. Devuelve null si salió, o por qué no. */
+    fun restoreHistory(id: String): String? = SyncWebServer.NO_SHEET
+
+    /** Borra la charla [id]. Devuelve null si salió, o por qué no. */
+    fun deleteHistory(id: String): String? = SyncWebServer.NO_SHEET
 }
 
 /**
@@ -90,8 +107,9 @@ class SyncWebServer(
     private val builder = WebStateBuilder()
     private val statics = ConcurrentHashMap<String, Static>()
     private val pngLock = Any()
-    private var pngKey: String? = null
-    private var png: ByteArray? = null
+    private val pngCache = object : LinkedHashMap<String, ByteArray>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?): Boolean = size > 8
+    }
     @Volatile private var lastState: Pair<String, ByteArray>? = null
 
     val isRunning: Boolean get() = server?.isClosed == false
@@ -226,6 +244,8 @@ class SyncWebServer(
                 "/api/chat" -> authorized(req) { chat(req) }
                 "/api/review" -> authorized(req) { review(req) }
                 "/api/ai" -> authorized(req) { aiChoose(req) }
+                "/api/history/restore" -> authorized(req) { historyRestore(req) }
+                "/api/history/delete" -> authorized(req) { historyDelete(req) }
                 "/api/unpair" -> authorized(req) { device ->
                     access.forget(device.id)
                     json(200, OK, listOf("Set-Cookie" to "${WebAccess.COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"))
@@ -235,8 +255,10 @@ class SyncWebServer(
         }
         return when {
             path == "/api/state" -> authorized(req) { state(req) }
-            path == "/api/page.png" -> authorized(req) { pagePng() }
+            path == "/api/page.png" -> authorized(req) { pagePng(req) }
             path == "/api/ai" -> authorized(req) { aiState() }
+            path == "/api/history" -> authorized(req) { history() }
+            path.startsWith("/api/history/") -> authorized(req) { historyArchive(path.removePrefix("/api/history/")) }
             path.startsWith("/api/image/") -> authorized(req) { image(path.removePrefix("/api/image/")) }
             path.startsWith("/api/") -> notFound()
             else -> static(req)
@@ -306,15 +328,51 @@ class SyncWebServer(
         return Response(200, JSON_TYPE, bytes)
     }
 
-    private fun pagePng(): Response {
+    private fun pagePng(req: Request): Response {
+        val paperId = req.query["paper"] ?: "claro"
+        val colors = webPaper(paperId) ?: return plain(400, "Color de hoja desconocido")
         val h = host() ?: return notFound()
         val key = runCatching { h.review() }.getOrNull()?.takeIf { it.open }?.pageKey ?: return notFound()
+        val cacheKey = "$key:$paperId"
         // Un dibujo a la vez: dos navegadores mirando la misma hoja comparten el mismo PNG.
         val bytes = synchronized(pngLock) {
-            if (pngKey == key && png != null) png
-            else runCatching { h.pagePng() }.getOrNull().also { pngKey = key; png = it }
+            pngCache[cacheKey] ?: runCatching { h.pagePng(colors) }.getOrNull()?.also { pngCache[cacheKey] = it }
         } ?: return notFound()
         return Response(200, "image/png", bytes)
+    }
+
+    private fun validHistoryId(id: String): Boolean =
+        id.isNotEmpty() && id.length <= 16 && id.all { it.isDigit() }
+
+    private fun history(): Response {
+        val h = host() ?: return json(409, fail(NO_SHEET))
+        val items = runCatching { h.history() }.getOrNull() ?: return json(409, fail(NO_SHEET))
+        return json(200, builder.json(WebHistory(items)))
+    }
+
+    private fun historyArchive(id: String): Response {
+        if (!validHistoryId(id)) return json(400, fail("Identificador inválido."))
+        val h = host() ?: return notFound()
+        val archive = runCatching { h.historyArchive(id) }.getOrNull() ?: return notFound()
+        return json(200, builder.json(builder.archive(id, archive.first, archive.second)))
+    }
+
+    private fun historyRestore(req: Request): Response {
+        val o = body(req) ?: return json(400, fail("No se entendió el pedido."))
+        val id = (o["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return json(400, fail("Falta el id."))
+        if (!validHistoryId(id)) return json(400, fail("Identificador inválido."))
+        val h = host() ?: return json(409, fail(NO_SHEET))
+        val problem = runCatching { h.restoreHistory(id) }.getOrElse { "No se pudo restaurar la charla." }
+        return if (problem == null) json(200, OK) else json(409, fail(problem))
+    }
+
+    private fun historyDelete(req: Request): Response {
+        val o = body(req) ?: return json(400, fail("No se entendió el pedido."))
+        val id = (o["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return json(400, fail("Falta el id."))
+        if (!validHistoryId(id)) return json(400, fail("Identificador inválido."))
+        val h = host() ?: return json(409, fail(NO_SHEET))
+        val problem = runCatching { h.deleteHistory(id) }.getOrElse { "No se pudo borrar la charla." }
+        return if (problem == null) json(200, OK) else json(409, fail(problem))
     }
 
     private fun image(name: String): Response {
@@ -409,6 +467,7 @@ class SyncWebServer(
         val headers = ArrayList<Pair<String, String>>()
         headers += "Cache-Control" to "no-cache"
         headers += "ETag" to file.etag
+        if (name == "sw.js") headers += "Service-Worker-Allowed" to "/"
         // Cada vez que un navegador vinculado abre la app, su cookie vuelve a durar lo máximo.
         if (name == "index.html") cookie(req)?.let { value -> if (access.authenticate(value) != null) headers += sessionCookie(value) }
         if (req.headers["if-none-match"] == file.etag) return Response(304, type, ByteArray(0), headers)
@@ -513,7 +572,7 @@ class SyncWebServer(
         private const val JSON_TYPE = "application/json; charset=utf-8"
         private const val OK = "{\"ok\":true}"
         private const val CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
-            "font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            "font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
         private val TYPES = mapOf(
             "html" to "text/html; charset=utf-8",
             "js" to "text/javascript; charset=utf-8",
@@ -546,5 +605,15 @@ class SyncWebServer(
 
         private fun sha256(b: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+        /** Los colores de hoja que puede pedir la web; null si [id] no es uno de ellos. */
+        fun webPaper(id: String?): PaperColors? = when (id ?: "claro") {
+            "claro" -> PaperColors.LIGHT
+            "crema" -> PaperColors.LIGHT.copy(sheet = 0xFFF3E9D2.toInt())
+            "gris" -> PaperColors.LIGHT.copy(sheet = 0xFFE6EAEE.toInt())
+            "oscuro" -> PaperColors.DARK
+            "negro" -> PaperColors.BLACK
+            else -> null
+        }
     }
 }

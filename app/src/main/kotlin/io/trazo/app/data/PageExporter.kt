@@ -96,6 +96,7 @@ object PageExporter {
         scale: Float = 2f,
         results: List<InkStroke> = emptyList(),
         includeAi: Boolean = false,
+        colors: PaperColors = PaperColors.LIGHT,
     ) {
         require(scale.isFinite() && scale > 0f) { "scale must be finite and greater than zero" }
         val bounds = exportBounds(page, results, includeAi)
@@ -104,8 +105,8 @@ object PageExporter {
         try {
             // Fuera de la hoja se ve el escritorio. Los PNG compartidos conservan el fondo blanco
             // que tenían antes de incluir tinta exterior.
-            bmp.eraseColor(Color.WHITE)
-            drawPage(Canvas(bmp), page, paper, bounds, raster.scale.toFloat(), results, includeAi)
+            bmp.eraseColor(if (colors == PaperColors.LIGHT) Color.WHITE else colors.desk)
+            drawPage(Canvas(bmp), page, paper, bounds, raster.scale.toFloat(), results, includeAi, colors)
             bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         } finally {
             bmp.recycle()
