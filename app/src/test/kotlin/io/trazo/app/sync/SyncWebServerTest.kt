@@ -470,8 +470,10 @@ class SyncWebServerTest {
         assertTrue(one.text.contains("hola"))
         assertEquals(404, get("/api/history/99999999", cookie).code)
         // ID inválido: 400
+        // Una ruta con «..» ni llega a mirarse.
+        assertEquals(404, get("/api/history/../1", cookie).code)
         for (badId in listOf("abc", "12a", "12345678901234567", "../1", "-1")) {
-            assertEquals(badId, 400, get("/api/history/$badId", cookie).code)
+            if (".." !in badId) assertEquals(badId, 400, get("/api/history/$badId", cookie).code)
             assertEquals(badId, 400, post("/api/history/restore", "{\"id\":\"$badId\"}", cookie).code)
             assertEquals(badId, 400, post("/api/history/delete", "{\"id\":\"$badId\"}", cookie).code)
         }
@@ -496,8 +498,13 @@ class SyncWebServerTest {
         assertEquals(200, sw.code)
         assertEquals("text/javascript; charset=utf-8", sw.type)
         assertEquals("/", header(sw, "Service-Worker-Allowed"))
-        val csp = header(sw, "Content-Security-Policy")!!
-        assertTrue(csp.contains("worker-src 'self'"))
+        // La política va en todas las respuestas, al escribirlas en el socket.
+        val port = server.start()
+        try {
+            val raw = http(port, "GET", "/sw.js")
+            assertTrue(raw, raw.contains("worker-src 'self'"))
+            assertTrue(raw, raw.contains("Service-Worker-Allowed: /"))
+        } finally { server.stop() }
         val manifest = get("/manifest.webmanifest")
         assertEquals(200, manifest.code)
         assertEquals("application/manifest+json", manifest.type)
