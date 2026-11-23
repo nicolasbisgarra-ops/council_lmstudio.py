@@ -81,7 +81,9 @@ Escriba en español claro y cercano, sin rodeos."""
     }
 
     private val ERROR = Regex("""(?im)^\W*error\W*(?:en\s+el\s+)?rengl[oó]n\s*(\d+)[\s)*]*[:.\-–—]\s*(.+)$""")
-    private val CORRECT = Regex("""(?im)^\W*correcto\W*[:.\-–—]?\s*(.*)$""")
+    // Solo el renglón del veredicto: «CORRECTO» solo o seguido de un separador. «Correcto el planteo, pero…»
+    // o «Correctos los dos primeros pasos» son parte de la explicación, no un veredicto.
+    private val CORRECT = Regex("""(?im)^[\s*_>#-]*correcto\b[\s*_]*(?:[:.\-–—][\s*_]*(.*))?$""")
 
     /** El veredicto de una respuesta (el último que aparezca); null si la respuesta no trae ninguno. */
     fun verdict(reply: String, lineCount: Int = Int.MAX_VALUE): TutorVerdict? {

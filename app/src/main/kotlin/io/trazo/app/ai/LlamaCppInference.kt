@@ -40,6 +40,12 @@ class LlamaCppInference(
     ): String = withContext(Dispatchers.IO) {
         lock.withLock {
             check(!closing.get() && handle != 0L) { "El motor llama.cpp ya se cerró." }
+            // Se limpia al empezar el pedido, no después de cargar: un «cancelar» que llega mientras se
+            // carga el modelo (puede tardar) tiene que seguir valiendo cuando arranca la generación.
+            synchronized(nativeHandleLock) {
+                check(!closing.get() && handle != 0L) { "El motor llama.cpp ya se cerró." }
+                nativeResetCancel(handle)
+            }
             require(model.modelFile.isFile) { "No se encuentra el modelo GGUF: ${model.modelFile.name}" }
             if (imageBytes != null) {
                 require(model.projectorFile?.isFile == true) {
@@ -70,10 +76,7 @@ class LlamaCppInference(
                 loadedProjector = projectorPath
             }
             require(model.maxOutputTokens > 0) { "maxOutputTokens debe ser mayor que cero." }
-            synchronized(nativeHandleLock) {
-                check(!closing.get() && handle != 0L) { "El motor llama.cpp ya se cerró." }
-                nativeResetCancel(handle)
-            }
+            check(!closing.get() && handle != 0L) { "El motor llama.cpp ya se cerró." }
             nativeGenerate(
                 handle,
                 system,

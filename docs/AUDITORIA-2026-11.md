@@ -14,7 +14,7 @@ Después revisé a mano en el código los hallazgos más graves. Estado de cada 
 - **🟡 Plausible:** el razonamiento cierra, pero falta probarlo en la tableta o con un test.
 - **⬇️ Rebajado:** el auditor exageró la gravedad, o el problema está mitigado.
 
-No se arregló nada todavía.
+Lo que ya se arregló está en la sección [Arreglos](#arreglos) al final.
 
 ---
 
@@ -112,3 +112,29 @@ No se arregló nada todavía.
 8. El resto de los medios y bajos.
 
 Las salidas completas del auditor están en el scratchpad de la sesión (`audit/out1.txt`, `out2.txt`, `out3.txt`).
+
+---
+
+## Arreglos
+
+| Commit | Hallazgos |
+|---|---|
+| `ce82ce7` | K1, K4, A10, A7, A11, A15, K3, A12 |
+| `606954f` | K2, A20 |
+| `26eebcd` | A1, A2, A3, A6, M1 |
+| `0176204` | M2, M3 |
+| esta tanda | A4, A5, A16, A17, A19, M13, M14, M15, M16 |
+
+Detalle de esta tanda (tests en `core/.../AuditEditA4A5Test.kt` y `ai/.../AuditAiTest.kt`):
+
+- **A4**: cancelar mientras se mueve o escala la selección devuelve también las imágenes a su lugar.
+- **A5**: si la goma parte un glifo de un solo trazo, los pedazos heredan su id como grupo y siguen contando como un glifo (antes eran dos). La tinta común no recibe grupo.
+- **A16**: `upsertPattern` y `deletePattern` corren dentro de `synchronized(lock)`, como el resto de las escrituras de patrones.
+- **A17**: el receptor de OAuth ignora conexiones rotas, escapes inválidos y regresos con otro `state`; ninguno corta un inicio de sesión legítimo en curso.
+- **A19**: llama.cpp limpia el «cancelar» al empezar el pedido, no después de cargar el modelo, así que cancelar durante la carga sigue valiendo.
+- **M13**: las partes de «pensamiento» de Gemini (`thought: true`) ya no se suman a la respuesta. Lo de `imageInputTokens` ya estaba resuelto.
+- **M14**: `parseFreeText` ignora números de renglón que no entran en un `Int`; `parseJson` busca objetos JSON balanceados en orden y no se rompe con llaves en el texto alrededor.
+- **M15**: «CORRECTO» solo cuenta como veredicto si está solo en su renglón o seguido de un separador («Correcto el planteo, pero…» ya no da la hoja por buena).
+- **M16**: si falla la escritura al confirmar, la reserva se libera y se puede volver a reclamar.
+
+Siguen abiertos: A8, A9, A13, A14, A18, M4–M12, M17, M18 y los bajos. Necesitan la app Android (lienzo, IA local, web) y conviene probarlos en la tableta o en el emulador.

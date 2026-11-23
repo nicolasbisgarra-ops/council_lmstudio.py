@@ -25,10 +25,14 @@ object Eraser {
             }
         }
         if (run.size >= 2) pieces += run
+        // Un glifo de un solo trazo se agrupa por su id: si la goma lo parte, los pedazos tienen ids
+        // nuevos y contarían como glifos distintos. Heredan el id original como grupo y siguen siendo uno.
+        val group = stroke.groupId ?: stroke.id.takeIf { stroke.patternId != null }
         return pieces.mapIndexed { i, pts ->
             val t0 = pts.first().timeMs
             stroke.copy(
                 id = if (i == 0 && pieces.size == 1 && pts.size == dense.size) stroke.id else ids.next(),
+                groupId = group,
                 points = pts.map { it.copy(timeMs = it.timeMs - t0) },
                 startTime = stroke.startTime + t0,
             )

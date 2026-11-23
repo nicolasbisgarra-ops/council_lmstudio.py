@@ -201,8 +201,12 @@ class LoopbackReceiver(port: Int) : AutoCloseable {
     }
     val port: Int get() = server.localPort
 
-    /** Espera el regreso; ignora pedidos que no traen `code` ni `error` (por ejemplo, el favicon). */
-    fun await(path: String, timeoutMs: Int): Map<String, String> {
+    /**
+     * Espera el regreso; ignora pedidos que no traen `code` ni `error` (por ejemplo, el favicon), los que
+     * traen otro `state` (si se pasa [expectedState]) y las conexiones rotas o mal formadas: ninguna de
+     * esas corta el inicio de sesión, solo el regreso legítimo o el tiempo agotado.
+     */
+    fun await(path: String, timeoutMs: Int, expectedState: String? = null): Map<String, String> {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (true) {
             val left = deadline - System.currentTimeMillis()
@@ -211,23 +215,27 @@ class LoopbackReceiver(port: Int) : AutoCloseable {
             val socket = try { server.accept() } catch (e: SocketTimeoutException) {
                 throw AiException("No llegó la respuesta del inicio de sesión a tiempo.", cause = e)
             }
-            socket.use { s ->
-                s.soTimeout = 5000
-                val line = s.getInputStream().bufferedReader(Charsets.US_ASCII).readLine().orEmpty()
-                val target = line.split(' ').getOrNull(1).orEmpty()
-                val query = parseQuery(target.substringAfter('?', ""))
-                val ours = target.substringBefore('?') == path && ("code" in query || "error" in query)
-                val page = if (!ours) "" else if ("code" in query) DONE_PAGE else ERROR_PAGE
-                val status = if (ours) "200 OK" else "404 Not Found"
-                val bytes = page.toByteArray(Charsets.UTF_8)
-                s.getOutputStream().apply {
-                    write("HTTP/1.1 $status\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
-                    write(bytes)
-                    flush()
-                }
-                if (ours) return query
-            }
+            val query = try { socket.use { s -> serve(s, path, expectedState) } } catch (_: java.io.IOException) { null }
+            if (query != null) return query
         }
+    }
+
+    private fun serve(s: java.net.Socket, path: String, expectedState: String?): Map<String, String>? {
+        s.soTimeout = 5000
+        val line = s.getInputStream().bufferedReader(Charsets.US_ASCII).readLine().orEmpty()
+        val target = line.split(' ').getOrNull(1).orEmpty()
+        val query = runCatching { parseQuery(target.substringAfter('?', "")) }.getOrNull()
+        val ours = query != null && target.substringBefore('?') == path && ("code" in query || "error" in query) &&
+            (expectedState == null || query["state"] == expectedState)
+        val page = if (!ours) "" else if ("code" in query!!) DONE_PAGE else ERROR_PAGE
+        val status = if (ours) "200 OK" else "404 Not Found"
+        val bytes = page.toByteArray(Charsets.UTF_8)
+        s.getOutputStream().apply {
+            write("HTTP/1.1 $status\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
+            write(bytes)
+            flush()
+        }
+        return if (ours) query else null
     }
 
     override fun close() = server.close()
@@ -255,7 +263,7 @@ fun AiOAuth.signIn(p: AiProfile, open: (String) -> Unit, timeoutMs: Int = 5 * 60
         val pkce = Pkce.create()
         val state = Pkce.randomToken()
         open(authorizeUrl(c, redirect, pkce, state))
-        val back = receiver.await(c.redirectPath, timeoutMs)
+        val back = receiver.await(c.redirectPath, timeoutMs, expectedState = state)
         back["error"]?.let { throw AiException("Se canceló o rechazó el inicio de sesión ($it${back["error_description"]?.let { d -> ": $d" } ?: ""}).") }
         if (back["state"] != state) throw AiException("La respuesta del inicio de sesión no coincide; inténtelo de nuevo.")
         return exchange(c, back["code"]!!, redirect, pkce, p.timeoutSeconds)

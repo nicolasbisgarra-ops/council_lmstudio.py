@@ -176,8 +176,11 @@ class AiOAuthTest {
             o.signIn(p, open = { url ->
                 val redirect = LoopbackReceiver.parseQuery(url.substringAfter('?'))["redirect_uri"]!!
                 thread { runCatching { (URL("${redirect}?code=x&state=otro").openConnection() as HttpURLConnection).responseCode } }
-            }, timeoutMs = 10_000)
+            }, timeoutMs = 1_500)
             fail()
-        } catch (e: AiException) { assertTrue(e.message!!.contains("no coincide")) }
+        } catch (e: AiException) {
+            // Un regreso con otro state se ignora (no corta un inicio legítimo en curso) y nunca se acepta.
+            assertTrue(e.message!!.contains("a tiempo"))
+        }
     }
 }

@@ -247,8 +247,7 @@ class AiClient(
         }
         AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> {
             (e["error"] as? JsonObject)?.let { throw AiException("Gemini cortó la respuesta: ${it["message"].text() ?: "sin detalle"}") }
-            e["candidates"].array().firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts").array()
-                .mapNotNull { it.jsonObject["text"].text() }.joinToString("")
+            geminiText(e["candidates"].array().firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts").array())
         }
         else -> {
             (e["error"] as? JsonObject)?.let { throw AiException("El servidor cortó la respuesta: ${it["message"].text() ?: "sin detalle"}") }
@@ -503,12 +502,19 @@ class AiClient(
         }
     }
 
+    /** Texto de las partes de Gemini sin las de «pensamiento» (`thought: true`), que no son la respuesta. */
+    private fun geminiText(parts: List<kotlinx.serialization.json.JsonElement>): String =
+        parts.mapNotNull { part ->
+            val o = part as? JsonObject ?: return@mapNotNull null
+            if ((o["thought"] as? JsonPrimitive)?.content == "true") null else o["text"].text()
+        }.joinToString("")
+
     private fun replyText(provider: AiProvider, root: JsonObject): String {
         val text = when (provider) {
             AiProvider.ANTHROPIC -> root["content"].array()
                 .filter { it.jsonObject["type"].text() == "text" }.mapNotNull { it.jsonObject["text"].text() }.joinToString("")
-            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> root["candidates"].array().firstOrNull()?.jsonObject?.get("content")
-                ?.jsonObject?.get("parts").array().mapNotNull { it.jsonObject["text"].text() }.joinToString("")
+            AiProvider.GEMINI, AiProvider.GEMINI_GOOGLE -> geminiText(root["candidates"].array().firstOrNull()?.jsonObject?.get("content")
+                ?.jsonObject?.get("parts").array())
             else -> root["choices"].array().firstOrNull()?.jsonObject?.get("message")?.jsonObject?.get("content").let { c ->
                 // Algunos servidores devuelven el contenido como lista de partes.
                 if (c is JsonArray) c.mapNotNull { it.jsonObject["text"].text() }.joinToString("") else c.text().orEmpty()

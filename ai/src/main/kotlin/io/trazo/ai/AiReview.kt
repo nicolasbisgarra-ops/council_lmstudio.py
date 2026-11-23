@@ -124,10 +124,8 @@ object AiReviewParser {
 
     fun parseJson(reply: String): AiReview? {
         val text = reply.replace(Regex("```[a-zA-Z]*"), "")
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start < 0 || end <= start) return null
-        val root = runCatching { json.parseToJsonElement(text.substring(start, end + 1)) as? JsonObject }.getOrNull() ?: return null
+        val root = jsonObjects(text).firstOrNull { it.field("marcas", "marks", "errores", "errors") is JsonArray || it.field("correcto", "correct") != null }
+            ?: return null
         val rawMarks = root.field("marcas", "marks", "errores", "errors") as? JsonArray
         if (rawMarks == null && root.field("correcto", "correct") == null) return null
         val marks = rawMarks.orEmpty().mapNotNull { (it as? JsonObject)?.let(::markOf) }
@@ -141,6 +139,48 @@ object AiReviewParser {
         }
         val score = root.field("puntaje", "score", "nota").number()?.coerceIn(0.0, 10.0)
         return AiReview(correct && marks.isEmpty() && dropped == 0, score, marks, readings = readings(root))
+    }
+
+    /**
+     * Objetos JSON de primer nivel dentro de [text], en orden: cada `{` con su `}` correspondiente
+     * (respetando cadenas y escapes). Al final, el tramo de la primera `{` a la última `}`, como antes.
+     */
+    private fun jsonObjects(text: String): Sequence<JsonObject> = sequence {
+        var i = text.indexOf('{')
+        while (i >= 0) {
+            val end = matchingBrace(text, i)
+            if (end < 0) break
+            (runCatching { json.parseToJsonElement(text.substring(i, end + 1)) }.getOrNull() as? JsonObject)?.let { yield(it) }
+            i = text.indexOf('{', end + 1)
+        }
+        val start = text.indexOf('{')
+        val last = text.lastIndexOf('}')
+        if (start in 0 until last) {
+            (runCatching { json.parseToJsonElement(text.substring(start, last + 1)) }.getOrNull() as? JsonObject)?.let { yield(it) }
+        }
+    }
+
+    private fun matchingBrace(text: String, open: Int): Int {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (k in open until text.length) {
+            val c = text[k]
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inString = true
+                '{' -> depth++
+                '}' -> if (--depth == 0) return k
+            }
+        }
+        return -1
     }
 
     /** El campo «lectura»: lista de {renglon, texto} (o de textos, en orden); se ignora lo que no se entienda. */
@@ -181,11 +221,13 @@ object AiReviewParser {
     )
 
     fun parseFreeText(reply: String): AiReview {
-        val marks = lineRegex.findAll(reply).map { m ->
+        val marks = lineRegex.findAll(reply).mapNotNull { m ->
             val (num, kind, rest) = m.destructured
             val body = rest.trim().removePrefix("**").trim()
+            // Un número de renglón absurdo («renglón 99999999999») no es una marca: no debe tirar la revisión.
+            val line = num.toIntOrNull()?.takeIf { it >= 1 } ?: return@mapNotNull null
             AiMark(
-                line = num.toInt(),
+                line = line,
                 kind = MarkKind.parse(kind.ifBlank { body }),
                 short = body.substringBefore(". ").take(120),
                 detail = body,

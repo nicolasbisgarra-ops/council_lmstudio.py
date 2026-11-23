@@ -103,7 +103,7 @@ class TrazoRepository(root: File) {
         write(patternsFile, TrazoFormat.encodePatterns(list))
     }
 
-    fun upsertPattern(p: InkPattern) {
+    fun upsertPattern(p: InkPattern): Unit = synchronized(lock) {
         val list = _patterns.value.toMutableList()
         val i = list.indexOfFirst { it.id == p.id }
         val stamped = p.copy(updatedAt = System.currentTimeMillis())
@@ -112,7 +112,7 @@ class TrazoRepository(root: File) {
         writePatterns(list)
     }
 
-    fun deletePattern(id: String) {
+    fun deletePattern(id: String): Unit = synchronized(lock) {
         val list = _patterns.value.filterNot { it.id == id }
         _patterns.value = list
         writePatterns(list)

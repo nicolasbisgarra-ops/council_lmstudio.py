@@ -189,7 +189,13 @@ class DurableReviewQueue(private val storage: ReviewQueueStorage) {
         if (!successfullyCommitted) { e.lease = null; return true }
         if (e.value.revision != lease.revision) { e.lease = null; return true }
         val keep = entries.filterValues { it !== e }.values.map { it.value }
-        storage.write(keep) // if this fails, original record and lease remain retryable
+        // If this fails the original record stays on disk; the lease is released so it can be claimed again.
+        try {
+            storage.write(keep)
+        } catch (t: Throwable) {
+            e.lease = null
+            throw t
+        }
         entries.remove(lease.request.key)
         return true
     }

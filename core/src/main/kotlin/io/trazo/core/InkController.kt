@@ -561,7 +561,10 @@ class InkController(
                 if (!edit.isEmpty) { page.revert(edit, erasePositions); emit(InkEvent.PageChanged) }
             }
             Mode.MOVE_SELECTION, Mode.SCALE_SELECTION -> if (dragged) {
-                page.apply(StrokeEdit(dragOriginals, dragOriginals, StrokeEdit.Kind.TRANSFORM))
+                page.apply(StrokeEdit(
+                    dragOriginals, dragOriginals, StrokeEdit.Kind.TRANSFORM,
+                    removedImages = dragImages, addedImages = dragImages,
+                ))
                 emit(InkEvent.PageChanged)
             }
             Mode.SHAPE_HANDLE -> {

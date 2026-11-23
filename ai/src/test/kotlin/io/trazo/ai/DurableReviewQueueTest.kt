@@ -64,6 +64,9 @@ class DurableReviewQueueTest {
         try { q.acknowledge(lease, true); fail("ACK must fail if durable removal fails") }
         catch (e: IllegalStateException) { assertTrue(e.message!!.contains("ENOSPC")) }
         assertEquals(1, q.size())
+        // Auditoría M16: la reserva no queda trabada; la misma cola puede volver a reclamarla.
+        assertEquals(1, q.pendingCount())
+        assertTrue(q.claimNext() != null)
         assertEquals(1, DurableReviewQueue(store).pendingCount())
     }
 
