@@ -37,7 +37,11 @@ import kotlinx.serialization.json.putJsonArray
 data class WebAiProfile(val id: String, val name: String, val provider: String, val model: String, val ready: Boolean)
 
 /** Lo que la web muestra para elegir: los modelos, cuál se usa y la calidad de la foto que se le manda. */
-data class WebAi(val profiles: List<WebAiProfile>, val current: String?, val quality: String, val qualities: List<Pair<String, String>>)
+data class WebAi(
+    val profiles: List<WebAiProfile>, val current: String?, val quality: String, val qualities: List<Pair<String, String>>,
+    /** Cómo contesta el chat ([mode]) y los modos que se ofrecen (clave → nombre visible). */
+    val mode: String? = null, val modes: List<Pair<String, String>> = emptyList(),
+)
 
 /** Lo que la hoja abierta le ofrece a la web. Las llamadas llegan desde los hilos del servidor. */
 interface SyncWebHost {
@@ -48,6 +52,12 @@ interface SyncWebHost {
 
     /** Elige el modelo por [profileId] y/o la calidad de la foto ([quality]: low, medium o high). Devuelve null si salió, o por qué no. */
     fun chooseAi(profileId: String?, quality: String?): String? = "Los modelos no están disponibles."
+
+    /** Elige cómo contesta el chat (una de las claves de [WebAi.modes]). Devuelve null si salió, o por qué no. */
+    fun chooseMode(mode: String): String? = "Los modos no están disponibles."
+
+    /** Pone una foto (JPEG o PNG) en la hoja abierta. Devuelve null si salió, o por qué no. */
+    fun insertImage(image: ByteArray): String? = SyncWebServer.NO_SHEET
 
     /** La hoja con las marcas de la IA, como PNG; null si no hay hoja. */
     fun pagePng(paper: PaperColors = PaperColors.LIGHT): ByteArray?
@@ -231,7 +241,7 @@ class SyncWebServer(
         return if (off == n) buf else buf.copyOf(off)
     }
 
-    private fun maxBody(path: String): Long = if (path == "/api/chat") MAX_CHAT_BODY else MAX_SMALL_BODY
+    private fun maxBody(path: String): Long = if (path == "/api/chat" || path == "/api/sheet-image") MAX_CHAT_BODY else MAX_SMALL_BODY
 
     /** Qué contestar a [req], sin sockets (también para las pruebas). */
     internal fun respond(req: Request): Response {
@@ -242,6 +252,7 @@ class SyncWebServer(
             return when (path) {
                 "/api/pair" -> pair(req)
                 "/api/chat" -> authorized(req) { chat(req) }
+                "/api/sheet-image" -> authorized(req) { sheetImage(req) }
                 "/api/review" -> authorized(req) { review(req) }
                 "/api/ai" -> authorized(req) { aiChoose(req) }
                 "/api/history/restore" -> authorized(req) { historyRestore(req) }
@@ -396,6 +407,17 @@ class SyncWebServer(
         return if (problem == null) json(200, OK) else json(409, fail(problem))
     }
 
+    /** Una foto sacada en el teléfono (ya recortada en el navegador) que va a la hoja abierta. */
+    private fun sheetImage(req: Request): Response {
+        val o = body(req) ?: return json(400, fail("No se entendió el pedido."))
+        val data = (o["image"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return json(400, fail("Falta la imagen."))
+        val image = runCatching { Base64.getMimeDecoder().decode(data.substringAfter("base64,", data)) }.getOrNull()
+            ?.takeIf { it.isNotEmpty() && imageType(it) != null } ?: return json(400, fail("No se pudo leer la imagen."))
+        val h = host() ?: return json(409, fail(NO_SHEET))
+        val problem = runCatching { h.insertImage(image) }.getOrElse { "No se pudo poner la imagen en la hoja." }
+        return if (problem == null) json(200, OK) else json(409, fail(problem))
+    }
+
     private fun review(req: Request): Response {
         val fresh = (body(req)?.get("fresh") as? JsonPrimitive)?.booleanOrNull ?: false
         val h = host() ?: return json(409, fail(NO_SHEET))
@@ -418,6 +440,8 @@ class SyncWebServer(
                 put("ok", true)
                 put("current", ai.current)
                 put("quality", ai.quality)
+                put("mode", ai.mode)
+                putJsonArray("modes") { ai.modes.forEach { (key, label) -> addJsonObject { put("key", key); put("label", label) } } }
                 putJsonArray("profiles") {
                     ai.profiles.forEach { p ->
                         addJsonObject { put("id", p.id); put("name", p.name); put("provider", p.provider); put("model", p.model); put("ready", p.ready) }
@@ -439,8 +463,15 @@ class SyncWebServer(
         }
         val profile = try { field("profile", 80) } catch (_: IllegalArgumentException) { return json(400, fail("El modelo tiene que ser un texto.")) }
         val quality = try { field("quality", 20) } catch (_: IllegalArgumentException) { return json(400, fail("La calidad tiene que ser un texto.")) }
-        if (profile == null && quality == null) return json(400, fail("Elegí un modelo o una calidad."))
+        val mode = try { field("mode", 40) } catch (_: IllegalArgumentException) { return json(400, fail("El modo tiene que ser un texto.")) }
+        if (profile == null && quality == null && mode == null) return json(400, fail("Elegí un modelo o una calidad."))
         val h = host() ?: return json(409, fail(NO_SHEET))
+        if (mode != null) {
+            if (h.ai()?.modes?.any { it.first == mode } != true) return json(400, fail("Ese modo no existe."))
+            val problem = runCatching { h.chooseMode(mode) }.getOrElse { "No se pudo cambiar el modo." }
+            if (problem != null) return json(409, fail(problem))
+            if (profile == null && quality == null) return json(200, OK)
+        }
         // La calidad tiene que ser una de las que se ofrecen: un valor inventado es un pedido mal hecho (400).
         if (quality != null && h.ai()?.qualities?.any { it.first == quality } == false) return json(400, fail("Esa calidad no existe."))
         val problem = runCatching { h.chooseAi(profile, quality) }.getOrElse { "No se pudo cambiar el modelo." }

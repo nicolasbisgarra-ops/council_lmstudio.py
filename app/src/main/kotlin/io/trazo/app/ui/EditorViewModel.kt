@@ -477,6 +477,8 @@ class EditorViewModel(
 
     var imageEdit by mutableStateOf<ImageEditSession?>(null)
         private set
+    /** La hoja se ve oscura ahora (lo avisa la pantalla): decide el ajuste de las fotos que llegan de la web. */
+    @Volatile var darkPaper = false
     var imageBusy by mutableStateOf(false)
         private set
     /** Aviso de un fallo al leer o guardar una imagen (la pantalla lo muestra y lo limpia). */
@@ -1412,7 +1414,29 @@ class EditorViewModel(
                 current = s.current?.id,
                 quality = (s.current?.imageQuality ?: ImageQuality.MEDIUM).name.lowercase(),
                 qualities = ImageQuality.values().map { it.name.lowercase() to it.label },
+                mode = onMain { chatMode.name },
+                modes = io.trazo.ai.ChatMode.entries.map { it.name to it.label },
             )
+        }
+
+        override fun chooseMode(mode: String): String? {
+            val m = io.trazo.ai.ChatMode.entries.firstOrNull { it.name == mode } ?: return "Ese modo no existe."
+            return onMain {
+                when {
+                    !webAllowed() -> EXAM_WEB
+                    chatBusy -> "El tutor todavía está contestando."
+                    else -> { setChatMode(m); null }
+                }
+            }
+        }
+
+        override fun insertImage(image: ByteArray): String? = onMain {
+            when {
+                !webAllowed() -> EXAM_WEB
+                currentPageId() == null -> SyncWebServer.NO_SHEET
+                imageBusy -> "Todavía se está poniendo otra imagen."
+                else -> { insertImageDirect({ image.inputStream() }, darkPaper); null }
+            }
         }
 
         override fun chooseAi(profileId: String?, quality: String?): String? {
@@ -1440,7 +1464,7 @@ class EditorViewModel(
                 if (p == null || n == null || !webAllowed()) null else Triple(p, n.paper, mathResults(p))
             } ?: return null
             val out = ByteArrayOutputStream()
-            PageExporter.writePng(page, pagePaper, out, scale = 1.5f, results = results, includeAi = true, colors = paper)
+            PageExporter.writePng(page, pagePaper, out, scale = 1.5f, results = results, includeAi = AI_MARKS_ON_SHEET, colors = paper)
             return out.toByteArray()
         }
 
@@ -1603,6 +1627,15 @@ class EditorViewModel(
         sendChat(null)
     }
 
+    /** Cómo contesta el chat (se guarda en los ajustes). */
+    var chatMode by mutableStateOf(lastSettings.chatMode)
+        private set
+
+    fun setChatMode(mode: io.trazo.ai.ChatMode) {
+        chatMode = mode
+        settings.update { it.copy(chatMode = mode) }
+    }
+
     /** Marca en la hoja el renglón que señaló el tutor. */
     fun showChatLine(message: AiChatMessage) {
         val present = controller.page.allInk.mapTo(HashSet()) { it.id }
@@ -1651,6 +1684,7 @@ class EditorViewModel(
         setChat(pageId, chatMessages + listOfNotNull(q?.let { AiChatMessage(TutorRole.STUDENT, it, now, image = attachment) }))
         chatAttachment = null
         val paper = n.paper
+        val mode = chatMode
         val id = ++chatId
         chatBusy = true
         chatStreaming = ""
@@ -1661,7 +1695,7 @@ class EditorViewModel(
                     else chatImage(page, paper, attachment, profile.imageQuality.longEdgePx)
                     val key = ai.credential(profile, AiOAuth())
                     val buffer = StringBuilder()
-                    tutor.ask(profile, key, lines.map { it.text }, png, history, q) { chunk ->
+                    tutor.ask(profile, key, lines.map { it.text }, png, history, q, mode = mode) { chunk ->
                         buffer.append(chunk)
                         val shown = buffer.toString()
                         viewModelScope.launch(Dispatchers.Main.immediate) { if (id == chatId && chatBusy) chatStreaming = shown }
@@ -1675,7 +1709,7 @@ class EditorViewModel(
             if (e is kotlinx.coroutines.CancellationException) return@launch
             val allowed = app.trazo.study.acceptAid(permit) {
                 result.onSuccess { reply ->
-                    val v = AiTutorPrompt.verdict(reply, lines.size)
+                    val v = if (mode.verdicts) AiTutorPrompt.verdict(reply, lines.size) else null
                     val ids = v?.line?.let { l -> lines.getOrNull(l - 1)?.strokeIds }.orEmpty()
                     val text = if (v != null) AiTutorPrompt.withoutVerdict(reply) else reply.trim()
                     setChat(pageId, chatMessages + AiChatMessage(TutorRole.TUTOR, text, System.currentTimeMillis(), v?.line, v?.correct, v?.summary, ids))

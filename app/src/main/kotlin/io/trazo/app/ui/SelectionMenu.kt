@@ -106,7 +106,7 @@ fun SelectionMenu(vm: EditorViewModel, onCustomColor: () -> Unit) {
             if (vm.selectedImage != null) {
                 MenuAction(TrazoIcons.Crop, "Recortar", ColorColor) { vm.editSelectedImage() }
             }
-            MenuAction(AiStarsIcon, "Revisar", AiColor) { vm.reviewWithAi(selectionOnly = true) }
+            if (AI_MARKS_ON_SHEET) MenuAction(AiStarsIcon, "Revisar", AiColor) { vm.reviewWithAi(selectionOnly = true) }
             MenuAction(Icons.Filled.Delete, "Borrar", DeleteColor) { vm.controller.deleteSelection() }
         }
     }

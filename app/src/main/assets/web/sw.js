@@ -1,7 +1,7 @@
 // Trazo Side Chat: el service worker guarda la cáscara para que la app instalada abra
 // aunque la tablet esté apagada y muestre «Abrí Trazo en la tablet», en vez del error del navegador.
-var SHELL = 'trazo-shell-v1';
-var FILES = ['/', '/app.js', '/app.css', '/icon-192.png', '/vendor/katex/katex.min.js', '/vendor/katex/katex.min.css'];
+var SHELL = 'trazo-shell-v2';
+var FILES = ['/', '/app.js', '/camera.js', '/app.css', '/icon-192.png', '/vendor/katex/katex.min.js', '/vendor/katex/katex.min.css'];
 
 self.addEventListener('install', function (e) {
   self.skipWaiting();
@@ -11,7 +11,10 @@ self.addEventListener('install', function (e) {
 });
 
 self.addEventListener('activate', function (e) {
-  e.waitUntil(self.clients.claim());
+  // Borra las cáscaras de versiones anteriores.
+  e.waitUntil(caches.keys().then(function (keys) {
+    return Promise.all(keys.filter(function (k) { return k.indexOf('trazo-shell-') === 0 && k !== SHELL; }).map(function (k) { return caches.delete(k); }));
+  }).then(function () { return self.clients.claim(); }));
 });
 
 self.addEventListener('fetch', function (e) {

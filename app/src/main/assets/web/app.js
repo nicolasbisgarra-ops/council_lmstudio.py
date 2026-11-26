@@ -739,6 +739,65 @@
     });
   }
 
+  // ---------------------------------------------------------------- cámara y editor (camera.js)
+
+  /** Pone una foto ya editada en la hoja abierta en la tablet. */
+  function photoToSheet(dataUrl) {
+    return request('POST', '/api/sheet-image', { image: dataUrl }, 60000).then(function (r) {
+      if (r.status === 401) { modelUnpaired(); return false; }
+      if (r.status !== 200) { toast((r.json && r.json.error) || 'No se pudo poner la foto en la hoja.'); return false; }
+      toast('Listo: la foto quedó en la hoja de la tablet.');
+      S.v = null;
+      tick();
+      return true;
+    }).catch(function () { toast('No se pudo hablar con Trazo. Probá de nuevo.'); return false; });
+  }
+
+  /** Abre el editor (encuadrar, girar, limpiar) y después la manda al chat o a la hoja. */
+  function editPhoto(src) {
+    if (!src) return;
+    if (!window.TrazoCamera) { if (src instanceof Blob) pickPhoto(src); return; }
+    if (src instanceof Blob && src.type && src.type.indexOf('image/') !== 0) { toast('Ese archivo no es una imagen.'); return; }
+    var toSheet = { label: 'Poner en la hoja', primary: S.photoTarget === 'sheet', run: photoToSheet };
+    var toChat = { label: 'Mandar al chat', primary: S.photoTarget !== 'sheet', run: function (dataUrl) {
+      setPhoto(dataUrl);
+      setTab('chat');
+      $('text').focus();
+      return true;
+    } };
+    window.TrazoCamera.edit(src, S.photoTarget === 'sheet' ? [toChat, toSheet] : [toSheet, toChat], toast);
+  }
+
+  /** De dónde sale la foto: la cámara del teléfono, la cámara dentro de la página o la galería. */
+  function photoMenu(target) {
+    S.photoTarget = target;
+    var box = document.createElement('div');
+    box.className = 'choices cam-menu';
+    function choice(label, note, onPick, enabled) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'choice';
+      b.disabled = enabled === false;
+      var t = document.createElement('b');
+      t.textContent = label;
+      b.appendChild(t);
+      if (note) { var n = document.createElement('small'); n.textContent = note; b.appendChild(n); }
+      b.addEventListener('click', function () { $('dialog').hidden = true; onPick(); });
+      box.appendChild(b);
+    }
+    var cam = window.TrazoCamera;
+    choice('Cámara del teléfono', 'Abre la app de cámara de siempre.', function () { $('shot').value = ''; $('shot').click(); });
+    var problem = cam ? cam.liveProblem() : 'No se pudo cargar la cámara.';
+    choice('Cámara en la página', problem ? 'No disponible en esta conexión (hace falta https).' : 'Saca la foto sin salir de acá.', function () {
+      cam.live(function (canvas) { editPhoto(canvas); }, toast);
+    }, !problem);
+    choice('Elegir de la galería', null, function () { $('file').value = ''; $('file').click(); });
+    var wrap = document.createElement('div');
+    wrap.appendChild(box);
+    if (problem && cam) wrap.appendChild(paragraph(problem));
+    dialog(target === 'sheet' ? 'Foto a la hoja' : 'Foto para el chat', wrap, 'Cancelar');
+  }
+
   // ---------------------------------------------------------------- vincular
 
   function pairError(text) { $('pair-error').textContent = text || ''; }
@@ -845,6 +904,14 @@
       quality.appendChild(choiceButton(q.label, data.quality === q.key, !!data.current, function () { pickModel({ quality: q.key }, 'q:' + q.key); }, 'q:' + q.key));
     });
     body.appendChild(part('Calidad de la foto', quality, 'Una foto más grande lee mejor la letra, pero tarda más y gasta más.'));
+    if (data.modes && data.modes.length) {
+      var modes = document.createElement('div');
+      modes.className = 'choices';
+      data.modes.forEach(function (m) {
+        modes.appendChild(choiceButton(m.label, data.mode === m.key, true, function () { pickModel({ mode: m.key }, 'm:' + m.key); }, 'm:' + m.key));
+      });
+      body.insertBefore(part('Cómo contesta', modes, 'Vale para la próxima revisión («Nueva charla») y las preguntas que sigan.'), body.firstChild);
+    }
     $('dialog-title').textContent = 'Modelo de IA';
     var box = $('dialog-body');
     box.textContent = '';
@@ -995,8 +1062,11 @@
       var items = (e.clipboardData && e.clipboardData.files) || [];
       if (items.length && items[0].type.indexOf('image/') === 0) { e.preventDefault(); pickPhoto(items[0]); }
     });
-    $('attach').addEventListener('click', function () { $('file').click(); });
-    $('file').addEventListener('change', function () { pickPhoto($('file').files[0]); });
+    $('attach').addEventListener('click', function () { S.photoTarget = 'chat'; $('file').value = ''; $('file').click(); });
+    $('file').addEventListener('change', function () { editPhoto($('file').files[0]); });
+    $('shot').addEventListener('change', function () { editPhoto($('shot').files[0]); });
+    $('camera').addEventListener('click', function () { photoMenu('chat'); });
+    $('photo-sheet').addEventListener('click', function () { photoMenu('sheet'); });
     $('chip-x').addEventListener('click', function () { setPhoto(null); });
     var composer = $('composer');
     composer.addEventListener('dragover', function (e) { e.preventDefault(); composer.classList.add('drop'); });

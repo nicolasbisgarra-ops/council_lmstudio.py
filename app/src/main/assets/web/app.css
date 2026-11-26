@@ -471,3 +471,37 @@ button:disabled { cursor: default; }
 
 /* En el teléfono el botón de la barra le saca lugar al título: instalar queda en el menú. */
 @media (max-width: 599px) { .bar-install-btn { display: none; } }
+
+/* ---------------------------------------------------------------- cámara y editor de fotos (camera.js) */
+body.cam-open { overflow: hidden; }
+.cam-menu { display: grid; gap: 8px; }
+.cam-menu .choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 14px; min-height: 52px; }
+.cam-menu .choice small { color: var(--muted); font-size: .82em; font-weight: 400; }
+.cam-editor, .cam-live {
+  position: fixed; inset: 0; z-index: 70; background: #0d0f0e; color: #f2f4f1;
+  display: flex; flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.cam-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.cam-titles { flex: 1; min-width: 0; }
+.cam-title { font-weight: 700; font-size: 1.05em; }
+.cam-hint { font-size: .85em; opacity: .75; }
+.cam-stage { flex: 1; min-height: 0; position: relative; }
+.cam-canvas { position: absolute; inset: 0; touch-action: none; display: block; }
+.cam-tools, .cam-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 8px 14px; }
+.cam-actions { padding-bottom: 14px; }
+.cam-editor .pill, .cam-live .pill { color: #f2f4f1; border-color: rgba(255, 255, 255, .35); background: transparent; }
+.cam-editor .pill.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.cam-editor .choice { color: #f2f4f1; border-color: rgba(255, 255, 255, .35); background: transparent; }
+.cam-editor .choice[aria-pressed="true"] { background: #f2f4f1; color: #0d0f0e; }
+.cam-editor.busy .cam-stage::after {
+  content: "Procesando…"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, .7); padding: 10px 16px; border-radius: var(--r-m);
+}
+.cam-video { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
+.cam-live-bar { display: flex; align-items: center; justify-content: space-around; gap: 12px; padding: 14px; }
+.cam-shutter {
+  width: 72px; height: 72px; border-radius: 50%; border: 5px solid #fff; background: rgba(255, 255, 255, .25);
+  cursor: pointer; flex: none;
+}
+.cam-shutter:active { background: rgba(255, 255, 255, .7); }

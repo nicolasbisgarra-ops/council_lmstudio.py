@@ -36,8 +36,11 @@ class SyncWebServerTest {
         var models: WebAi? = WebAi(
             listOf(WebAiProfile("a", "Claude", "Claude (Anthropic)", "m1", true), WebAiProfile("b", "Local", "LM Studio", "", false)),
             "a", "medium", listOf("low" to "Baja", "medium" to "Media", "high" to "Alta"),
+            mode = "CORRECT", modes = listOf("CORRECT" to "Corregir", "HINTS" to "Solo pistas"),
         )
         var picked: Pair<String?, String?>? = null
+        var mode: String? = null
+        var inserted: ByteArray? = null
         var historyList: List<WebHistoryItem>? = listOf(
             WebHistoryItem("1731273240000", 1731273240000L, 6, "Tu idea de descomponer…")
         )
@@ -52,6 +55,8 @@ class SyncWebServerTest {
 
         override fun ai(): WebAi? = models
         override fun chooseAi(profileId: String?, quality: String?): String? { if (problem == null) picked = profileId to quality; return problem }
+        override fun chooseMode(mode: String): String? { if (problem == null) this.mode = mode; return problem }
+        override fun insertImage(image: ByteArray): String? { if (problem == null) inserted = image; return problem }
         override fun review(): SharedReview = if (broken) error("ocupado") else review
         override fun pagePng(paper: PaperColors): ByteArray? { renders++; lastPaper = paper; return png }
         override fun chatImage(name: String): ByteArray? = if (name == "foto.jpg" || name == "vieja.jpg") byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1) else null
@@ -248,6 +253,28 @@ class SyncWebServerTest {
         val old = get("/api/image/vieja.jpg", cookie)
         assertEquals(200, old.code)
         for (bad in listOf("otra.jpg", "", ".foto.jpg", "a/b.jpg", "a b.jpg", "x".repeat(200))) assertEquals(bad, 404, get("/api/image/$bad", cookie).code)
+    }
+
+    @Test fun putsPhotosOnTheSheetAndChoosesTheChatMode() {
+        assertEquals(401, post("/api/sheet-image", "{}").code)
+        val cookie = link()
+        val h = host!!
+        val photo = Base64.getEncoder().encodeToString(jpeg)
+        assertEquals(200, post("/api/sheet-image", "{\"image\":\"data:image/jpeg;base64,$photo\"}", cookie).code)
+        assertTrue(h.inserted!!.contentEquals(jpeg))
+        for (bad in listOf("{}", "{\"image\":\"bm8=\"}", "{\"image\":3}", "x")) assertEquals(bad, 400, post("/api/sheet-image", bad, cookie).code)
+        h.problem = "Abrí una hoja."
+        assertEquals(409, post("/api/sheet-image", "{\"image\":\"$photo\"}", cookie).code)
+        h.problem = null
+
+        val state = get("/api/ai", cookie)
+        assertTrue(state.text, state.text.contains("\"mode\":\"CORRECT\""))
+        assertTrue(state.text.contains("\"label\":\"Solo pistas\""))
+        assertEquals(200, post("/api/ai", "{\"mode\":\"HINTS\"}", cookie).code)
+        assertEquals("HINTS", h.mode)
+        assertNull(h.picked)
+        assertEquals(400, post("/api/ai", "{\"mode\":\"NADA\"}", cookie).code)
+        assertEquals(400, post("/api/ai", "{\"mode\":1}", cookie).code)
     }
 
     @Test fun sendsMessagesAndPhotos() {

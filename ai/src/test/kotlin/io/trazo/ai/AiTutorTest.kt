@@ -64,4 +64,26 @@ class AiTutorTest {
         assertFalse(t.contains("\nm0\n"))
         assertTrue(t.contains("m39"))
     }
+
+    @Test fun `cada modo cambia solo la primera respuesta`() {
+        assertEquals(AiTutorPrompt.SYSTEM, AiTutorPrompt.system(ChatMode.CORRECT))
+        for (m in ChatMode.entries) {
+            val sys = AiTutorPrompt.system(m)
+            assertTrue(sys.startsWith("Usted es un tutor"))
+            assertTrue(sys.contains("Notación: LaTeX"))
+        }
+        assertTrue(AiTutorPrompt.system(ChatMode.SOLVE_THEN_CORRECT).contains("## Corrección"))
+        assertTrue(AiTutorPrompt.system(ChatMode.HINTS).contains("NUNCA dé la solución"))
+        assertFalse(AiTutorPrompt.system(ChatMode.SOLVE).contains("MISMO camino"))
+        assertTrue(AiTutorPrompt.userText(listOf("x"), emptyList(), null, ChatMode.HINTS).contains("pistas"))
+        assertEquals(ChatMode.CORRECT, ChatMode.of("nada"))
+        assertEquals(ChatMode.SOLVE, ChatMode.of("SOLVE"))
+        assertFalse(ChatMode.HINTS.verdicts)
+    }
+
+    @Test fun `el modo viaja en el pedido`() {
+        val f = Fake("Pista")
+        AiTutor(AiClient(f)).ask(profile, "k", listOf("a"), null, emptyList(), null, mode = ChatMode.HINTS)
+        assertTrue(f.sent.single().body!!.contains("NUNCA d"))
+    }
 }

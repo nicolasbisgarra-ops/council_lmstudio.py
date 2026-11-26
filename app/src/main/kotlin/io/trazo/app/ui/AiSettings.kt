@@ -678,7 +678,8 @@ private fun AiHint(text: String) {
 internal fun AiQuickMenu(
     onDismiss: () -> Unit,
     onConfigure: () -> Unit,
-    onReview: () -> Unit,
+    /** null = sin «Revisar página» (solo queda el chat). */
+    onReview: (() -> Unit)?,
     reviewing: Boolean = false,
     pending: Int = 0,
     onChat: (() -> Unit)? = null,
@@ -700,17 +701,19 @@ internal fun AiQuickMenu(
                         (c.problem ?: "Falta iniciar sesión en «${c.name}».".takeIf { c.provider.signIn && store.session(c.id) == null })?.let { AiHint(it) }
                     }
                 }
-                Button(enabled = ai.current != null && !reviewing, onClick = onReview, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (reviewing) "Revisando…" else "Revisar página")
+                if (onReview != null) {
+                    Button(enabled = ai.current != null && !reviewing, onClick = onReview, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (reviewing) "Revisando…" else "Revisar página")
+                    }
                 }
                 if (onChat != null) {
-                    androidx.compose.material3.OutlinedButton(enabled = ai.current != null, onClick = onChat, modifier = Modifier.fillMaxWidth()) {
-                        Text("Chat de revisión")
+                    Button(enabled = ai.current != null, onClick = onChat, modifier = Modifier.fillMaxWidth()) {
+                        Text("Abrir el chat")
                     }
-                    AiHint("El chat rehace tu resolución paso a paso, te dice dónde está el primer error y te deja preguntar.")
+                    AiHint("En el chat elegís cómo contesta: corregir tu resolución, resolver y después corregir, solo resolver o solo dar pistas.")
                 }
-                AiHint("Para revisar solo una parte, elegila con el lazo y tocá «Revisar». Tocá una marca para verla, discutirla o quitarla.")
-                if (pending > 0) AiHint(if (pending == 1) "1 revisión pendiente. Abrí esa página y tocá «Revisar» para enviarla." else "$pending revisiones pendientes. Se envían solo cuando revisás cada página manualmente.")
+                if (onReview != null) AiHint("Para revisar solo una parte, elegila con el lazo y tocá «Revisar». Tocá una marca para verla, discutirla o quitarla.")
+                if (onReview != null && pending > 0) AiHint(if (pending == 1) "1 revisión pendiente. Abrí esa página y tocá «Revisar» para enviarla." else "$pending revisiones pendientes. Se envían solo cuando revisás cada página manualmente.")
             }
         },
         confirmButton = { TextButton(onClick = onConfigure) { Text("Configurar") } },

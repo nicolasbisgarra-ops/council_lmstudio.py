@@ -57,6 +57,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -160,7 +161,7 @@ private fun AiChatContent(vm: EditorViewModel, onFontSp: (Float) -> Unit, modifi
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(AiStarsIcon, null, tint = Color.Unspecified, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Chat de revisión", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Chat", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 IconButton(onClick = { onFontSp((chatSp - 2f).coerceIn(CHAT_SP_MIN, CHAT_SP_MAX)) }, enabled = chatSp > CHAT_SP_MIN, modifier = Modifier.size(36.dp)) {
                     Text("A−", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
@@ -175,6 +176,15 @@ private fun AiChatContent(vm: EditorViewModel, onFontSp: (Float) -> Unit, modifi
                 IconButton(onClick = vm::restartChat, enabled = !busy) { Icon(Icons.Filled.Refresh, contentDescription = "Revisar de nuevo") }
                 IconButton(onClick = vm::closeChat) { Icon(Icons.Filled.Close, contentDescription = "Plegar el chat") }
             }
+            // Cómo contesta el chat: vale para la próxima revisión («Revisar de nuevo») y las preguntas siguientes.
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (m in io.trazo.ai.ChatMode.entries) {
+                    FilterChip(
+                        selected = vm.chatMode == m, onClick = { vm.setChatMode(m) },
+                        label = { Text(m.label) }, enabled = !busy,
+                    )
+                }
+            }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth()) else HorizontalDivider()
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(), state = list,
@@ -183,7 +193,7 @@ private fun AiChatContent(vm: EditorViewModel, onFontSp: (Float) -> Unit, modifi
                 if (messages.isEmpty() && streaming == null) {
                     item {
                         Text(
-                            "Tocá «Revisar de nuevo» para que el tutor rehaga tu resolución y te diga dónde está el primer error.",
+                            "Tocá «Revisar de nuevo» para empezar. ${vm.chatMode.hint}",
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

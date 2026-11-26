@@ -134,6 +134,7 @@ fun EditorScreen(
     val accent = MaterialTheme.colorScheme.primary.toArgb()
 
     LaunchedEffect(settings, density) { vm.applySettings(settings, density) }
+    LaunchedEffect(paper.dark) { vm.darkPaper = paper.dark }
 
     fun export(uri: android.net.Uri?, pdf: Boolean) {
         if (uri == null) return
@@ -450,10 +451,14 @@ fun EditorScreen(
                         vm.mathExplanation?.let { e ->
                             MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null }, onWrite = { vm.writeExplanation(e) })
                         }
-                        AiOverlay(vm, Modifier.align(Alignment.TopEnd))
-                        vm.aiNote?.takeIf { vm.aiVisible }?.let { note -> AiNoteBubble(vm, note) }
+                        // De la IA queda solo el chat: la revisión con marcas sobre la hoja y la burbuja de
+                        // «¿quisiste escribir…?» están apagadas (AI_MARKS_ON_SHEET / AMBIGUITY_BUBBLE).
+                        if (AI_MARKS_ON_SHEET) {
+                            AiOverlay(vm, Modifier.align(Alignment.TopEnd))
+                            vm.aiNote?.takeIf { vm.aiVisible }?.let { note -> AiNoteBubble(vm, note) }
+                        }
                         // Se muestra al levantar el lápiz, encima de donde quedó la punta.
-                        vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
+                        if (AMBIGUITY_BUBBLE) vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
                             LaunchedEffect(amb) { vm.ambiguousShown() }
                             AmbiguityBubble(amb, vm.penOf(amb), vm.viewport, onChoose = vm::chooseAmbiguous)
                         }
@@ -641,7 +646,7 @@ fun EditorScreen(
         AiQuickMenu(
             onDismiss = { aiMenu = false },
             onConfigure = { aiMenu = false; onAiSettings() },
-            onReview = { aiMenu = false; vm.reviewWithAi() },
+            onReview = if (AI_MARKS_ON_SHEET) ({ aiMenu = false; vm.reviewWithAi() }) else null,
             reviewing = vm.aiProgress?.running == true,
             pending = vm.aiPending,
             onChat = { aiMenu = false; vm.openChat() },
@@ -805,3 +810,9 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
     }
     return null
 }
+
+/** Revisión de la IA con marcas sobre la hoja (apagada: de la IA queda solo el chat). */
+internal const val AI_MARKS_ON_SHEET = false
+
+/** Burbuja para elegir entre dos lecturas de un trazo ambiguo (apagada). */
+internal const val AMBIGUITY_BUBBLE = false

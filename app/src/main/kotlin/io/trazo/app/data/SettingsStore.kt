@@ -103,6 +103,8 @@ data class TrazoSettings(
     val chatWidthDp: Float = 0f,
     /** Tamaño de la letra del chat en sp (12..24). */
     val chatFontSp: Float = 16f,
+    /** Cómo contesta el chat: corregir, resolver y corregir, solo resolver o solo pistas. */
+    val chatMode: io.trazo.ai.ChatMode = io.trazo.ai.ChatMode.CORRECT,
     /** Color fijo por símbolo/operador (id de patrón → ARGB); sin entrada = el color de la pluma. */
     val symbolColors: Map<String, Int> = SymbolColors.defaults,
 )
@@ -166,6 +168,7 @@ class SettingsStore(context: Context) {
         imagePresetDark = prefs.enum("imagePresetDark", ImagePreset.DARK),
         chatWidthDp = prefs.getFloat("chatWidthDp", 0f).coerceAtLeast(0f),
         chatFontSp = prefs.getFloat("chatFontSp", 16f).coerceIn(12f, 24f),
+        chatMode = io.trazo.ai.ChatMode.of(runCatching { prefs.getString("chatMode", null) }.getOrNull()),
         symbolColors = SymbolColors.read(runCatching { prefs.getString("symbolColors", null) }.getOrNull()),
     )
 
@@ -218,6 +221,7 @@ class SettingsStore(context: Context) {
             .putString("imagePresetDark", s.imagePresetDark.name)
             .putFloat("chatWidthDp", s.chatWidthDp)
             .putFloat("chatFontSp", s.chatFontSp.coerceIn(12f, 24f))
+            .putString("chatMode", s.chatMode.name)
             .putString("symbolColors", SymbolColors.serialize(s.symbolColors))
             .apply()
         _settings.value = s
