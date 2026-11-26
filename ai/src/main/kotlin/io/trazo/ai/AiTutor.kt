@@ -49,9 +49,6 @@ class AiTutor(private val client: AiClient = AiClient()) {
 }
 
 object AiTutorPrompt {
-    /** La instrucción del modo de siempre (corregir). */
-    const val SYSTEM: String = HEAD + CORRECT_PART + TAIL
-
     /** La instrucción para cada modo: cambia solo lo que se pide en la primera respuesta. */
     fun system(mode: ChatMode): String = when (mode) {
         ChatMode.CORRECT -> SYSTEM
@@ -100,6 +97,9 @@ x^2 - 5x + 6 &= 0 \\[8pt]
 $$
 Use un bloque $$\begin{aligned} … \end{aligned}$$ por paso, con & delante del = (o del ⇒) para alinear y \\[8pt] entre renglones; si un renglón sigue la cuenta anterior, empiécelo con &=. Encierre el resultado final de cada ejercicio en \boxed{…}. Puede usar listas con «* » para enumerar observaciones. No dibuje tablas ni imágenes en la respuesta.
 Escriba en español claro y cercano, sin rodeos."""
+
+    /** La instrucción del modo de siempre (corregir). Va después de sus partes: una const no puede usar las de abajo. */
+    const val SYSTEM: String = HEAD + CORRECT_PART + TAIL
 
     /** Hasta cuántos turnos previos y cuánto de cada uno viajan en la transcripción. */
     const val MAX_TURNS = 16

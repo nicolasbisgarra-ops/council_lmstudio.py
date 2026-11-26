@@ -1425,7 +1425,7 @@ class EditorViewModel(
                 when {
                     !webAllowed() -> EXAM_WEB
                     chatBusy -> "El tutor todavía está contestando."
-                    else -> { setChatMode(m); null }
+                    else -> { chooseChatMode(m); null }
                 }
             }
         }
@@ -1631,7 +1631,7 @@ class EditorViewModel(
     var chatMode by mutableStateOf(lastSettings.chatMode)
         private set
 
-    fun setChatMode(mode: io.trazo.ai.ChatMode) {
+    fun chooseChatMode(mode: io.trazo.ai.ChatMode) {
         chatMode = mode
         settings.update { it.copy(chatMode = mode) }
     }

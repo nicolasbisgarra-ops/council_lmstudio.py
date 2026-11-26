@@ -180,7 +180,7 @@ private fun AiChatContent(vm: EditorViewModel, onFontSp: (Float) -> Unit, modifi
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (m in io.trazo.ai.ChatMode.entries) {
                     FilterChip(
-                        selected = vm.chatMode == m, onClick = { vm.setChatMode(m) },
+                        selected = vm.chatMode == m, onClick = { vm.chooseChatMode(m) },
                         label = { Text(m.label) }, enabled = !busy,
                     )
                 }
