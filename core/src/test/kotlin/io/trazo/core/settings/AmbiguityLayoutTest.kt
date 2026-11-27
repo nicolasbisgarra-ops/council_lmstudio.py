@@ -1,6 +1,8 @@
 package io.trazo.core.settings
 
 import io.trazo.core.InkPattern
+import io.trazo.core.InkPoint
+import io.trazo.core.InkStroke
 import io.trazo.core.Match
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -9,8 +11,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AmbiguityLayoutTest {
+    private val ink = listOf(InkStroke("s", listOf(InkPoint(0f, 0f), InkPoint(10f, 0f))))
+
     private fun m(id: String, score: Float = 0.8f) =
-        Match(InkPattern(id = id, name = id, gestureExamples = emptyList(), outputInk = emptyList()), score)
+        Match(InkPattern(id = id, name = id, gestureExamples = listOf(ink), outputInk = ink), score)
 
     private fun ids(list: List<Match>) = list.map { it.pattern.id }
 
