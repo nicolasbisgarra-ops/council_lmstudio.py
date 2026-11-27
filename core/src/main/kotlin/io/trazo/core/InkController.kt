@@ -75,6 +75,9 @@ class InkController(
     /** Color fijo por patrón (id → ARGB) para la salida de los símbolos; sin entrada = color de la pluma. */
     var symbolColors: Map<String, Int> = emptyMap()
 
+    /** Color fijo con que se escribe el patrón al reconocerse ([SymbolColors.colorFor]); null = el de la pluma. */
+    fun symbolColorOf(patternId: String): Int? = io.trazo.core.settings.SymbolColors.colorFor(symbolColors, patternId)
+
     /** Cuentas en la hoja: el resultado aparece solo después de un «=» final de renglón ([MathNotes]). */
     var mathEnabled: Boolean = true
         set(value) { field = value; mathKey = null }
@@ -268,11 +271,11 @@ class InkController(
         if (pattern.id == DefaultPatterns.ROOT) {
             val dy = anchor.centerY - gesture.bounds().centerY
             RootFit.fit(pattern, gesture, ids, start, style, dy)?.let { out ->
-                val c = symbolColors[pattern.id] ?: return out
+                val c = symbolColorOf(pattern.id) ?: return out
                 return out.map { it.copy(color = c) }
             }
         }
-        return InkReplacement.place(pattern, anchor, ids, start, style = style, presetColor = symbolColors[pattern.id])
+        return InkReplacement.place(pattern, anchor, ids, start, style = style, presetColor = symbolColorOf(pattern.id))
     }
 
     /** Trazo en curso (tinta húmeda) para dibujar sin esperar al reconocimiento. */
@@ -675,7 +678,7 @@ class InkController(
         val h = (if (src.height > 0.5f) height else height * 0.1f) / pattern.outputScale.coerceAtLeast(0.01f)
         val w = if (src.height > 0.5f) h * aspect else height * 2f / pattern.outputScale.coerceAtLeast(0.01f)
         val anchor = Bounds(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
-        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style, elastic = false, presetColor = symbolColors[pattern.id])
+        val output = InkReplacement.place(pattern, anchor, ids, strokeClock(nowMs), style = style, elastic = false, presetColor = symbolColorOf(pattern.id))
         history.perform(page, StrokeEdit(emptyList(), output, StrokeEdit.Kind.INSERT))
         refreshCalcs(output)
         showHalosFor(output)

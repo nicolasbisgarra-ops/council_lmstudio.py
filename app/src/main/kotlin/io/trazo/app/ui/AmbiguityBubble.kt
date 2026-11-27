@@ -50,7 +50,8 @@ import kotlinx.coroutines.delay
 /**
  * Dos patrones parecidos, justo encima del lápiz: uno a la izquierda y otro a la derecha. Con el lápiz en
  * el aire sobre uno, se va llenando; quieto [DWELL_MS] se marca con un tilde verde y se reemplaza. Tocar
- * también elige. Seguir escribiendo o la × la cierran y queda la escritura.
+ * también elige. Seguir escribiendo o la × la cierran y queda la escritura. Cada opción se ve con el color
+ * con que se va a escribir ([colorOf]: más en verde, menos en rojo…).
  */
 @Composable
 fun AmbiguityBubble(
@@ -58,6 +59,7 @@ fun AmbiguityBubble(
     pen: Pair<Float, Float>,
     viewport: Viewport,
     onChoose: (InkPattern?) -> Unit,
+    colorOf: (String) -> Int? = { null },
 ) {
     val scale = viewport.scale.takeIf { it > 0f } ?: 1f
     val penX = pen.first * scale + viewport.tx
@@ -99,6 +101,7 @@ fun AmbiguityBubble(
                     if (i > 0) Box(Modifier.width(1.dp).height(72.dp).background(MaterialTheme.colorScheme.outlineVariant))
                     Option(
                         m.pattern,
+                        tint = colorOf(m.pattern.id)?.let { Color(it) },
                         progress = if (hovered == m.pattern) progress.value else 0f,
                         checked = picked == m.pattern,
                         onHover = { inside -> if (picked == null) hovered = if (inside) m.pattern else if (hovered == m.pattern) null else hovered },
@@ -118,15 +121,24 @@ fun AmbiguityBubble(
 }
 
 @Composable
-private fun Option(p: InkPattern, progress: Float, checked: Boolean, onHover: (Boolean) -> Unit, onClick: () -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
+private fun Option(p: InkPattern, tint: Color?, progress: Float, checked: Boolean, onHover: (Boolean) -> Unit, onClick: () -> Unit) {
+    val accent = tint ?: MaterialTheme.colorScheme.primary
     val green = Color(0xFF2E7D32)
     Box(
         Modifier
             .padding(horizontal = 4.dp)
             .width(96.dp)
             .clip(RoundedCornerShape(12.dp))
-            .border(2.dp, if (checked) green else if (progress > 0f) accent else Color.Transparent, RoundedCornerShape(12.dp))
+            .border(
+                2.dp,
+                when {
+                    checked -> green
+                    progress > 0f -> accent
+                    tint != null -> tint.copy(alpha = 0.45f)
+                    else -> Color.Transparent
+                },
+                RoundedCornerShape(12.dp),
+            )
             .drawBehind {
                 // El relleno avanza mientras el lápiz se queda quieto encima.
                 if (progress > 0f) drawRect(accent.copy(alpha = 0.18f), size = Size(size.width * progress, size.height))
@@ -144,10 +156,11 @@ private fun Option(p: InkPattern, progress: Float, checked: Boolean, onHover: (B
             .clickable(onClick = onClick),
     ) {
         Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            InkPreview(p.outputInk, Modifier.fillMaxWidth().height(64.dp))
+            InkPreview(p.outputInk, Modifier.fillMaxWidth().height(64.dp), color = tint)
             Text(
                 p.name,
                 style = MaterialTheme.typography.labelMedium,
+                color = tint ?: Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,

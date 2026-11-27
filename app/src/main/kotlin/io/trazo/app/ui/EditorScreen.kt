@@ -451,16 +451,19 @@ fun EditorScreen(
                         vm.mathExplanation?.let { e ->
                             MathBubble(e, vm.viewport, onDismiss = { vm.mathExplanation = null }, onWrite = { vm.writeExplanation(e) })
                         }
-                        // De la IA queda solo el chat: la revisión con marcas sobre la hoja y la burbuja de
-                        // «¿quisiste escribir…?» están apagadas (AI_MARKS_ON_SHEET / AMBIGUITY_BUBBLE).
+                        // De la IA queda solo el chat: la revisión con marcas sobre la hoja está apagada (AI_MARKS_ON_SHEET).
                         if (AI_MARKS_ON_SHEET) {
                             AiOverlay(vm, Modifier.align(Alignment.TopEnd))
                             vm.aiNote?.takeIf { vm.aiVisible }?.let { note -> AiNoteBubble(vm, note) }
                         }
                         // Se muestra al levantar el lápiz, encima de donde quedó la punta.
-                        if (AMBIGUITY_BUBBLE) vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
+                        // Selección rápida al mantener el lápiz: no es de la IA, queda siempre.
+                        vm.ambiguous?.takeIf { !vm.isDrawing }?.let { amb ->
                             LaunchedEffect(amb) { vm.ambiguousShown() }
-                            AmbiguityBubble(amb, vm.penOf(amb), vm.viewport, onChoose = vm::chooseAmbiguous)
+                            AmbiguityBubble(
+                                amb, vm.penOf(amb), vm.viewport, onChoose = vm::chooseAmbiguous,
+                                colorOf = { id -> io.trazo.core.settings.SymbolColors.colorFor(settings.symbolColors, id) },
+                            )
                         }
                         if (vm.hasSelection) {
                             SelectionMenu(vm, onCustomColor = { colorTarget = ColorTarget.Selection })
@@ -813,6 +816,3 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
 
 /** Revisión de la IA con marcas sobre la hoja (apagada: de la IA queda solo el chat). */
 internal const val AI_MARKS_ON_SHEET = false
-
-/** Burbuja para elegir entre dos lecturas de un trazo ambiguo (apagada). */
-internal const val AMBIGUITY_BUBBLE = false

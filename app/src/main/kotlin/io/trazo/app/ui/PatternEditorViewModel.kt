@@ -78,7 +78,7 @@ class PatternEditorViewModel(
     val exceedsRow: Boolean get() = exceedsRowOverride ?: draft()?.let { PaperRows.exceedsRow(it) } ?: false
     var floor by mutableFloatStateOf(original?.floor ?: (original?.let { AutoAlign.floor(it) } ?: 1f))
     /** Color fijo con que se escribe al reconocerse ([io.trazo.app.data.TrazoSettings.symbolColors]); null = el de la pluma. */
-    var fixedColor by mutableStateOf(patternId?.let { settings.settings.value.symbolColors[it] })
+    var fixedColor by mutableStateOf(patternId?.let { io.trazo.core.settings.SymbolColors.colorFor(settings.settings.value.symbolColors, it) })
     var revision by mutableIntStateOf(0)
         private set
     var testResult by mutableStateOf<String?>(null)
@@ -179,7 +179,9 @@ class PatternEditorViewModel(
         repo.upsertPattern(saved)
         val color = fixedColor
         settings.update { st ->
-            st.copy(symbolColors = if (color == null) st.symbolColors - saved.id else st.symbolColors + (saved.id to color))
+            // Sin color se borra también la clave corta de los signos («mas» para «preset-mas»).
+            val short = saved.id.removePrefix(io.trazo.core.PresetPatterns.PREFIX).takeIf { it != saved.id }
+            st.copy(symbolColors = if (color == null) st.symbolColors - saved.id - listOfNotNull(short).toSet() else st.symbolColors + (saved.id to color))
         }
         return true
     }

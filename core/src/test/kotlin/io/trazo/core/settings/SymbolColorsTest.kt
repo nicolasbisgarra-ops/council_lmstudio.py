@@ -45,4 +45,23 @@ class SymbolColorsTest {
         val out = InkReplacement.place(DefaultPatterns.integral(), anchor, IdGenerator.sequential(), style = pen)
         assertTrue(out.all { it.color == blue })
     }
+
+    @Test fun `los signos de la biblioteca toman el color por defecto de su clave corta`() {
+        val d = SymbolColors.defaults
+        assertEquals(SymbolColors.GREEN, SymbolColors.colorFor(d, io.trazo.core.PresetPatterns.PREFIX + "mas"))
+        assertEquals(SymbolColors.RED, SymbolColors.colorFor(d, io.trazo.core.PresetPatterns.PREFIX + "menos"))
+        assertEquals(SymbolColors.VIOLET, SymbolColors.colorFor(d, DefaultPatterns.INTEGRAL))
+        assertEquals(null, SymbolColors.colorFor(d, io.trazo.core.PresetPatterns.PREFIX + "igual"))
+        // La clave corta no pinta un patrón propio que no sea de la biblioteca.
+        assertEquals(null, SymbolColors.colorFor(mapOf("abc" to blue), "otro-abc"))
+        // Lo guardado para el id completo gana.
+        assertEquals(blue, SymbolColors.colorFor(d + (io.trazo.core.PresetPatterns.PREFIX + "mas" to blue), io.trazo.core.PresetPatterns.PREFIX + "mas"))
+    }
+
+    @Test fun `el controlador escribe el menos de la biblioteca en rojo`() {
+        val c = io.trazo.core.InkController()
+        c.symbolColors = SymbolColors.defaults
+        assertEquals(SymbolColors.RED, c.symbolColorOf(io.trazo.core.PresetPatterns.PREFIX + "menos"))
+        assertEquals(null, c.symbolColorOf(io.trazo.core.PresetPatterns.PREFIX + "por"))
+    }
 }

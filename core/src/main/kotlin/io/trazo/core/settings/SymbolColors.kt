@@ -21,6 +21,16 @@ object SymbolColors {
         INTEGRAL_ID to VIOLET,
     )
 
+    /**
+     * Color fijo del patrón [patternId], o null. Acepta la clave exacta (lo que guarda el editor de patrones)
+     * y, para los signos de la biblioteca (`preset-mas`), la clave corta de [defaults] (`mas`).
+     */
+    fun colorFor(colors: Map<String, Int>, patternId: String): Int? =
+        colors[patternId] ?: colors[patternId.removePrefix(PRESET_PREFIX)].takeIf { patternId.startsWith(PRESET_PREFIX) }
+
+    /** Igual que [io.trazo.core.PresetPatterns.PREFIX]. */
+    private const val PRESET_PREFIX = "preset-"
+
     fun read(raw: String?): Map<String, Int> {
         if (raw == null) return defaults
         val out = linkedMapOf<String, Int>()
