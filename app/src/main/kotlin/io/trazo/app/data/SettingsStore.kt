@@ -107,6 +107,8 @@ data class TrazoSettings(
     val chatMode: io.trazo.ai.ChatMode = io.trazo.ai.ChatMode.CORRECT,
     /** Color fijo por símbolo/operador (id de patrón → ARGB); sin entrada = el color de la pluma. */
     val symbolColors: Map<String, Int> = SymbolColors.defaults,
+    /** Lugar fijo de cada pareja de opciones ambiguas (pareja → id que va a la izquierda), ver [io.trazo.core.settings.AmbiguityLayout]. */
+    val ambiguityOrder: Map<String, String> = emptyMap(),
 )
 
 /** Nombre visible de cada ajuste de imagen. */
@@ -170,6 +172,7 @@ class SettingsStore(context: Context) {
         chatFontSp = prefs.getFloat("chatFontSp", 16f).coerceIn(12f, 24f),
         chatMode = io.trazo.ai.ChatMode.of(runCatching { prefs.getString("chatMode", null) }.getOrNull()),
         symbolColors = SymbolColors.read(runCatching { prefs.getString("symbolColors", null) }.getOrNull()),
+        ambiguityOrder = io.trazo.core.settings.AmbiguityLayout.read(runCatching { prefs.getString("ambiguityOrder", null) }.getOrNull()),
     )
 
     fun update(transform: (TrazoSettings) -> TrazoSettings) {
@@ -223,6 +226,7 @@ class SettingsStore(context: Context) {
             .putFloat("chatFontSp", s.chatFontSp.coerceIn(12f, 24f))
             .putString("chatMode", s.chatMode.name)
             .putString("symbolColors", SymbolColors.serialize(s.symbolColors))
+            .putString("ambiguityOrder", io.trazo.core.settings.AmbiguityLayout.serialize(s.ambiguityOrder))
             .apply()
         _settings.value = s
     }

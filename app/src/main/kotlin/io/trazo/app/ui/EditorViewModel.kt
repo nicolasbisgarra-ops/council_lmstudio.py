@@ -202,7 +202,16 @@ class EditorViewModel(
                 }
                 InkEvent.SelectionChanged -> { hasSelection = selection.isNotEmpty(); shapeSelected = selectedShapeId }
                 is InkEvent.Converted -> lastConversion = e
-                is InkEvent.Ambiguous -> { ambiguous = e; ambiguousArmed = false }
+                is InkEvent.Ambiguous -> {
+                    // Cada pareja sale siempre del mismo lado: la primera vez que aparece se recuerda.
+                    val (options, order) = io.trazo.core.settings.AmbiguityLayout.arrange(lastSettings.ambiguityOrder, e.options)
+                    if (order !== lastSettings.ambiguityOrder) {
+                        lastSettings = lastSettings.copy(ambiguityOrder = order)
+                        settings.update { it.copy(ambiguityOrder = order) }
+                    }
+                    ambiguous = e.copy(options = options)
+                    ambiguousArmed = false
+                }
                 is InkEvent.NotRecognized -> teachOffer = e
                 is InkEvent.MathExplained -> mathExplanation = e.explanation
                 is InkEvent.AiNoteTapped -> { aiNote = e.note; aiAnswer = null }

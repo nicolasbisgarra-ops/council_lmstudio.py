@@ -45,13 +45,15 @@ import androidx.compose.ui.unit.dp
 import io.trazo.app.ink.Viewport
 import io.trazo.core.InkEvent
 import io.trazo.core.InkPattern
+import io.trazo.core.settings.AmbiguityLayout
 import kotlinx.coroutines.delay
 
 /**
  * Dos patrones parecidos, justo encima del lápiz: uno a la izquierda y otro a la derecha. Con el lápiz en
  * el aire sobre uno, se va llenando; quieto [DWELL_MS] se marca con un tilde verde y se reemplaza. Tocar
- * también elige. Seguir escribiendo o la × la cierran y queda la escritura. Cada opción se ve con el color
- * con que se va a escribir ([colorOf]: más en verde, menos en rojo…).
+ * también elige. Seguir escribiendo o la × la cierran y queda la escritura. Cada opción tiene su propio
+ * color ([AmbiguityLayout.colors]: el fijo del signo si tiene, como el menos en rojo; si no, uno de la
+ * paleta), así división y menos, que se dibujan igual, se distinguen de un vistazo.
  */
 @Composable
 fun AmbiguityBubble(
@@ -67,6 +69,9 @@ fun AmbiguityBubble(
     var hovered by remember(amb) { mutableStateOf<InkPattern?>(null) }
     var picked by remember(amb) { mutableStateOf<InkPattern?>(null) }
     val progress = remember(amb) { Animatable(0f) }
+    val tints = remember(amb) {
+        AmbiguityLayout.colors(amb.options.take(2).map { it.pattern.id }, colorOf).map { Color(it) }
+    }
     LaunchedEffect(hovered, picked) {
         if (picked != null) return@LaunchedEffect
         progress.snapTo(0f)
@@ -101,7 +106,7 @@ fun AmbiguityBubble(
                     if (i > 0) Box(Modifier.width(1.dp).height(72.dp).background(MaterialTheme.colorScheme.outlineVariant))
                     Option(
                         m.pattern,
-                        tint = colorOf(m.pattern.id)?.let { Color(it) },
+                        tint = tints.getOrNull(i),
                         progress = if (hovered == m.pattern) progress.value else 0f,
                         checked = picked == m.pattern,
                         onHover = { inside -> if (picked == null) hovered = if (inside) m.pattern else if (hovered == m.pattern) null else hovered },
