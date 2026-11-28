@@ -168,7 +168,7 @@ object DeviceStateLog {
         return DeviceAction(t, name, map["scr"] ?: "", map["ms"]?.toFloatOrNull() ?: Float.NaN)
     }
 
-    private val FIELD = Regex("\"([A-Za-z]+)\":(\"[^\"]*\"|[^,}]+)")
+    private val FIELD = Regex("\"([A-Za-z0-9]+)\":(\"[^\"]*\"|[^,\\}]+)")
 
     private fun fields(line: String): Map<String, String>? {
         val l = line.trim()
