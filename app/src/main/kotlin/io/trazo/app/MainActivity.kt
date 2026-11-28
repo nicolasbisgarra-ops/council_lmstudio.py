@@ -122,6 +122,31 @@ class MainActivity : ComponentActivity() {
         if (log) trazo.deviceLog.start(window)
     }
 
+    private var touchDownAt = 0L
+
+    /** Cada toque en cualquier parte de la app queda en el registro (qué herramienta y cuánto duró). */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                touchDownAt = ev.eventTime
+                val tool = when (ev.getToolType(0)) {
+                    android.view.MotionEvent.TOOL_TYPE_STYLUS -> "stylus"
+                    android.view.MotionEvent.TOOL_TYPE_ERASER -> "eraser"
+                    android.view.MotionEvent.TOOL_TYPE_FINGER -> "finger"
+                    else -> "other"
+                }
+                io.trazo.app.data.ActionTrace.act("touch:$tool")
+            }
+            android.view.MotionEvent.ACTION_POINTER_DOWN -> io.trazo.app.data.ActionTrace.act("touch:+${ev.pointerCount}")
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+                io.trazo.app.data.ActionTrace.act(
+                    if (ev.actionMasked == android.view.MotionEvent.ACTION_UP) "release" else "cancel",
+                    (ev.eventTime - touchDownAt).toFloat(),
+                )
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun onStop() {
         if (trazo.settings.settings.value.deviceLog) trazo.deviceLog.stop()
         trazo.sync.setForeground(false)

@@ -47,8 +47,9 @@ internal fun DeviceLogSettings(enabled: Boolean, onChange: (Boolean) -> Unit) {
             val window = (context as? android.app.Activity)?.window
             if (on && window != null) log.start(window) else if (!on) log.stop()
         },
-        subtitle = "Anota cada 15 s los cuadros atrasados, cuánto tarda la hoja en dibujarse, memoria, temperatura y batería, " +
-            "para optimizar Trazo. Queda solo en este equipo; no guarda nada de lo escrito.",
+        subtitle = "Mientras Trazo está abierto anota cada acción con su hora (toques, pantallas, botones del editor, cuadros lentos) y cada 5 s " +
+            "los cuadros atrasados, el dibujo de la hoja, la memoria, la temperatura y la batería, para cruzarlos y optimizar Trazo. " +
+            "Queda solo en este equipo; no guarda nada de lo escrito.",
     )
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         summary?.let {
@@ -63,11 +64,14 @@ internal fun DeviceLogSettings(enabled: Boolean, onChange: (Boolean) -> Unit) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
                 scope.launch {
-                    val (text, raw) = withContext(Dispatchers.IO) { log.summary() to log.raw() }
+                    val file = withContext(Dispatchers.IO) { runCatching { log.exportFile(context.cacheDir) }.getOrNull() }
+                        ?: return@launch
+                    val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(Intent.EXTRA_SUBJECT, "Registro de rendimiento de Trazo")
-                        putExtra(Intent.EXTRA_TEXT, "$text\n\n--- muestras (JSON por línea) ---\n$raw")
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     context.startActivity(Intent.createChooser(send, "Compartir registro"))
                 }

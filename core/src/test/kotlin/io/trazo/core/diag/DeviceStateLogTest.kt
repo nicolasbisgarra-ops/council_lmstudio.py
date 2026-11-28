@@ -85,4 +85,33 @@ class DeviceStateLogTest {
         assertTrue(text, "Consumo sin cargar" in text)
         assertEquals("Sin muestras todavía.", DeviceStateLog.summarize(emptyList()))
     }
+
+    @Test fun `acciones ida y vuelta y separadas de las muestras`() {
+        val a = DeviceAction(10L, "undo", "Editor")
+        val line = DeviceStateLog.encodeAction(a)
+        assertEquals(a.copy(ms = Float.NaN).toString(), DeviceStateLog.decodeAction(line).toString())
+        assertNull(DeviceStateLog.decode(line))
+        assertNull(DeviceStateLog.decodeAction(DeviceStateLog.encode(DeviceSample(t = 3L))))
+        val b = DeviceStateLog.decodeAction(DeviceStateLog.encodeAction(DeviceAction(11L, "slow-frame", "Editor", 48f)))!!
+        assertEquals(48f, b.ms, 0.01f)
+    }
+
+    @Test fun `los momentos trabados muestran lo que se hacia a esa hora`() {
+        val samples = (0..4).map { i -> DeviceSample(t = i * 5_000L, screen = "Editor", frames = 600, jank = if (i == 3) 40 else 0, heapUsedMb = 100) }
+        val actions = listOf(
+            DeviceAction(11_000L, "touch:stylus", "Editor"),
+            DeviceAction(12_000L, "PageChanged", "Editor"),
+            DeviceAction(13_000L, "vm:undo", "Editor"),
+            DeviceAction(13_500L, "slow-frame", "Editor", 70f),
+            DeviceAction(1_000L, "vm:addPage", "Editor"),
+        )
+        val m = DeviceStateLog.slowMoments(samples, actions)
+        assertEquals(1, m.size)
+        assertTrue(m[0], "40/600 atrasados" in m[0])
+        assertTrue(m[0], "cuadro más lento 70 ms" in m[0])
+        assertTrue(m[0], "vm:undo ×1" in m[0] && "touch:stylus ×1" in m[0] && "PageChanged ×1" in m[0])
+        assertTrue(m[0], "addPage" !in m[0])
+        val text = DeviceStateLog.summarize(samples, actions)
+        assertTrue(text, "Momentos más trabados" in text)
+    }
 }

@@ -184,6 +184,7 @@ class SettingsStore(context: Context) {
             toolbarTools = normalizeToolbarTools(next.toolbarTools),
             wheelItems = normalizeWheelItems(next.wheelItems),
         )
+        if (s != _settings.value) ActionTrace.act("settings:update")
         prefs.edit()
             .putLong("holdMillis", s.holdMillis)
             .putFloat("tremorRadiusDp", s.tremorRadiusDp)

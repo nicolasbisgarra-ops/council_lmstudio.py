@@ -178,6 +178,7 @@ class EditorViewModel(
         strokeClock = { it + offset }
         paperOf = { this@EditorViewModel.paper }
         addListener { e ->
+            io.trazo.app.data.ActionTrace.act("ink:" + (e::class.simpleName ?: "event"))
             when (e) {
                 InkEvent.PageChanged -> {
                     revision++; mathExplanation = null; if (!attaching) markDirty()
@@ -229,6 +230,7 @@ class EditorViewModel(
     val paper: Paper get() = notebook?.paper ?: Paper.LINES
 
     fun applySettings(s: TrazoSettings, density: Float) {
+        io.trazo.app.data.ActionTrace.act("vm:applySettings")
         lastSettings = s
         controller.holdMillis = s.holdMillis
         controller.tremorRadiusPx = s.tremorRadiusDp * density
@@ -274,12 +276,14 @@ class EditorViewModel(
 
     /** Tres clics del botón en el aire: entra al modo formas o vuelve a la herramienta de antes. */
     fun toggleShapeTool(): Boolean {
+        io.trazo.app.data.ActionTrace.act("vm:toggleShapeTool")
         val on = editorTool != EditorTool.SHAPE
         selectTool(if (on) EditorTool.SHAPE else toolBeforeShapes)
         return on
     }
 
     fun selectTool(t: EditorTool) {
+        io.trazo.app.data.ActionTrace.act("vm:selectTool")
         if (t == EditorTool.SHAPE && editorTool != EditorTool.SHAPE) toolBeforeShapes = editorTool
         editorTool = t
         controller.tool = when (t) {
@@ -292,8 +296,8 @@ class EditorViewModel(
         applyToolStyle(lastSettings)
     }
 
-    fun undo() { controller.undo() }
-    fun redo() { controller.redo() }
+    fun undo() { io.trazo.app.data.ActionTrace.act("vm:undo"); controller.undo() }
+    fun redo() { io.trazo.app.data.ActionTrace.act("vm:redo"); controller.redo() }
     val canUndo: Boolean get() { revision; return controller.history.canUndo }
     val canRedo: Boolean get() { revision; return controller.history.canRedo }
     /** Hay un trazo en curso: los diálogos esperan a que se levante el lápiz. */
@@ -335,6 +339,7 @@ class EditorViewModel(
     }
 
     fun goToPage(index: Int) {
+        io.trazo.app.data.ActionTrace.act("vm:goToPage")
         val n = notebook ?: return
         if (index !in 0 until n.pageCount || index == pageIndex) return
         syncNotebook()
@@ -344,6 +349,7 @@ class EditorViewModel(
 
     /** Hoja nueva al final, o después de [after]. */
     fun addPage(after: Int? = null) {
+        io.trazo.app.data.ActionTrace.act("vm:addPage")
         syncNotebook()
         val n = notebook ?: return
         val at = (after?.plus(1)) ?: n.pageCount
@@ -354,18 +360,21 @@ class EditorViewModel(
     }
 
     fun setPaper(p: Paper) {
+        io.trazo.app.data.ActionTrace.act("vm:setPaper")
         notebook = notebook?.copy(paper = p)
         revision++
         markDirty()
     }
 
     fun rename(name: String) {
+        io.trazo.app.data.ActionTrace.act("vm:rename")
         notebook = notebook?.copy(name = name)
         markDirty()
     }
 
     /** Elección tras una ambigüedad; con "aprender" activo, el gesto queda como ejemplo del patrón elegido. */
     fun chooseAmbiguous(pattern: InkPattern?) {
+        io.trazo.app.data.ActionTrace.act("vm:chooseAmbiguous")
         val a = ambiguous ?: return
         ambiguous = null
         ambiguousArmed = false
@@ -375,7 +384,7 @@ class EditorViewModel(
     /** La burbuja de la ambigüedad ya está a la vista: el próximo cambio de la hoja la cierra. */
     private var ambiguousArmed = false
 
-    fun ambiguousShown() { if (ambiguous != null) ambiguousArmed = true }
+    fun ambiguousShown() { io.trazo.app.data.ActionTrace.act("vm:ambiguousShown"); if (ambiguous != null) ambiguousArmed = true }
 
     /** Dónde quedó la punta al terminar el gesto dudoso (coordenadas de documento). */
     fun penOf(a: InkEvent.Ambiguous): Pair<Float, Float> =
@@ -387,6 +396,7 @@ class EditorViewModel(
 
     /** Reemplaza el gesto por la tinta del patrón y, si corresponde, lo guarda como ejemplo nuevo. */
     fun teach(pattern: InkPattern, gestureIds: List<String>): Boolean {
+        io.trazo.app.data.ActionTrace.act("vm:teach")
         val gesture = controller.strokesById(gestureIds) ?: return false
         controller.convertWith(pattern, gestureIds, android.os.SystemClock.uptimeMillis()) ?: return false
         if (settings.settings.value.learnFromCorrections) {
@@ -405,6 +415,7 @@ class EditorViewModel(
 
     /** Calcula la selección y escribe el resultado; si no se puede, devuelve el motivo para mostrarlo. */
     fun calculateSelection(): String? {
+        io.trazo.app.data.ActionTrace.act("vm:calculateSelection")
         if (!app.trazo.study.isAllowed(StudyFeature.CALCULATOR)) return "La calculadora está bloqueada durante el examen."
         if (controller.calculateSelection()) return null
         if (controller.calculationOnlyComplex()) {
@@ -415,12 +426,13 @@ class EditorViewModel(
     }
 
     fun calculateWithImaginaries() {
+        io.trazo.app.data.ActionTrace.act("vm:calculateWithImaginaries")
         complexPrompt = null
         if (!app.trazo.study.isAllowed(StudyFeature.CALCULATOR)) return
         controller.calculateSelection(complex = true)
     }
 
-    fun duplicateSelection() { controller.duplicateSelection() }
+    fun duplicateSelection() { io.trazo.app.data.ActionTrace.act("vm:duplicateSelection"); controller.duplicateSelection() }
 
     /** Límites de la selección en documento, para ubicar el menú debajo. */
     val selectionBounds: io.trazo.core.Bounds? get() { revision; hasSelection; viewportTick; return controller.selectionBounds }
@@ -433,6 +445,7 @@ class EditorViewModel(
      * del sistema, para pegarla en otras apps.
      */
     fun copySelection(onDone: (Boolean) -> Unit) {
+        io.trazo.app.data.ActionTrace.act("vm:copySelection")
         val strokes = controller.copySelection()
         if (strokes.isEmpty()) return
         TrazoClipboard.strokes = strokes
@@ -458,6 +471,7 @@ class EditorViewModel(
 
     /** Pega lo copiado centrado en (x, y) de documento; queda seleccionado para moverlo. */
     fun paste(x: Float, y: Float) {
+        io.trazo.app.data.ActionTrace.act("vm:paste")
         val strokes = TrazoClipboard.strokes
         if (strokes.isEmpty()) return
         selectTool(EditorTool.LASSO)
@@ -466,6 +480,7 @@ class EditorViewModel(
 
     /** Pega en el centro de lo que se ve. */
     fun pasteInView() {
+        io.trazo.app.data.ActionTrace.act("vm:pasteInView")
         val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
         paste((viewSize.first / 2f - viewport.tx) / vpScale, (viewSize.second / 2f - viewport.ty) / vpScale)
     }
@@ -513,6 +528,7 @@ class EditorViewModel(
 
     /** Pone la herramienta en el centro de la vista, o la quita si ya estaba. */
     fun toggleRuler(kind: io.trazo.core.Ruler.Kind) {
+        io.trazo.app.data.ActionTrace.act("vm:toggleRuler")
         if (controller.ruler?.kind == kind) {
             controller.ruler = null; rulerKind = null
         } else {
@@ -528,6 +544,7 @@ class EditorViewModel(
 
     /** Abre una imagen de la galería o de archivos en el editor de recorte, con el ajuste predeterminado. */
     fun openImageEditor(open: () -> java.io.InputStream, darkPaper: Boolean, at: Pair<Float, Float>? = null) {
+        io.trazo.app.data.ActionTrace.act("vm:openImageEditor")
         if (imageBusy) return
         imageBusy = true
         viewModelScope.launch {
@@ -543,6 +560,7 @@ class EditorViewModel(
 
     /** Vuelve a abrir la imagen elegida desde su original, con su recorte y ajuste. */
     fun editSelectedImage() {
+        io.trazo.app.data.ActionTrace.act("vm:editSelectedImage")
         val img = selectedImage ?: return
         if (imageBusy) return
         val name = img.source ?: img.asset
@@ -561,7 +579,7 @@ class EditorViewModel(
     }
 
     /** Los mapas de bits los libera el recolector: la vista previa puede estar dibujándolos todavía. */
-    fun cancelImageEdit() { imageEdit = null }
+    fun cancelImageEdit() { io.trazo.app.data.ActionTrace.act("vm:cancelImageEdit"); imageEdit = null }
 
     /** Vista previa del recorte y el ajuste sobre la copia chica. */
     suspend fun previewImage(s: ImageEditSession, quad: List<Float>, preset: ImagePreset): android.graphics.Bitmap? =
@@ -571,6 +589,7 @@ class EditorViewModel(
 
     /** Aplica el recorte y el ajuste a la original y pone (o reemplaza) la imagen en la hoja. */
     fun finishImageEdit(quad: List<Float>, preset: ImagePreset) {
+        io.trazo.app.data.ActionTrace.act("vm:finishImageEdit")
         val s = imageEdit ?: return
         if (imageBusy) return
         imageBusy = true
@@ -633,6 +652,7 @@ class EditorViewModel(
 
     /** Pega o suelta una imagen sin abrir el editor: va con el ajuste predeterminado de esta hoja. */
     fun insertImageDirect(open: () -> java.io.InputStream, darkPaper: Boolean, at: Pair<Float, Float>? = null, onDone: () -> Unit = {}) {
+        io.trazo.app.data.ActionTrace.act("vm:insertImageDirect")
         if (imageBusy) { onDone(); return }
         imageBusy = true
         val preset = lastSettings.imagePreset(darkPaper)
@@ -669,6 +689,7 @@ class EditorViewModel(
 
     /** Pega la imagen del portapapeles del sistema en (x, y) de documento, o en el centro de la vista. */
     fun pasteSystemImage(darkPaper: Boolean, at: Pair<Float, Float>? = null): Boolean {
+        io.trazo.app.data.ActionTrace.act("vm:pasteSystemImage")
         val ctx = getApplication<Application>()
         val clip = runCatching { clipboard?.primaryClip }.getOrNull() ?: return false
         val uri = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
@@ -677,20 +698,22 @@ class EditorViewModel(
         return true
     }
 
-    fun recolorSelection(color: Int) { controller.recolorSelection(color) }
+    fun recolorSelection(color: Int) { io.trazo.app.data.ActionTrace.act("vm:recolorSelection"); controller.recolorSelection(color) }
     /** Color del primer trazo elegido (para marcarlo en la paleta). */
     val selectionColor: Int? get() { revision; return controller.strokesById(controller.selection.take(1))?.firstOrNull()?.color }
     fun selectAll() {
+        io.trazo.app.data.ActionTrace.act("vm:selectAll")
         selectTool(EditorTool.LASSO)
         controller.selectAll()
     }
 
     /** Borra toda la página de una vez (se puede deshacer). */
-    fun clearPage() { controller.clearPage() }
+    fun clearPage() { io.trazo.app.data.ActionTrace.act("vm:clearPage"); controller.clearPage() }
 
     val pageIsEmpty: Boolean get() { revision; return controller.page.strokes.isEmpty() && controller.page.shapes.isEmpty() && controller.page.images.isEmpty() }
 
     fun duplicatePage(index: Int = pageIndex) {
+        io.trazo.app.data.ActionTrace.act("vm:duplicatePage")
         val n = syncNotebook() ?: return
         val duplicated = try { n.withPageDuplicated(index) } catch (e: Exception) {
             pageLoadError = e.message ?: e.javaClass.simpleName
@@ -704,6 +727,7 @@ class EditorViewModel(
 
     /** Elimina la página [index] (no se puede deshacer; la UI pide confirmación). */
     fun deletePage(index: Int = pageIndex) {
+        io.trazo.app.data.ActionTrace.act("vm:deletePage")
         val n = syncNotebook() ?: return
         if (n.pageCount < 2 || index !in 0 until n.pageCount) return
         if (index == pageIndex) {
@@ -731,6 +755,7 @@ class EditorViewModel(
 
     /** Cambia el orden de las hojas; la página abierta sigue abierta (con su historial). */
     fun movePage(from: Int, to: Int, deferSave: Boolean = false) {
+        io.trazo.app.data.ActionTrace.act("vm:movePage")
         // Durante el gesto la tinta viva sigue en el controlador: no la copies en cada cruce.
         val n = (if (deferSave) notebook else syncNotebook()) ?: return
         if (from !in 0 until n.pageCount || to !in 0 until n.pageCount || from == to) return
@@ -753,6 +778,7 @@ class EditorViewModel(
 
     /** Inserta la tinta de salida de un patrón en el centro de la zona visible. */
     fun insertPattern(pattern: InkPattern, viewWidth: Int, viewHeight: Int) {
+        io.trazo.app.data.ActionTrace.act("vm:insertPattern")
         val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
         val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(-Notebook.PAGE_WIDTH + 80f, 2f * Notebook.PAGE_WIDTH - 80f)
         val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(-Notebook.PAGE_HEIGHT + 80f, 2f * Notebook.PAGE_HEIGHT - 80f)
@@ -768,21 +794,23 @@ class EditorViewModel(
 
     /** Inserta una forma dinámica en el centro de la zona visible, ya seleccionada para editar. */
     fun insertParametric(kind: GeoKind, viewWidth: Int = viewSize.first, viewHeight: Int = viewSize.second) {
+        io.trazo.app.data.ActionTrace.act("vm:insertParametric")
         val vpScale = viewport.scale.takeIf { it > 0f } ?: 1f
         val cx = ((viewWidth / 2f - viewport.tx) / vpScale).coerceIn(-Notebook.PAGE_WIDTH + 100f, 2f * Notebook.PAGE_WIDTH - 100f)
         val cy = ((viewHeight / 2f - viewport.ty) / vpScale).coerceIn(-Notebook.PAGE_HEIGHT + 100f, 2f * Notebook.PAGE_HEIGHT - 100f)
         controller.insertParametric(kind, cx, cy, 160f)
     }
 
-    fun setShapeDimension(axis: String, value: Float, commit: Boolean = false) { controller.setShapeDimension(axis, value, commit) }
-    fun setShapeRotation(degrees: Float, commit: Boolean = false) { controller.setShapeRotation(degrees, commit) }
+    fun setShapeDimension(axis: String, value: Float, commit: Boolean = false) { io.trazo.app.data.ActionTrace.act("vm:setShapeDimension"); controller.setShapeDimension(axis, value, commit) }
+    fun setShapeRotation(degrees: Float, commit: Boolean = false) { io.trazo.app.data.ActionTrace.act("vm:setShapeRotation"); controller.setShapeRotation(degrees, commit) }
     fun commitShapeEdit() = controller.commitShapeEdit()
     fun deleteShape() = controller.deleteShape()
-    fun duplicateShape() { controller.duplicateShape() }
-    fun convertShapeToInk() { controller.convertShapeToInk() }
+    fun duplicateShape() { io.trazo.app.data.ActionTrace.act("vm:duplicateShape"); controller.duplicateShape() }
+    fun convertShapeToInk() { io.trazo.app.data.ActionTrace.act("vm:convertShapeToInk"); controller.convertShapeToInk() }
     fun clearShapeSelection() = controller.clearShapeSelection()
 
     fun fitToPage() {
+        io.trazo.app.data.ActionTrace.act("vm:fitToPage")
         viewport.scale = 0f
         fitRequest++
     }
@@ -792,6 +820,7 @@ class EditorViewModel(
      * (para compartir; el formato editable es `.trazo`). [onDone] recibe el error, o null si salió bien.
      */
     fun exportTo(resolver: ContentResolver, uri: Uri, pdf: Boolean, includeAi: Boolean, clean: Boolean = false, onDone: (Throwable?) -> Unit) {
+        io.trazo.app.data.ActionTrace.act("vm:exportTo")
         val n = syncNotebook() ?: return
         val page = n.page(pageIndex)
         viewModelScope.launch {
@@ -899,14 +928,16 @@ class EditorViewModel(
     val usesAi: Boolean get() = aiNotes.isNotEmpty() || journal.log.value.isNotEmpty()
 
     fun toggleAiVisible() {
+        io.trazo.app.data.ActionTrace.act("vm:toggleAiVisible")
         aiVisible = !aiVisible
         controller.aiVisible = aiVisible
         if (!aiVisible) aiNote = null
     }
 
-    fun dismissAiProgress() { if (aiProgress?.running != true) aiProgress = null }
+    fun dismissAiProgress() { io.trazo.app.data.ActionTrace.act("vm:dismissAiProgress"); if (aiProgress?.running != true) aiProgress = null }
 
     fun cancelAiReview() {
+        io.trazo.app.data.ActionTrace.act("vm:cancelAiReview")
         activeReviewTicket?.let(reviewGate::cancel)
         activeReviewTicket = null
         localCompletion.cancel()
@@ -951,6 +982,7 @@ class EditorViewModel(
      * quedan pendientes y solo se envían cuando el usuario vuelve a tocar Revisar página.
      */
     fun reviewWithAi(selectionOnly: Boolean = false) {
+        io.trazo.app.data.ActionTrace.act("vm:reviewWithAi")
         val n = notebook ?: return
         if (attachedPageId != n.slots.getOrNull(pageIndex)?.id) return
         val pageId = n.slots[pageIndex].id
@@ -1280,12 +1312,14 @@ class EditorViewModel(
     }
 
     fun removeAiNote(note: AiNote) {
+        io.trazo.app.data.ActionTrace.act("vm:removeAiNote")
         controller.setAi(controller.page.ai?.without(note.id))
         aiNote = null
     }
 
     /** Escribe la explicación del resultado debajo de la cuenta, con una letra parecida a la del usuario. */
     fun writeExplanation(e: MathNotes.Explanation) {
+        io.trazo.app.data.ActionTrace.act("vm:writeExplanation")
         if (!app.trazo.study.isAllowed(StudyFeature.CALCULATOR)) { mathExplanation = null; return }
         val ink = MathNotes.handwrite(controller.page.strokes, repo.patterns.value, e)
         mathExplanation = null
@@ -1294,6 +1328,7 @@ class EditorViewModel(
 
     /** Copia la respuesta del tutor del chat en la hoja, debajo de lo último escrito, con la letra del usuario. */
     fun writeTutorAnswer(text: String) {
+        io.trazo.app.data.ActionTrace.act("vm:writeTutorAnswer")
         if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) return
         val ink = MathNotes.handwriteBelow(controller.page.strokes, repo.patterns.value, TutorText.plain(text))
         if (ink.isNotEmpty()) controller.addInk(ink)
@@ -1301,6 +1336,7 @@ class EditorViewModel(
 
     /** La marca pasa a ser tinta común de la hoja (se puede mover, borrar o deshacer). */
     fun aiNoteToInk(note: AiNote) {
+        io.trazo.app.data.ActionTrace.act("vm:aiNoteToInk")
         val all = controller.page.ai?.notes.orEmpty()
         removeAiNote(note)
         controller.addInk(AiMarkPainter.toInk(note, IdGenerator.RANDOM, all = all))
@@ -1310,6 +1346,7 @@ class EditorViewModel(
      * El usuario discute la marca (17): el modelo la mantiene, la cambia o la retira, y explica por qué.
      */
     fun discussAiNote(note: AiNote, argument: String) {
+        io.trazo.app.data.ActionTrace.act("vm:discussAiNote")
         if (!app.trazo.study.isAllowed(StudyFeature.AI_REVIEW)) { aiAnswer = "El Modo IA está bloqueado durante el examen."; return }
         if (aiDiscussing || argument.isBlank()) return
         val profile = ai.settings.value.current ?: run { aiAnswer = "Configure un modelo en Ajustes → Modo IA."; return }
@@ -1392,13 +1429,14 @@ class EditorViewModel(
 
     /** Despliega el chat; la primera vez en la hoja pide la revisión completa. */
     fun openChat() {
+        io.trazo.app.data.ActionTrace.act("vm:openChat")
         chatOpen = true
         if (chatMessages.isEmpty() && !chatBusy) sendChat(null)
     }
 
-    fun closeChat() { chatOpen = false }
+    fun closeChat() { io.trazo.app.data.ActionTrace.act("vm:closeChat"); chatOpen = false }
 
-    fun toggleChat() { if (chatOpen) closeChat() else openChat() }
+    fun toggleChat() { io.trazo.app.data.ActionTrace.act("vm:toggleChat"); if (chatOpen) closeChat() else openChat() }
 
     // ---------------------------------------------------------------- la revisión en la web
 
@@ -1627,6 +1665,7 @@ class EditorViewModel(
 
     /** Guarda la conversación actual en el historial y vuelve a revisarla desde cero. */
     fun restartChat() {
+        io.trazo.app.data.ActionTrace.act("vm:restartChat")
         val pageId = chatPage ?: return
         cancelChat()
         if (chatMessages.isNotEmpty()) {
@@ -1641,12 +1680,14 @@ class EditorViewModel(
         private set
 
     fun chooseChatMode(mode: io.trazo.ai.ChatMode) {
+        io.trazo.app.data.ActionTrace.act("vm:chooseChatMode")
         chatMode = mode
         settings.update { it.copy(chatMode = mode) }
     }
 
     /** Marca en la hoja el renglón que señaló el tutor. */
     fun showChatLine(message: AiChatMessage) {
+        io.trazo.app.data.ActionTrace.act("vm:showChatLine")
         val present = controller.page.allInk.mapTo(HashSet()) { it.id }
         val ids = message.strokeIds.filter { it in present }
         if (ids.isNotEmpty()) controller.select(ids)
@@ -1657,6 +1698,7 @@ class EditorViewModel(
      * cada pedido, con los renglones actuales de la hoja: si el estudiante corrigió algo, el tutor lo ve.
      */
     fun sendChat(question: String?) {
+        io.trazo.app.data.ActionTrace.act("vm:sendChat")
         if (chatBusy) return
         val n = notebook ?: return
         val pageId = n.slots.getOrNull(pageIndex)?.id ?: return
@@ -1737,6 +1779,7 @@ class EditorViewModel(
 
     /** Adjunta una imagen de la galería al próximo mensaje del chat. */
     fun attachChatImage(open: () -> java.io.InputStream) {
+        io.trazo.app.data.ActionTrace.act("vm:attachChatImage")
         if (chatAttaching) return
         chatAttaching = true
         viewModelScope.launch {
@@ -1751,7 +1794,7 @@ class EditorViewModel(
         }
     }
 
-    fun clearChatAttachment() { chatAttachment = null }
+    fun clearChatAttachment() { io.trazo.app.data.ActionTrace.act("vm:clearChatAttachment"); chatAttachment = null }
 
     /** Archivo de una imagen adjunta en el chat, para mostrarla en la burbuja. */
     fun chatImageFile(name: String): java.io.File {
@@ -1839,6 +1882,7 @@ class EditorViewModel(
 
     /** Guardado inmediato si hay cambios aún no confirmados en disco (al pasar a segundo plano o salir). */
     fun saveNow() {
+        io.trazo.app.data.ActionTrace.act("vm:saveNow")
         saveJob?.cancel()
         if (savedVersion == editVersion) return
         val version = editVersion

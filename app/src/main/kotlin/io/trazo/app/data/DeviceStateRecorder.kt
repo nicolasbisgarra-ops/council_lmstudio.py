@@ -12,6 +12,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.view.FrameMetrics
 import android.view.Window
+import io.trazo.core.diag.DeviceAction
 import io.trazo.core.diag.DeviceSample
 import io.trazo.core.diag.DeviceStateLog
 import io.trazo.core.diag.DurationStats
@@ -19,10 +20,12 @@ import io.trazo.core.diag.FrameStats
 import java.io.File
 
 /**
- * Mide el estado del dispositivo mientras Trazo está en primer plano y lo guarda en
- * `files/diag/device-state.jsonl` (una línea por muestra, ver [DeviceStateLog]), para optimizar la app
- * con datos reales: cuadros atrasados por pantalla, cuánto tarda en dibujarse la hoja, memoria,
- * temperatura y batería.
+ * Mide el estado del dispositivo todo el tiempo que Trazo está abierto y lo guarda en
+ * `files/diag/device-state.jsonl`, para optimizar la app con datos reales. En el mismo archivo, ordenado por
+ * hora, van dos tipos de línea (ver [DeviceStateLog]):
+ * - muestras cada [INTERVAL_MS]: pantalla, cuadros atrasados, dibujo de la hoja, memoria, temperatura, batería;
+ * - acciones con su hora exacta ([ActionTrace]): toques, pantallas, acciones del editor, eventos de la tinta,
+ *   cuadros lentos. Cruzando las horas se ve qué se estaba haciendo cuando la app se trabó.
  *
  * Es barato a propósito: los cuadros llegan por FrameMetrics (solo los que se dibujan, sin despertar la
  * pantalla), la muestra es cada [INTERVAL_MS] y todo corre en un hilo propio de baja prioridad. Nada sale
@@ -43,13 +46,38 @@ class DeviceStateRecorder(private val context: Context, filesDir: File) {
     private var window: Window? = null
     private var running = false
     private var lastThermal = -1
+    private val pending = StringBuilder()
+    private var slowThisTick = 0
 
-    /** Pantalla visible; la pone la navegación. */
+    /** Pantalla visible; la pone la navegación. Cada cambio queda como acción. */
     @Volatile var screen: String = ""
+        set(value) {
+            if (value == field) return
+            field = value
+            action("screen:$value")
+        }
+
+    /** Anota [name] con la hora de ahora (cualquier hilo). No hace nada si el registro está parado. */
+    fun action(name: String, ms: Float = Float.NaN, at: Long = System.currentTimeMillis()) {
+        val scr = screen
+        handler.post {
+            if (!running) return@post
+            pending.append(DeviceStateLog.encodeAction(DeviceAction(at, name, scr, ms))).append('\n')
+            if (pending.length > FLUSH_CHARS) flush()
+        }
+    }
 
     private val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
         if (running && metrics.getMetric(FrameMetrics.FIRST_DRAW_FRAME) == 0L) {
-            frames.onFrameDuration(metrics.getMetric(FrameMetrics.TOTAL_DURATION), periodNanos)
+            val total = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
+            frames.onFrameDuration(total, periodNanos)
+            // Cada cuadro claramente lento, con su hora, para cruzarlo con lo que se estaba haciendo.
+            if (total > periodNanos * 2 && slowThisTick < MAX_SLOW_PER_TICK) {
+                slowThisTick++
+                val ago = (System.nanoTime() - metrics.getMetric(FrameMetrics.INTENDED_VSYNC_TIMESTAMP)) / 1_000_000L
+                val at = System.currentTimeMillis() - ago.coerceIn(0L, 5_000L)
+                pending.append(DeviceStateLog.encodeAction(DeviceAction(at, "slow-frame", screen, total / 1_000_000f))).append('\n')
+            }
         }
     }
 
@@ -72,6 +100,7 @@ class DeviceStateRecorder(private val context: Context, filesDir: File) {
             periodNanos = if (hz > 1f) (1_000_000_000L / hz).toLong() else 16_666_667L
             frames.reset(keepClock = false)
             InkProbe.reset()
+            ActionTrace.recorder = this
             runCatching { window.addOnFrameMetricsAvailableListener(frameListener, handler) }
             record("start")
             handler.postDelayed(tick, INTERVAL_MS)
@@ -82,7 +111,9 @@ class DeviceStateRecorder(private val context: Context, filesDir: File) {
         handler.post {
             if (!running) return@post
             record("stop")
+            flush()
             running = false
+            if (ActionTrace.recorder === this) ActionTrace.recorder = null
             handler.removeCallbacks(tick)
             window?.let { w -> runCatching { w.removeOnFrameMetricsAvailableListener(frameListener) } }
             window = null
@@ -94,21 +125,39 @@ class DeviceStateRecorder(private val context: Context, filesDir: File) {
         handler.post { if (running) record(name) }
     }
 
-    /** Todas las muestras guardadas, de la más vieja a la más nueva. */
-    fun readAll(): List<DeviceSample> = runOnThread {
+    private fun lines(): List<String> = runOnThread {
+        flush()
         listOf(previous, file).flatMap { f -> if (f.exists()) runCatching { f.readLines() }.getOrDefault(emptyList()) else emptyList() }
-            .mapNotNull { DeviceStateLog.decode(it) }
     }
 
-    /** El archivo crudo (JSON por línea), para compartir. */
-    fun raw(): String = runOnThread {
-        listOf(previous, file).filter { it.exists() }.joinToString("") { runCatching { it.readText() }.getOrDefault("") }
+    /** El archivo crudo (JSON por línea, muestras y acciones por hora), para compartir. */
+    fun raw(): String = lines().joinToString("\n")
+
+    fun summary(): String {
+        val all = lines()
+        return DeviceStateLog.summarize(all.mapNotNull { DeviceStateLog.decode(it) }, all.mapNotNull { DeviceStateLog.decodeAction(it) })
     }
 
-    fun summary(): String = DeviceStateLog.summarize(readAll())
+    /**
+     * Arma un archivo para compartir en `cache/diag/` con el resumen arriba y todas las líneas abajo
+     * (muestras y acciones ordenadas por hora). Va como archivo porque como texto no entra en un Intent.
+     */
+    fun exportFile(cacheDir: File): File {
+        val all = lines()
+        val text = DeviceStateLog.summarize(all.mapNotNull { DeviceStateLog.decode(it) }, all.mapNotNull { DeviceStateLog.decodeAction(it) })
+        val out = File(cacheDir, "diag").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd_HHmm", java.util.Locale.ROOT).format(java.util.Date())
+        return File(out, "trazo-registro-$stamp.txt").apply {
+            bufferedWriter().use { w ->
+                w.write(text)
+                w.write("\n\n--- muestras y acciones por hora (JSON por línea) ---\n")
+                all.forEach { w.write(it); w.write("\n") }
+            }
+        }
+    }
 
     fun clear() {
-        runOnThread { previous.delete(); file.delete() }
+        runOnThread { pending.setLength(0); previous.delete(); file.delete() }
     }
 
     private fun record(event: String) {
@@ -120,6 +169,8 @@ class DeviceStateRecorder(private val context: Context, filesDir: File) {
         }
         if (sample.thermal >= 0) lastThermal = sample.thermal
         frames.reset()
+        slowThisTick = 0
+        flush()
     }
 
     private fun snapshot(event: String): DeviceSample {
@@ -165,13 +216,21 @@ class DeviceStateRecorder(private val context: Context, filesDir: File) {
     }
 
     private fun write(sample: DeviceSample) {
+        pending.append(DeviceStateLog.encode(sample)).append('\n')
+    }
+
+    /** Pasa al archivo lo acumulado (una escritura por tanda, no una por acción). */
+    private fun flush() {
+        if (pending.isEmpty()) return
+        val text = pending.toString()
+        pending.setLength(0)
         runCatching {
             dir.mkdirs()
             if (file.length() > MAX_BYTES) {
                 previous.delete()
                 file.renameTo(previous)
             }
-            file.appendText(DeviceStateLog.encode(sample) + "\n")
+            file.appendText(text)
         }
     }
 
@@ -184,9 +243,11 @@ class DeviceStateRecorder(private val context: Context, filesDir: File) {
     }
 
     companion object {
-        const val INTERVAL_MS = 15_000L
-        /** Unos 512 KB por archivo, dos archivos: varios días de uso. */
-        const val MAX_BYTES = 512L * 1024
+        const val INTERVAL_MS = 5_000L
+        /** Unos 2 MB por archivo, dos archivos: varios días de uso con todas las acciones. */
+        const val MAX_BYTES = 2L * 1024 * 1024
+        private const val FLUSH_CHARS = 16 * 1024
+        private const val MAX_SLOW_PER_TICK = 40
         private const val MB = 1024L * 1024
     }
 }
@@ -210,8 +271,12 @@ object InkProbe {
 
     fun drawn(nanos: Long, strokeCount: Int) {
         if (!enabled) return
-        synchronized(lock) { draws.add(nanos / 1_000_000f); strokes = strokeCount }
+        val ms = nanos / 1_000_000f
+        synchronized(lock) { draws.add(ms); strokes = strokeCount }
+        if (ms > SLOW_DRAW_MS) ActionTrace.act("slow-draw", ms)
     }
+
+    private const val SLOW_DRAW_MS = 12f
 
     /** [down] = el lápiz o el dedo tocó la hoja; false = se levantó o se canceló. */
     fun contact(down: Boolean) {
@@ -234,5 +299,17 @@ object InkProbe {
         val s = Snapshot(draws.count, draws.average, draws.worst, strokes, (downMs.toFloat() / span).coerceIn(0f, 1f))
         draws.reset(); downMs = 0L; since = now
         s
+    }
+}
+
+/**
+ * Punto único para anotar acciones con su hora: `ActionTrace.act("vm:undo")`. Sin registro activo no hace
+ * nada. Los nombres son técnicos (qué botón, qué evento), nunca lo escrito.
+ */
+object ActionTrace {
+    @Volatile var recorder: DeviceStateRecorder? = null
+
+    fun act(name: String, ms: Float = Float.NaN) {
+        recorder?.action(name, ms)
     }
 }

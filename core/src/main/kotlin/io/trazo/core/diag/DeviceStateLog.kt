@@ -44,6 +44,13 @@ data class DeviceSample(
     val inking: Float = 0f,
 )
 
+/**
+ * Una acción con su hora exacta (tocar, levantar el lápiz, deshacer, cambiar de pantalla, un cuadro lento…),
+ * en el mismo archivo que las muestras para cruzarlas por tiempo. [name] es técnico: nunca lleva contenido.
+ * [ms] = duración si tiene (cuánto estuvo apoyado, cuánto tardó el cuadro); NaN si no.
+ */
+data class DeviceAction(val t: Long, val name: String, val screen: String = "", val ms: Float = Float.NaN)
+
 /** Histograma de duraciones en ms (0..200, de a 1 ms) para promedios y percentiles sin guardar cada valor. */
 class DurationStats {
     private val buckets = IntArray(BUCKETS)
@@ -145,13 +152,36 @@ object DeviceStateLog {
         if (v.isNaN() || v.isInfinite()) append("null") else append(String.format(Locale.ROOT, "%.2f", v))
     }
 
-    /** Lee una línea de [encode]; null si está rota. Tolera campos de más o de menos. */
-    fun decode(line: String): DeviceSample? {
+    fun encodeAction(a: DeviceAction): String = buildString {
+        append('{')
+        append("\"t\":").append(a.t)
+        str("act", a.name); str("scr", a.screen)
+        if (!a.ms.isNaN()) dec("ms", a.ms)
+        append('}')
+    }
+
+    /** Lee una línea de [encodeAction]; null si no es una acción. */
+    fun decodeAction(line: String): DeviceAction? {
+        val map = fields(line) ?: return null
+        val name = map["act"] ?: return null
+        val t = map["t"]?.toLongOrNull() ?: return null
+        return DeviceAction(t, name, map["scr"] ?: "", map["ms"]?.toFloatOrNull() ?: Float.NaN)
+    }
+
+    private val FIELD = Regex("\"([A-Za-z]+)\":(\"[^\"]*\"|[^,}]+)")
+
+    private fun fields(line: String): Map<String, String>? {
         val l = line.trim()
         if (!l.startsWith("{") || !l.endsWith("}")) return null
         val map = HashMap<String, String>()
-        val re = Regex("\"([A-Za-z]+)\":(\"[^\"]*\"|[^,}]+)")
-        for (m in re.findAll(l)) map[m.groupValues[1]] = m.groupValues[2].trim('"')
+        for (m in FIELD.findAll(l)) map[m.groupValues[1]] = m.groupValues[2].trim('"')
+        return map
+    }
+
+    /** Lee una línea de [encode]; null si está rota o es una acción. Tolera campos de más o de menos. */
+    fun decode(line: String): DeviceSample? {
+        val map = fields(line) ?: return null
+        if ("act" in map) return null
         val t = map["t"]?.toLongOrNull() ?: return null
         fun i(k: String, d: Int) = map[k]?.toIntOrNull() ?: d
         fun f(k: String, d: Float) = map[k]?.toFloatOrNull() ?: d
@@ -168,7 +198,7 @@ object DeviceStateLog {
     }
 
     /** Informe legible: por pantalla, cuadros atrasados, dibujo de la hoja, memoria, temperatura y batería. */
-    fun summarize(samples: List<DeviceSample>): String {
+    fun summarize(samples: List<DeviceSample>, actions: List<DeviceAction> = emptyList()): String {
         if (samples.isEmpty()) return "Sin muestras todavía."
         val sorted = samples.sortedBy { it.t }
         val out = StringBuilder()
@@ -234,6 +264,44 @@ object DeviceStateLog {
         }
         if (ms > 5 * 60_000L) line("Consumo sin cargar: ${f1(drop / (ms / 3_600_000f))} %/hora")
         if (sorted.any { it.powerSave }) line("Ahorro de energía activo en ${pct(sorted.count { it.powerSave }, sorted.size)} de las muestras")
+
+        if (actions.isNotEmpty()) {
+            line("")
+            line("Acciones: " + countNames(actions, 12))
+            val moments = slowMoments(sorted, actions)
+            if (moments.isNotEmpty()) {
+                line("Momentos más trabados (qué se estaba haciendo):")
+                moments.forEach { line("- $it") }
+            }
+        }
         return out.toString().trimEnd()
+    }
+
+    /** "touch ×40, undo ×3…": las [max] acciones más frecuentes. */
+    fun countNames(actions: List<DeviceAction>, max: Int): String =
+        actions.groupingBy { it.name }.eachCount().entries
+            .sortedByDescending { it.value }.take(max).joinToString(", ") { "${it.key} ×${it.value}" }
+
+    /**
+     * Cruza por tiempo: los [top] intervalos entre muestras con más cuadros atrasados, cada uno con la hora,
+     * la pantalla, cuánto se trabó, la memoria y las acciones que pasaron en ese mismo tramo.
+     */
+    fun slowMoments(samples: List<DeviceSample>, actions: List<DeviceAction>, top: Int = 8): List<String> {
+        val sorted = samples.sortedBy { it.t }
+        val acts = actions.sortedBy { it.t }
+        val clock = java.text.SimpleDateFormat("dd/MM HH:mm:ss", Locale.ROOT)
+        return sorted.zipWithNext().filter { (_, b) -> b.jank > 0 && b.frames > 0 }
+            .sortedByDescending { (_, b) -> b.jank }
+            .take(top)
+            .sortedBy { (_, b) -> b.t }
+            .map { (a, b) ->
+                val inside = acts.filter { it.t > a.t && it.t <= b.t }
+                val slow = inside.filter { it.name == "slow-frame" }
+                val worst = slow.maxOfOrNull { it.ms }?.let { String.format(Locale.ROOT, ", cuadro más lento %.0f ms", it) } ?: ""
+                val others = inside.filter { it.name != "slow-frame" }
+                "${clock.format(java.util.Date(b.t))} ${b.screen}: ${b.jank}/${b.frames} atrasados$worst, heap ${b.heapUsedMb} MB" +
+                    (if (b.thermal >= 2) ", con calor" else "") +
+                    " → " + (if (others.isEmpty()) "sin acciones" else countNames(others, 6))
+            }
     }
 }
