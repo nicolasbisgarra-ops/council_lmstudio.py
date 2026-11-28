@@ -641,6 +641,10 @@ class InkCanvasView @JvmOverloads constructor(
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val c = controller ?: return false
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> io.trazo.app.data.InkProbe.contact(true)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> io.trazo.app.data.InkProbe.contact(false)
+        }
         // EditorViewModel can reset this shared mutable viewport on page navigation before
         // AndroidView receives its next Compose update. Refit before mapping any input.
         if (!viewport.isSet) fitIfNeeded(force = true)
@@ -875,11 +879,13 @@ class InkCanvasView @JvmOverloads constructor(
         // AndroidView does not guarantee clipping against Compose siblings. In particular,
         // drawColor must never paint over a toolbar laid out to the left of this View.
         val saved = canvas.save()
+        val started = System.nanoTime()
         try {
             canvas.clipRect(0, 0, width, height)
             drawContent(canvas)
         } finally {
             canvas.restoreToCount(saved)
+            io.trazo.app.data.InkProbe.drawn(System.nanoTime() - started, controller?.page?.strokes?.size ?: -1)
         }
     }
 

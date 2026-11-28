@@ -117,9 +117,13 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         trazo.sync.setForeground(true)
         trazo.web.resume()
+        val log = trazo.settings.settings.value.deviceLog
+        io.trazo.app.data.InkProbe.enabled = log
+        if (log) trazo.deviceLog.start(window)
     }
 
     override fun onStop() {
+        if (trazo.settings.settings.value.deviceLog) trazo.deviceLog.stop()
         trazo.sync.setForeground(false)
         super.onStop()
     }
@@ -140,6 +144,8 @@ class MainActivity : ComponentActivity() {
 private fun TrazoRoot(nav: NavViewModel, banner: String?) {
     BackHandler(enabled = nav.stack.size > 1) { nav.pop() }
     val entry = nav.stack.last()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.SideEffect { context.trazo.deviceLog.screen = entry.screen::class.simpleName ?: "" }
     Box(Modifier.fillMaxSize()) {
         key(entry) {
             CompositionLocalProvider(LocalViewModelStoreOwner provides entry) {

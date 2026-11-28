@@ -14,6 +14,8 @@ class TrazoApp : Application() {
     val crashReports: CrashReportStore by lazy { CrashReportStore(filesDir) }
     val repository: TrazoRepository by lazy { TrazoRepository(filesDir) }
     val settings: SettingsStore by lazy { SettingsStore(this) }
+    /** Registro local de rendimiento (cuadros, memoria, temperatura, batería); ver [io.trazo.app.data.DeviceStateRecorder]. */
+    val deviceLog: io.trazo.app.data.DeviceStateRecorder by lazy { io.trazo.app.data.DeviceStateRecorder(this, filesDir) }
     val ai: AiStore by lazy { AiStore(this) }
     val aiJournal: AiJournal by lazy { AiJournal(filesDir) }
     val aiChats: io.trazo.app.data.AiChatStore by lazy { io.trazo.app.data.AiChatStore(filesDir) }
@@ -41,6 +43,11 @@ class TrazoApp : Application() {
             priority = Thread.MIN_PRIORITY
             start()
         }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (settings.settings.value.deviceLog) deviceLog.event("trim:$level")
     }
 
     @Suppress("DEPRECATION")

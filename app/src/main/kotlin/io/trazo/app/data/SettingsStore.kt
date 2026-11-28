@@ -109,6 +109,8 @@ data class TrazoSettings(
     val symbolColors: Map<String, Int> = SymbolColors.defaults,
     /** Lugar fijo de cada pareja de opciones ambiguas (pareja → id que va a la izquierda), ver [io.trazo.core.settings.AmbiguityLayout]. */
     val ambiguityOrder: Map<String, String> = emptyMap(),
+    /** Registro local de rendimiento del dispositivo (no sale del equipo salvo que se comparta). */
+    val deviceLog: Boolean = true,
 )
 
 /** Nombre visible de cada ajuste de imagen. */
@@ -138,6 +140,7 @@ class SettingsStore(context: Context) {
         penWidth = prefs.getFloat("penWidth", 3f),
         showHoldIndicator = prefs.getBoolean("showHoldIndicator", true),
         haptics = prefs.getBoolean("haptics", true),
+        deviceLog = prefs.getBoolean("deviceLog", true),
         scratchToErase = prefs.getBoolean("scratchToErase", true),
         learnFromCorrections = prefs.getBoolean("learnFromCorrections", true),
         themeMode = prefs.enum("themeMode", ThemeMode.SYSTEM),
@@ -192,6 +195,7 @@ class SettingsStore(context: Context) {
             .putFloat("penWidth", s.penWidth)
             .putBoolean("showHoldIndicator", s.showHoldIndicator)
             .putBoolean("haptics", s.haptics)
+            .putBoolean("deviceLog", s.deviceLog)
             .putBoolean("scratchToErase", s.scratchToErase)
             .putBoolean("learnFromCorrections", s.learnFromCorrections)
             .putString("themeMode", s.themeMode.name)
